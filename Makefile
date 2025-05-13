@@ -20,6 +20,9 @@ build:
 run:
 	cargo run
 
+clean:
+	cargo clean
+
 install:
 	cp target/$(target)/$(prog) ~/bin/$(prog)-$(extension)
 

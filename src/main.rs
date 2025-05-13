@@ -1,6 +1,6 @@
 #[path = "configuration/reader.rs"]
 mod configuration;
-#[path = "editor/editor.rs"]
+#[path = "components/editor/editor.rs"]
 mod editor;
 
 use std::process::exit;
