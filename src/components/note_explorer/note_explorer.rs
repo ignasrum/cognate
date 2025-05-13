@@ -5,12 +5,9 @@ use std::fs;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    NoteSelected(String),
+    NoteSelected(String), // This message will now only trigger the Editor to load
     LoadNotes,
     NotesLoaded(Vec<NoteMetadata>),
-    // New messages for displaying content
-    DisplayContent(String),
-    ShowList,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,9 +24,6 @@ pub struct NotebookMetadata {
 pub struct NoteExplorer {
     notes: Vec<NoteMetadata>,
     pub notebook_path: String,
-    // New fields to manage view state and displayed content
-    displayed_content: Option<String>,
-    show_list: bool,
 }
 
 impl NoteExplorer {
@@ -37,8 +31,6 @@ impl NoteExplorer {
         Self {
             notes: Vec::new(),
             notebook_path,
-            displayed_content: None,
-            show_list: true, // Start by showing the list
         }
     }
 
@@ -49,10 +41,6 @@ impl NoteExplorer {
                     "NoteExplorer: Received LoadNotes message. Loading from path: {}",
                     self.notebook_path
                 );
-                // Ensure we show the list when loading notes
-                self.show_list = true;
-                self.displayed_content = None;
-
                 let notebook_path = self.notebook_path.clone();
                 Command::perform(load_notes_metadata(notebook_path), Message::NotesLoaded)
             }
@@ -64,62 +52,30 @@ impl NoteExplorer {
                 self.notes = notes;
                 Command::none()
             }
-            Message::NoteSelected(path) => {
-                // When a note is selected in the list, hide the list temporarily
-                // The Editor will handle loading and sending DisplayContent, which will set show_list to false
-                self.show_list = false;
-                // Pass the selection up to the Editor
-                Command::none() // The Editor will handle loading and sending DisplayContent
-            }
-            Message::DisplayContent(content) => {
-                // When content is received from the Editor, display it
-                eprintln!("NoteExplorer: Received DisplayContent message.");
-                self.displayed_content = Some(content);
-                self.show_list = false;
-                Command::none()
-            }
-            Message::ShowList => {
-                // When ShowList is received, clear content and show the list
-                eprintln!("NoteExplorer: Received ShowList message.");
-                self.displayed_content = None;
-                self.show_list = true;
+            Message::NoteSelected(_path) => {
+                // Marked as unused
+                // When a note is selected, just pass the message up to the Editor
+                // The NoteExplorer's view will remain as the list.
                 Command::none()
             }
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        if self.show_list {
-            // Display the list of notes
-            let mut column = Column::new().spacing(10);
+        let mut column = Column::new().spacing(10);
 
-            if self.notes.is_empty() {
-                column = column.push(Text::new("No notes found."));
-            } else {
-                for note in &self.notes {
-                    column = column.push(
-                        Button::new(Text::new(note.rel_path.clone()))
-                            .on_press(Message::NoteSelected(note.rel_path.clone())),
-                    );
-                }
-            }
-
-            Scrollable::new(column).into()
+        if self.notes.is_empty() {
+            column = column.push(Text::new("No notes found."));
         } else {
-            // Display the note content and a back button
-            let mut column = Column::new().spacing(10);
-
-            column =
-                column.push(Button::new(Text::new("Back to Notes")).on_press(Message::ShowList));
-
-            if let Some(content) = &self.displayed_content {
-                column = column.push(Text::new(content.clone()));
-            } else {
-                column = column.push(Text::new("Loading note content..."));
+            for note in &self.notes {
+                column = column.push(
+                    Button::new(Text::new(note.rel_path.clone()))
+                        .on_press(Message::NoteSelected(note.rel_path.clone())),
+                );
             }
-
-            Scrollable::new(column).into()
         }
+
+        Scrollable::new(column).into()
     }
 }
 
