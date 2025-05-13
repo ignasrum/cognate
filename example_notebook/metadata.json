@@ -2,6 +2,9 @@
   "notes": [
     {
       "rel_path": "note1"
+    },
+    {
+      "rel_path": "note2"
     }
   ]
 }
