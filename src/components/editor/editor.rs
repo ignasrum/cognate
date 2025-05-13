@@ -100,10 +100,8 @@ impl Application for Editor {
                 // Load content into the main editor and update HTML preview
                 Command::perform(
                     async move {
-                        let full_note_path = format!(
-                            "{}/{}/{}.md",
-                            notebook_path_clone, note_path_clone, note_path_clone
-                        );
+                        let full_note_path =
+                            format!("{}/{}/note.md", notebook_path_clone, note_path_clone);
                         match std::fs::read_to_string(full_note_path) {
                             Ok(content) => content,
                             Err(err) => {
