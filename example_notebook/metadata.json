@@ -1,10 +1,12 @@
 {
   "notes": [
     {
-      "rel_path": "note1"
+      "rel_path": "note1",
+      "labels": ["label1"]
     },
     {
-      "rel_path": "note2"
+      "rel_path": "note2",
+      "labels": ["label1", "label2"]
     }
   ]
 }

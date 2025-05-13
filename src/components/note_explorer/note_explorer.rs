@@ -13,6 +13,8 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteMetadata {
     pub rel_path: String,
+    #[serde(default)] // Use default to handle notes without a labels field
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +24,7 @@ pub struct NotebookMetadata {
 
 #[derive(Debug, Default)]
 pub struct NoteExplorer {
-    notes: Vec<NoteMetadata>,
+    pub notes: Vec<NoteMetadata>,
     pub notebook_path: String,
 }
 
@@ -53,9 +55,7 @@ impl NoteExplorer {
                 Command::none()
             }
             Message::NoteSelected(_path) => {
-                // Marked as unused
-                // When a note is selected, just pass the message up to the Editor
-                // The NoteExplorer's view will remain as the list.
+                // Marked as unused - logic moved to Editor
                 Command::none()
             }
         }
@@ -110,6 +110,9 @@ async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
                 "load_notes_metadata: Error parsing metadata from {}: {}",
                 file_path, err
             );
+            // This might happen if the file is empty or malformed initially
+            // Consider handling this case more gracefully, maybe by returning an empty NotebookMetadata
+            // For now, we return an empty vec of notes
             return Vec::new();
         }
     };

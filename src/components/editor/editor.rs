@@ -28,6 +28,7 @@ pub struct Editor {
     note_explorer: note_explorer::NoteExplorer,
     notebook_path: String,
     selected_note_path: Option<String>, // Keep track of the selected note path
+    selected_note_labels: Vec<String>,  // Store labels of the selected note
 }
 
 impl Application for Editor {
@@ -46,8 +47,9 @@ impl Application for Editor {
             markdown_text: String::new(),
             html_output: String::new(),
             note_explorer: note_explorer::NoteExplorer::new("".to_string()), // Start with empty path
-            notebook_path: "".to_string(), // Start with empty path
-            selected_note_path: None,      // No note selected initially
+            notebook_path: "".to_string(),    // Start with empty path
+            selected_note_path: None,         // No note selected initially
+            selected_note_labels: Vec::new(), // No labels initially
         };
 
         // Load initial notes using the command from note_explorer
@@ -89,19 +91,43 @@ impl Application for Editor {
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
+                // Check if the message is NotesLoaded before updating the NoteExplorer
+                if let note_explorer::Message::NotesLoaded(_) = note_explorer_message {
+                    eprintln!(
+                        "Editor: Received NotesLoaded from NoteExplorer. Clearing editor state."
+                    );
+                    // If the NoteExplorer finished loading notes, clear the selected note state
+                    self.selected_note_path = None;
+                    self.selected_note_labels = Vec::new();
+                    self.content = text_editor::Content::with_text("");
+                    self.markdown_text = String::new();
+                    self.html_output = String::new();
+                }
+
                 // Propagate other note explorer messages
                 self.note_explorer
                     .update(note_explorer_message)
                     .map(Message::NoteExplorerMessage)
             }
             Message::NoteSelected(note_path) => {
-                // Handle NoteSelected directly here
                 eprintln!(
                     "Editor: NoteSelected message received for path: {}",
                     note_path
                 );
                 // Update the selected note path
                 self.selected_note_path = Some(note_path.clone());
+
+                // Find the selected note in the note_explorer's list to get labels
+                if let Some(note) = self
+                    .note_explorer
+                    .notes
+                    .iter()
+                    .find(|n| n.rel_path == note_path)
+                {
+                    self.selected_note_labels = note.labels.clone();
+                } else {
+                    self.selected_note_labels = Vec::new();
+                }
 
                 let notebook_path_clone = self.notebook_path.clone(); // Clone for the async block
                 let note_path_clone = note_path.clone(); // Clone for the async block
@@ -135,8 +161,7 @@ impl Application for Editor {
                             let path_str = path.to_string_lossy().to_string();
                             Message::NewNotebookPathSelected(path_str)
                         } else {
-                            // User cancelled the dialog - return a message that results in Command::none()
-                            // Clear editor content and selected note state if dialog cancelled
+                            // User cancelled the dialog - clear editor content and selected note state
                             Message::ContentChanged(String::new())
                         }
                     },
@@ -147,11 +172,12 @@ impl Application for Editor {
                 self.notebook_path = path_str.clone();
                 self.note_explorer.notebook_path = path_str;
 
-                // Clear the editor content and selected note when a new notebook is loaded
+                // Clear the editor content, selected note, and labels when a new notebook is loaded
                 self.content = text_editor::Content::with_text("");
                 self.markdown_text = String::new();
                 self.html_output = String::new();
                 self.selected_note_path = None;
+                self.selected_note_labels = Vec::new();
 
                 // The LoadNotes message in NoteExplorer will fetch the new list
                 self.note_explorer
@@ -212,9 +238,33 @@ impl Application for Editor {
             .spacing(10)
             .padding(10)
             .width(Length::Fill)
-            .height(Length::Fill);
+            .height(Length::FillPortion(10)); // Give content row most of the vertical space
 
-        let main_content = Column::new().push(top_bar).push(content_row);
+        // Create the bottom bar for labels
+        let mut labels_row = Row::new().spacing(10).padding(5).width(Length::Fill);
+
+        if !self.selected_note_labels.is_empty() {
+            labels_row = labels_row.push(Text::new("Labels: "));
+            for label in &self.selected_note_labels {
+                labels_row = labels_row.push(Text::new(label.clone()));
+            }
+        } else if self.selected_note_path.is_some() {
+            // Show "No labels" if a note is selected but has no labels
+            labels_row = labels_row.push(Text::new("No labels"));
+        } else {
+            // Show nothing or a placeholder if no note is selected
+            labels_row = labels_row.push(Text::new(""));
+        }
+
+        let bottom_bar: Element<'_, Self::Message, Self::Theme> = Container::new(labels_row)
+            .width(Length::Fill)
+            .height(Length::FillPortion(1)) // Give bottom bar remaining vertical space
+            .into();
+
+        let main_content = Column::new()
+            .push(top_bar)
+            .push(content_row)
+            .push(bottom_bar);
 
         Container::new(main_content)
             .width(Length::Fill)
