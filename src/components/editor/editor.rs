@@ -14,7 +14,7 @@ pub enum Message {
     Edit(text_editor::Action),
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
-    NoteSelected(String), // This message is now sent from NoteExplorer to Editor
+    NoteSelected(String), // This message is now sent from NoteExplorer via map to Editor
     OpenNotebook,
     NewNotebookPathSelected(String),
 }
@@ -50,6 +50,8 @@ impl Application for Editor {
         };
 
         // Load initial notes using the command from note_explorer
+        // Note: The initial LoadNotes will likely fail if no notebook is selected,
+        // but this setup allows the NoteExplorer to manage its initial state.
         let initial_note_load_command = editor_instance
             .note_explorer
             .update(note_explorer::Message::LoadNotes)
@@ -81,12 +83,13 @@ impl Application for Editor {
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
-                // Propagate the update to the note explorer and return its command
+                // Propagate other note explorer messages
                 self.note_explorer
                     .update(note_explorer_message)
                     .map(Message::NoteExplorerMessage)
             }
             Message::NoteSelected(note_path) => {
+                // Handle NoteSelected directly here
                 eprintln!(
                     "Editor: NoteSelected message received for path: {}",
                     note_path
@@ -144,13 +147,15 @@ impl Application for Editor {
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
-        let note_explorer_view: Element<'_, Self::Message, Self::Theme> = Container::new(
-            self.note_explorer
-                .view()
-                .map(|note_explorer_message| Message::NoteExplorerMessage(note_explorer_message)),
-        )
-        .width(Length::FillPortion(2))
-        .into();
+        let note_explorer_view: Element<'_, Self::Message, Self::Theme> =
+            Container::new(self.note_explorer.view().map(|note_explorer_message| {
+                match note_explorer_message {
+                    note_explorer::Message::NoteSelected(path) => Message::NoteSelected(path),
+                    other_msg => Message::NoteExplorerMessage(other_msg),
+                }
+            }))
+            .width(Length::FillPortion(2))
+            .into();
 
         let editor_widget = text_editor(&self.content)
             .on_action(Message::Edit)
@@ -170,7 +175,7 @@ impl Application for Editor {
         let html_container = Container::new(html_display_element).width(Length::FillPortion(4));
         let html_container_element: Element<'_, Self::Message, Self::Theme> = html_container.into();
 
-        // Create a top bar with an "Open Notebook" button
+        // Create a top bar with an \"Open Notebook\" button
         let top_bar = Row::new()
             .push(
                 button("Open Notebook")
