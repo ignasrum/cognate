@@ -29,14 +29,16 @@ impl Application for Editor {
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         // `flags` is the Configuration instance passed from main.rs
+        let initial_text = "Type something here...".to_string();
         let editor_instance = Editor {
-            content: text_editor::Content::with_text("Type something here..."),
+            content: text_editor::Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             configuration: flags,
             markdown_text: String::new(),
             html_output: String::new(),
         };
-        (editor_instance, Command::none())
+        let initial_command = Command::perform(async { initial_text }, Message::ContentChanged);
+        (editor_instance, initial_command)
     }
 
     fn title(&self) -> String {
