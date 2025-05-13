@@ -37,8 +37,7 @@ impl Application for Editor {
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         // `flags` is the Configuration instance passed from main.rs
-        let initial_text =
-            "Type something here...\nSelect a notebook using the button above.".to_string();
+        let initial_text = String::new(); // Changed to start with an empty string
         let mut editor_instance = Editor {
             content: text_editor::Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
