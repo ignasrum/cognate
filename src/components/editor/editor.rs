@@ -3,7 +3,7 @@ use iced::{Application, Command, Element, Length, Theme};
 use pulldown_cmark::{Options, Parser, html};
 
 use crate::configuration::Configuration;
-use crate::notebook::{self, NoteMetadata}; // Import from the new notebook module
+use crate::notebook::{self, NoteMetadata};
 
 #[path = "../../configuration/theme.rs"]
 mod local_theme;
@@ -18,7 +18,6 @@ pub enum Message {
     NoteSelected(String),
     OpenNotebook,
     NewNotebookPathSelected(String),
-    // New messages for label management
     NewLabelInputChanged(String),
     AddLabel,
     RemoveLabel(String),
@@ -31,9 +30,9 @@ pub struct Editor {
     configuration: Configuration,
     markdown_text: String,
     html_output: String,
-    note_explorer: note_explorer::NoteExplorer, // NoteExplorer struct still lives here
+    note_explorer: note_explorer::NoteExplorer,
     notebook_path: String,
-    selected_note_path: Option<String>,
+    selected_note_path: Option<String>, // Editor holds the selected note path
     selected_note_labels: Vec<String>,
     new_label_text: String,
 }
@@ -59,8 +58,6 @@ impl Application for Editor {
             new_label_text: String::new(),
         };
 
-        // The initial load notes command should now come from the note_explorer module,
-        // which will call the load_notes_metadata function in the notebook module.
         let initial_note_load_command = editor_instance
             .note_explorer
             .update(note_explorer::Message::LoadNotes)
@@ -95,7 +92,6 @@ impl Application for Editor {
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
-                // The NotesLoaded message now contains the correct NoteMetadata type
                 if let note_explorer::Message::NotesLoaded(_) = note_explorer_message {
                     eprintln!(
                         "Editor: Received NotesLoaded from NoteExplorer. Clearing editor state."
@@ -107,7 +103,6 @@ impl Application for Editor {
                     self.html_output = String::new();
                 }
 
-                // Propagate the update call to the NoteExplorer instance
                 self.note_explorer
                     .update(note_explorer_message)
                     .map(Message::NoteExplorerMessage)
@@ -117,10 +112,10 @@ impl Application for Editor {
                     "Editor: NoteSelected message received for path: {}",
                     note_path
                 );
+                // Update the selected note path in the Editor state
                 self.selected_note_path = Some(note_path.clone());
                 self.new_label_text = String::new();
 
-                // Look up the note in the note_explorer's notes list (which now holds the correct type)
                 if let Some(note) = self
                     .note_explorer
                     .notes
@@ -175,7 +170,7 @@ impl Application for Editor {
                 self.content = text_editor::Content::with_text("");
                 self.markdown_text = String::new();
                 self.html_output = String::new();
-                self.selected_note_path = None;
+                self.selected_note_path = None; // Clear selected note when changing notebooks
                 self.selected_note_labels = Vec::new();
                 self.new_label_text = String::new();
 
@@ -208,7 +203,6 @@ impl Application for Editor {
                         let notes_to_save = self.note_explorer.notes.clone();
                         return Command::perform(
                             async move {
-                                // Call the save_metadata function from the notebook module
                                 notebook::save_metadata(&notebook_path, &notes_to_save[..])
                                     .map_err(|e| e.to_string())
                             },
@@ -236,7 +230,6 @@ impl Application for Editor {
                     let notes_to_save = self.note_explorer.notes.clone();
                     return Command::perform(
                         async move {
-                            // Call the save_metadata function from the notebook module
                             notebook::save_metadata(&notebook_path, &notes_to_save[..])
                                 .map_err(|e| e.to_string())
                         },
@@ -257,15 +250,17 @@ impl Application for Editor {
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
-        let note_explorer_view: Element<'_, Self::Message, Self::Theme> =
-            Container::new(self.note_explorer.view().map(|note_explorer_message| {
-                match note_explorer_message {
+        // Pass the selected_note_path to the note_explorer.view method
+        let note_explorer_view: Element<'_, Self::Message, Self::Theme> = Container::new(
+            self.note_explorer
+                .view(self.selected_note_path.as_ref())
+                .map(|note_explorer_message| match note_explorer_message {
                     note_explorer::Message::NoteSelected(path) => Message::NoteSelected(path),
                     other_msg => Message::NoteExplorerMessage(other_msg),
-                }
-            }))
-            .width(Length::FillPortion(2))
-            .into();
+                }),
+        )
+        .width(Length::FillPortion(2))
+        .into();
 
         let mut editor_widget = text_editor(&self.content).height(Length::Fill);
 
