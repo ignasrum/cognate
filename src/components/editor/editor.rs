@@ -3,7 +3,7 @@ use iced::{Application, Command, Element, Length, Theme};
 use pulldown_cmark::{Options, Parser, html};
 
 use crate::configuration::Configuration;
-use crate::notebook::{self, NoteMetadata};
+use crate::notebook::{self, NoteMetadata}; // Keep NoteMetadata as it's used for selected_note_labels
 
 #[path = "../../configuration/theme.rs"]
 mod local_theme;
@@ -12,7 +12,7 @@ mod note_explorer;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Edit(text_editor::Action),
+    EditorAction(text_editor::Action), // New message to handle text editor actions
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
     NoteSelected(String),
@@ -22,6 +22,7 @@ pub enum Message {
     AddLabel,
     RemoveLabel(String),
     MetadataSaved(Result<(), String>),
+    NoteContentSaved(Result<(), String>), // New message for note content saving
 }
 
 pub struct Editor {
@@ -64,7 +65,7 @@ impl Application for Editor {
             .map(Message::NoteExplorerMessage);
 
         let initial_command = Command::batch(vec![
-            Command::perform(async { initial_text }, Message::ContentChanged),
+            // We no longer send an initial ContentChanged message here
             initial_note_load_command,
         ]);
         (editor_instance, initial_command)
@@ -76,19 +77,34 @@ impl Application for Editor {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::Edit(action) => {
+            Message::EditorAction(action) => {
                 if self.selected_note_path.is_some() {
                     self.content.perform(action);
                     self.markdown_text = self.content.text();
                     self.html_output = convert_markdown_to_html(self.markdown_text.clone());
-                    // TODO: Implement saving mechanism after a delay or on explicit action
+
+                    // Save the note content after the action is performed
+                    if let Some(selected_path) = &self.selected_note_path {
+                        let notebook_path = self.notebook_path.clone();
+                        let note_path = selected_path.clone();
+                        let content = self.markdown_text.clone();
+                        eprintln!("Editor: Saving content for note: {}", note_path);
+                        return Command::perform(
+                            async move {
+                                notebook::save_note_content(notebook_path, note_path, content).await
+                            },
+                            Message::NoteContentSaved,
+                        );
+                    }
                 }
                 Command::none()
             }
             Message::ContentChanged(new_content) => {
+                // This message is now primarily used when loading note content
                 self.content = text_editor::Content::with_text(&new_content);
                 self.markdown_text = new_content;
                 self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                // No saving here, saving is triggered by EditorAction
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
@@ -138,7 +154,7 @@ impl Application for Editor {
                             Ok(content) => content,
                             Err(err) => {
                                 eprintln!("Failed to read note file for editor: {}", err);
-                                String::new()
+                                String::new() // Return empty string on error
                             }
                         }
                     },
@@ -158,7 +174,8 @@ impl Application for Editor {
                             let path_str = path.to_string_lossy().to_string();
                             Message::NewNotebookPathSelected(path_str)
                         } else {
-                            Message::ContentChanged(String::new())
+                            // If no folder is selected, clear the current state
+                            Message::NewNotebookPathSelected(String::new()) // Pass empty string to clear
                         }
                     },
                 )
@@ -174,9 +191,14 @@ impl Application for Editor {
                 self.selected_note_labels = Vec::new();
                 self.new_label_text = String::new();
 
-                self.note_explorer
-                    .update(note_explorer::Message::LoadNotes)
-                    .map(Message::NoteExplorerMessage)
+                // Only attempt to load notes if a path was actually selected
+                if !self.notebook_path.is_empty() {
+                    return self
+                        .note_explorer
+                        .update(note_explorer::Message::LoadNotes)
+                        .map(Message::NoteExplorerMessage);
+                }
+                Command::none() // No command if no path selected
             }
             Message::NewLabelInputChanged(text) => {
                 self.new_label_text = text;
@@ -246,6 +268,14 @@ impl Application for Editor {
                 }
                 Command::none()
             }
+            Message::NoteContentSaved(result) => {
+                if let Err(err) = result {
+                    eprintln!("Error saving note content: {}", err);
+                } else {
+                    eprintln!("Note content saved successfully.");
+                }
+                Command::none()
+            }
         }
     }
 
@@ -265,7 +295,8 @@ impl Application for Editor {
         let mut editor_widget = text_editor(&self.content).height(Length::Fill);
 
         if self.selected_note_path.is_some() {
-            editor_widget = editor_widget.on_action(Message::Edit);
+            // Use on_action to send EditorAction messages
+            editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
         let editor_widget_element: Element<'_, Self::Message, Self::Theme> = editor_widget.into();

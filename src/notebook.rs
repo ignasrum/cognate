@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::Path; // Import the Error trait
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,4 +78,17 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
     };
 
     metadata.notes
+}
+
+// New function to save note content
+pub async fn save_note_content(
+    notebook_path: String,
+    rel_note_path: String,
+    content: String,
+) -> Result<(), String> {
+    let full_note_path = Path::new(&notebook_path)
+        .join(&rel_note_path)
+        .join("note.md");
+    eprintln!("Attempting to save note to: {}", full_note_path.display());
+    fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))
 }
