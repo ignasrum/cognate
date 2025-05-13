@@ -27,6 +27,7 @@ pub struct Editor {
     html_output: String,
     note_explorer: note_explorer::NoteExplorer,
     notebook_path: String,
+    selected_note_path: Option<String>, // Keep track of the selected note path
 }
 
 impl Application for Editor {
@@ -46,6 +47,7 @@ impl Application for Editor {
             html_output: String::new(),
             note_explorer: note_explorer::NoteExplorer::new("".to_string()), // Start with empty path
             notebook_path: "".to_string(), // Start with empty path
+            selected_note_path: None,      // No note selected initially
         };
 
         // Load initial notes using the command from note_explorer
@@ -70,12 +72,17 @@ impl Application for Editor {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::Edit(action) => {
-                self.content.perform(action);
-                self.markdown_text = self.content.text();
-                self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                // Process edits only if a note is selected
+                if self.selected_note_path.is_some() {
+                    self.content.perform(action);
+                    self.markdown_text = self.content.text();
+                    self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                }
                 Command::none()
             }
             Message::ContentChanged(new_content) => {
+                // ContentChanged can be triggered internally (e.g., by loading a note)
+                // so it should always update the content, regardless of user interaction.
                 self.content = text_editor::Content::with_text(&new_content);
                 self.markdown_text = new_content;
                 self.html_output = convert_markdown_to_html(self.markdown_text.clone());
@@ -93,6 +100,9 @@ impl Application for Editor {
                     "Editor: NoteSelected message received for path: {}",
                     note_path
                 );
+                // Update the selected note path
+                self.selected_note_path = Some(note_path.clone());
+
                 let notebook_path_clone = self.notebook_path.clone(); // Clone for the async block
                 let note_path_clone = note_path.clone(); // Clone for the async block
 
@@ -126,7 +136,8 @@ impl Application for Editor {
                             Message::NewNotebookPathSelected(path_str)
                         } else {
                             // User cancelled the dialog - return a message that results in Command::none()
-                            Message::ContentChanged(String::new()) // Or another message that doesn't trigger a command
+                            // Clear editor content and selected note state if dialog cancelled
+                            Message::ContentChanged(String::new())
                         }
                     },
                 )
@@ -135,6 +146,13 @@ impl Application for Editor {
                 // Update the notebook path and trigger a load of notes in the explorer
                 self.notebook_path = path_str.clone();
                 self.note_explorer.notebook_path = path_str;
+
+                // Clear the editor content and selected note when a new notebook is loaded
+                self.content = text_editor::Content::with_text("");
+                self.markdown_text = String::new();
+                self.html_output = String::new();
+                self.selected_note_path = None;
+
                 // The LoadNotes message in NoteExplorer will fetch the new list
                 self.note_explorer
                     .update(note_explorer::Message::LoadNotes)
@@ -154,9 +172,13 @@ impl Application for Editor {
             .width(Length::FillPortion(2))
             .into();
 
-        let editor_widget = text_editor(&self.content)
-            .on_action(Message::Edit)
-            .height(Length::Fill);
+        // Conditionally attach the on_action handler based on whether a note is selected
+        let mut editor_widget = text_editor(&self.content).height(Length::Fill);
+
+        if self.selected_note_path.is_some() {
+            editor_widget = editor_widget.on_action(Message::Edit);
+        }
+
         let editor_widget_element: Element<'_, Self::Message, Self::Theme> = editor_widget.into();
 
         let editor_container = Container::new(editor_widget_element).width(Length::FillPortion(4));
