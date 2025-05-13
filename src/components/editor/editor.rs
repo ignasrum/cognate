@@ -16,6 +16,7 @@ pub enum Message {
     NoteExplorerMessage(note_explorer::Message),
     NoteSelected(String),
     OpenNotebook,
+    NewNotebookPathSelected(String),
 }
 
 pub struct Editor {
@@ -25,6 +26,7 @@ pub struct Editor {
     markdown_text: String,
     html_output: String,
     note_explorer: note_explorer::NoteExplorer,
+    notebook_path: String,
 }
 
 impl Application for Editor {
@@ -42,7 +44,8 @@ impl Application for Editor {
             configuration: flags,
             markdown_text: String::new(),
             html_output: String::new(),
-            note_explorer: note_explorer::NoteExplorer::new(),
+            note_explorer: note_explorer::NoteExplorer::new("example_notebook".to_string()),
+            notebook_path: "example_notebook".to_string(), // Default notebook path
         };
         let initial_command = Command::batch(vec![
             Command::perform(async { initial_text }, Message::ContentChanged),
@@ -73,7 +76,7 @@ impl Application for Editor {
                 self.note_explorer.update(note_explorer_message);
             }
             Message::NoteSelected(note_path) => {
-                let full_note_path = format!("example_notebook/{}/note1.md", note_path); // Assuming note1.md inside each directory
+                let full_note_path = format!("{}/{}/note1.md", self.notebook_path, note_path); // Assuming note1.md inside each directory
                 let load_command = Command::perform(
                     async {
                         match std::fs::read_to_string(full_note_path) {
@@ -89,10 +92,29 @@ impl Application for Editor {
                 return load_command;
             }
             Message::OpenNotebook => {
-                // For now, just reload the notes from the example notebook
-                return Command::perform(async {}, |_| {
-                    Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
-                });
+                use native_dialog::FileDialog;
+
+                let command = Command::perform(
+                    async move {
+                        let folder = FileDialog::new().show_open_single_dir().unwrap();
+                        folder
+                    },
+                    |folder: Option<std::path::PathBuf>| {
+                        if let Some(path) = folder {
+                            let path_str = path.to_string_lossy().to_string();
+                            Message::NewNotebookPathSelected(path_str)
+                        } else {
+                            // User cancelled the dialog
+                            Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
+                        }
+                    },
+                );
+                return command;
+            }
+            Message::NewNotebookPathSelected(path_str) => {
+                self.notebook_path = path_str.clone();
+                self.note_explorer.update(note_explorer::Message::LoadNotes);
+                self.note_explorer.notebook_path = path_str;
             }
         }
         Command::none()
