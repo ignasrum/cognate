@@ -1,4 +1,4 @@
-use iced::widget::{Column, Container, Row, Text, button, column, text_editor};
+use iced::widget::{Button, Column, Container, Row, Scrollable, Text, button, text_editor};
 use iced::{Application, Command, Element, Length, Theme};
 use pulldown_cmark::{Options, Parser, html};
 
@@ -14,7 +14,7 @@ pub enum Message {
     Edit(text_editor::Action),
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
-    NoteSelected(String),
+    NoteSelected(String), // This message is now sent from NoteExplorer to Editor
     OpenNotebook,
     NewNotebookPathSelected(String),
 }
@@ -38,7 +38,7 @@ impl Application for Editor {
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         // `flags` is the Configuration instance passed from main.rs
         let initial_text = "Type something here...".to_string();
-        let editor_instance = Editor {
+        let mut editor_instance = Editor {
             content: text_editor::Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             configuration: flags,
@@ -47,11 +47,16 @@ impl Application for Editor {
             note_explorer: note_explorer::NoteExplorer::new("example_notebook".to_string()),
             notebook_path: "example_notebook".to_string(), // Default notebook path
         };
+
+        // Load initial notes using the command from note_explorer
+        let initial_note_load_command = editor_instance
+            .note_explorer
+            .update(note_explorer::Message::LoadNotes)
+            .map(Message::NoteExplorerMessage);
+
         let initial_command = Command::batch(vec![
             Command::perform(async { initial_text }, Message::ContentChanged),
-            Command::perform(async {}, |_| {
-                Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
-            }),
+            initial_note_load_command,
         ]);
         (editor_instance, initial_command)
     }
@@ -66,35 +71,79 @@ impl Application for Editor {
                 self.content.perform(action);
                 self.markdown_text = self.content.text();
                 self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                Command::none()
             }
             Message::ContentChanged(new_content) => {
                 self.content = text_editor::Content::with_text(&new_content);
                 self.markdown_text = new_content;
                 self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
-                self.note_explorer.update(note_explorer_message);
+                // Propagate the update to the note explorer and return its command
+                self.note_explorer
+                    .update(note_explorer_message)
+                    .map(Message::NoteExplorerMessage)
             }
             Message::NoteSelected(note_path) => {
-                let full_note_path = format!("{}/{}/note1.md", self.notebook_path, note_path); // Assuming note1.md inside each directory
-                let load_command = Command::perform(
-                    async {
-                        match std::fs::read_to_string(full_note_path) {
-                            Ok(content) => content,
-                            Err(err) => {
-                                eprintln!("Failed to read note file: {}", err);
-                                String::new() // Return an empty string on error
-                            }
-                        }
-                    },
-                    Message::ContentChanged,
+                eprintln!(
+                    "Editor: NoteSelected message received for path: {}",
+                    note_path
                 );
-                return load_command;
+                let notebook_path_clone_editor = self.notebook_path.clone(); // Clone for the first async block
+                let notebook_path_clone_explorer = self.notebook_path.clone(); // Clone for the second async block
+                let note_path_clone_editor = note_path.clone(); // Clone for the first async block
+                let note_path_clone_explorer = note_path.clone(); // Clone for the second async block
+
+                Command::batch(vec![
+                    // Load content into the main editor
+                    Command::perform(
+                        async move {
+                            let full_note_path = format!(
+                                "{}/{}/{}.md",
+                                notebook_path_clone_editor,
+                                note_path_clone_editor,
+                                note_path_clone_editor
+                            );
+                            match std::fs::read_to_string(full_note_path) {
+                                Ok(content) => content,
+                                Err(err) => {
+                                    eprintln!("Failed to read note file for editor: {}", err);
+                                    String::new() // Return an empty string on error
+                                }
+                            }
+                        },
+                        Message::ContentChanged,
+                    ),
+                    // Load content and display it in the note explorer area
+                    Command::perform(
+                        async move {
+                            let full_note_path_for_explorer = format!(
+                                "{}/{}/{}.md",
+                                notebook_path_clone_explorer,
+                                note_path_clone_explorer,
+                                note_path_clone_explorer
+                            );
+                            match std::fs::read_to_string(full_note_path_for_explorer) {
+                                Ok(content) => content,
+                                Err(err) => {
+                                    eprintln!("Failed to read note file for explorer: {}", err);
+                                    String::from("Error loading content.") // Indicate error
+                                }
+                            }
+                        },
+                        |content| {
+                            Message::NoteExplorerMessage(note_explorer::Message::DisplayContent(
+                                content,
+                            ))
+                        },
+                    ),
+                ])
             }
             Message::OpenNotebook => {
                 use native_dialog::FileDialog;
 
-                let command = Command::perform(
+                Command::perform(
                     async move {
                         let folder = FileDialog::new().show_open_single_dir().unwrap();
                         folder
@@ -104,20 +153,22 @@ impl Application for Editor {
                             let path_str = path.to_string_lossy().to_string();
                             Message::NewNotebookPathSelected(path_str)
                         } else {
-                            // User cancelled the dialog
-                            Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
+                            // User cancelled the dialog - tell note explorer to show the list
+                            Message::NoteExplorerMessage(note_explorer::Message::ShowList)
                         }
                     },
-                );
-                return command;
+                )
             }
             Message::NewNotebookPathSelected(path_str) => {
+                // Update the notebook path and trigger a load of notes in the explorer
                 self.notebook_path = path_str.clone();
-                self.note_explorer.update(note_explorer::Message::LoadNotes);
                 self.note_explorer.notebook_path = path_str;
+                // The LoadNotes message in NoteExplorer will automatically switch to list view
+                self.note_explorer
+                    .update(note_explorer::Message::LoadNotes)
+                    .map(Message::NoteExplorerMessage)
             }
         }
-        Command::none()
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
@@ -138,9 +189,14 @@ impl Application for Editor {
         let editor_container_element: Element<'_, Self::Message, Self::Theme> =
             editor_container.into();
 
-        // Display the HTML output
-        let html_display = Text::new(self.html_output.clone()).width(Length::FillPortion(4));
-        let html_display_element: Element<'_, Self::Message, Self::Theme> = html_display.into();
+        // Display the HTML output in a scrollable area
+        let html_display = Text::new(self.html_output.clone());
+        let html_display_scrollable = Scrollable::new(html_display);
+        let html_display_element: Element<'_, Self::Message, Self::Theme> =
+            html_display_scrollable.into();
+
+        let html_container = Container::new(html_display_element).width(Length::FillPortion(4));
+        let html_container_element: Element<'_, Self::Message, Self::Theme> = html_container.into();
 
         // Create a top bar with an "Open Notebook" button
         let top_bar = Row::new()
@@ -154,9 +210,9 @@ impl Application for Editor {
             .width(Length::Fill);
 
         let content_row = Row::new()
-            .push(note_explorer_view)
-            .push(editor_container_element)
-            .push(html_display_element)
+            .push(note_explorer_view) // Note Explorer is now on the left
+            .push(editor_container_element) // Editor is in the middle
+            .push(html_container_element) // HTML preview is on the right
             .spacing(10)
             .padding(10)
             .width(Length::Fill)
