@@ -2,6 +2,8 @@
 mod configuration;
 #[path = "components/editor/editor.rs"]
 mod editor;
+//#[path = "notebook_io.rs"] // Remove this path
+mod notebook; // Declare the new notebook module
 
 use std::process::exit;
 
@@ -14,7 +16,7 @@ fn main() -> iced::Result {
             println!("Theme: {}", config.theme);
             let settings = iced::Settings {
                 window: iced::window::Settings {
-                    size: iced::Size::new(600.0, 400.0),
+                    size: iced::Size::new(1000.0, 800.0),
                     ..iced::window::Settings::default()
                 },
                 flags: config,

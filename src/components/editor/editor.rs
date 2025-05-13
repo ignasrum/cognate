@@ -1,8 +1,9 @@
-use iced::widget::{Column, Container, Row, Scrollable, Text, button, text_editor};
+use iced::widget::{Column, Container, Row, Scrollable, Text, button, text_editor, text_input};
 use iced::{Application, Command, Element, Length, Theme};
 use pulldown_cmark::{Options, Parser, html};
 
 use crate::configuration::Configuration;
+use crate::notebook::{self, NoteMetadata}; // Import from the new notebook module
 
 #[path = "../../configuration/theme.rs"]
 mod local_theme;
@@ -14,9 +15,14 @@ pub enum Message {
     Edit(text_editor::Action),
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
-    NoteSelected(String), // This message is now sent from NoteExplorer via map to Editor
+    NoteSelected(String),
     OpenNotebook,
     NewNotebookPathSelected(String),
+    // New messages for label management
+    NewLabelInputChanged(String),
+    AddLabel,
+    RemoveLabel(String),
+    MetadataSaved(Result<(), String>),
 }
 
 pub struct Editor {
@@ -25,36 +31,36 @@ pub struct Editor {
     configuration: Configuration,
     markdown_text: String,
     html_output: String,
-    note_explorer: note_explorer::NoteExplorer,
+    note_explorer: note_explorer::NoteExplorer, // NoteExplorer struct still lives here
     notebook_path: String,
-    selected_note_path: Option<String>, // Keep track of the selected note path
-    selected_note_labels: Vec<String>,  // Store labels of the selected note
+    selected_note_path: Option<String>,
+    selected_note_labels: Vec<String>,
+    new_label_text: String,
 }
 
 impl Application for Editor {
     type Executor = iced::executor::Default;
     type Message = Message;
-    type Theme = Theme; // iced::Theme
-    type Flags = Configuration; // This is how you pass your config
+    type Theme = Theme;
+    type Flags = Configuration;
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        // `flags` is the Configuration instance passed from main.rs
-        let initial_text = String::new(); // Changed to start with an empty string
+        let initial_text = String::new();
         let mut editor_instance = Editor {
             content: text_editor::Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             configuration: flags,
             markdown_text: String::new(),
             html_output: String::new(),
-            note_explorer: note_explorer::NoteExplorer::new("".to_string()), // Start with empty path
-            notebook_path: "".to_string(),    // Start with empty path
-            selected_note_path: None,         // No note selected initially
-            selected_note_labels: Vec::new(), // No labels initially
+            note_explorer: note_explorer::NoteExplorer::new("".to_string()),
+            notebook_path: "".to_string(),
+            selected_note_path: None,
+            selected_note_labels: Vec::new(),
+            new_label_text: String::new(),
         };
 
-        // Load initial notes using the command from note_explorer
-        // Note: The initial LoadNotes will likely fail if no notebook is selected,
-        // but this setup allows the NoteExplorer to manage its initial state.
+        // The initial load notes command should now come from the note_explorer module,
+        // which will call the load_notes_metadata function in the notebook module.
         let initial_note_load_command = editor_instance
             .note_explorer
             .update(note_explorer::Message::LoadNotes)
@@ -68,35 +74,32 @@ impl Application for Editor {
     }
 
     fn title(&self) -> String {
-        String::from("Configured Text Editor")
+        String::from("Cognate - Note Taking App")
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::Edit(action) => {
-                // Process edits only if a note is selected
                 if self.selected_note_path.is_some() {
                     self.content.perform(action);
                     self.markdown_text = self.content.text();
                     self.html_output = convert_markdown_to_html(self.markdown_text.clone());
+                    // TODO: Implement saving mechanism after a delay or on explicit action
                 }
                 Command::none()
             }
             Message::ContentChanged(new_content) => {
-                // ContentChanged can be triggered internally (e.g., by loading a note)
-                // so it should always update the content, regardless of user interaction.
                 self.content = text_editor::Content::with_text(&new_content);
                 self.markdown_text = new_content;
                 self.html_output = convert_markdown_to_html(self.markdown_text.clone());
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
-                // Check if the message is NotesLoaded before updating the NoteExplorer
+                // The NotesLoaded message now contains the correct NoteMetadata type
                 if let note_explorer::Message::NotesLoaded(_) = note_explorer_message {
                     eprintln!(
                         "Editor: Received NotesLoaded from NoteExplorer. Clearing editor state."
                     );
-                    // If the NoteExplorer finished loading notes, clear the selected note state
                     self.selected_note_path = None;
                     self.selected_note_labels = Vec::new();
                     self.content = text_editor::Content::with_text("");
@@ -104,7 +107,7 @@ impl Application for Editor {
                     self.html_output = String::new();
                 }
 
-                // Propagate other note explorer messages
+                // Propagate the update call to the NoteExplorer instance
                 self.note_explorer
                     .update(note_explorer_message)
                     .map(Message::NoteExplorerMessage)
@@ -114,10 +117,10 @@ impl Application for Editor {
                     "Editor: NoteSelected message received for path: {}",
                     note_path
                 );
-                // Update the selected note path
                 self.selected_note_path = Some(note_path.clone());
+                self.new_label_text = String::new();
 
-                // Find the selected note in the note_explorer's list to get labels
+                // Look up the note in the note_explorer's notes list (which now holds the correct type)
                 if let Some(note) = self
                     .note_explorer
                     .notes
@@ -129,10 +132,9 @@ impl Application for Editor {
                     self.selected_note_labels = Vec::new();
                 }
 
-                let notebook_path_clone = self.notebook_path.clone(); // Clone for the async block
-                let note_path_clone = note_path.clone(); // Clone for the async block
+                let notebook_path_clone = self.notebook_path.clone();
+                let note_path_clone = note_path.clone();
 
-                // Load content into the main editor and update HTML preview
                 Command::perform(
                     async move {
                         let full_note_path =
@@ -141,7 +143,7 @@ impl Application for Editor {
                             Ok(content) => content,
                             Err(err) => {
                                 eprintln!("Failed to read note file for editor: {}", err);
-                                String::new() // Return an empty string on error
+                                String::new()
                             }
                         }
                     },
@@ -161,28 +163,95 @@ impl Application for Editor {
                             let path_str = path.to_string_lossy().to_string();
                             Message::NewNotebookPathSelected(path_str)
                         } else {
-                            // User cancelled the dialog - clear editor content and selected note state
                             Message::ContentChanged(String::new())
                         }
                     },
                 )
             }
             Message::NewNotebookPathSelected(path_str) => {
-                // Update the notebook path and trigger a load of notes in the explorer
                 self.notebook_path = path_str.clone();
                 self.note_explorer.notebook_path = path_str;
 
-                // Clear the editor content, selected note, and labels when a new notebook is loaded
                 self.content = text_editor::Content::with_text("");
                 self.markdown_text = String::new();
                 self.html_output = String::new();
                 self.selected_note_path = None;
                 self.selected_note_labels = Vec::new();
+                self.new_label_text = String::new();
 
-                // The LoadNotes message in NoteExplorer will fetch the new list
                 self.note_explorer
                     .update(note_explorer::Message::LoadNotes)
                     .map(Message::NoteExplorerMessage)
+            }
+            Message::NewLabelInputChanged(text) => {
+                self.new_label_text = text;
+                Command::none()
+            }
+            Message::AddLabel => {
+                if let Some(selected_path) = &self.selected_note_path {
+                    let label = self.new_label_text.trim().to_string();
+                    if !label.is_empty() && !self.selected_note_labels.contains(&label) {
+                        self.selected_note_labels.push(label.clone());
+
+                        if let Some(note) = self
+                            .note_explorer
+                            .notes
+                            .iter_mut()
+                            .find(|n| n.rel_path == *selected_path)
+                        {
+                            note.labels.push(label);
+                        }
+
+                        self.new_label_text = String::new();
+
+                        let notebook_path = self.notebook_path.clone();
+                        let notes_to_save = self.note_explorer.notes.clone();
+                        return Command::perform(
+                            async move {
+                                // Call the save_metadata function from the notebook module
+                                notebook::save_metadata(&notebook_path, &notes_to_save[..])
+                                    .map_err(|e| e.to_string())
+                            },
+                            Message::MetadataSaved,
+                        );
+                    }
+                }
+                Command::none()
+            }
+            Message::RemoveLabel(label_to_remove) => {
+                if let Some(selected_path) = &self.selected_note_path {
+                    self.selected_note_labels
+                        .retain(|label| label != &label_to_remove);
+
+                    if let Some(note) = self
+                        .note_explorer
+                        .notes
+                        .iter_mut()
+                        .find(|n| n.rel_path == *selected_path)
+                    {
+                        note.labels.retain(|label| label != &label_to_remove);
+                    }
+
+                    let notebook_path = self.notebook_path.clone();
+                    let notes_to_save = self.note_explorer.notes.clone();
+                    return Command::perform(
+                        async move {
+                            // Call the save_metadata function from the notebook module
+                            notebook::save_metadata(&notebook_path, &notes_to_save[..])
+                                .map_err(|e| e.to_string())
+                        },
+                        Message::MetadataSaved,
+                    );
+                }
+                Command::none()
+            }
+            Message::MetadataSaved(result) => {
+                if let Err(err) = result {
+                    eprintln!("Error saving metadata: {}", err);
+                } else {
+                    eprintln!("Metadata saved successfully.");
+                }
+                Command::none()
             }
         }
     }
@@ -198,7 +267,6 @@ impl Application for Editor {
             .width(Length::FillPortion(2))
             .into();
 
-        // Conditionally attach the on_action handler based on whether a note is selected
         let mut editor_widget = text_editor(&self.content).height(Length::Fill);
 
         if self.selected_note_path.is_some() {
@@ -211,7 +279,6 @@ impl Application for Editor {
         let editor_container_element: Element<'_, Self::Message, Self::Theme> =
             editor_container.into();
 
-        // Display the HTML output in a scrollable area
         let html_display = Text::new(self.html_output.clone());
         let html_display_scrollable = Scrollable::new(html_display);
         let html_display_element: Element<'_, Self::Message, Self::Theme> =
@@ -220,7 +287,6 @@ impl Application for Editor {
         let html_container = Container::new(html_display_element).width(Length::FillPortion(4));
         let html_container_element: Element<'_, Self::Message, Self::Theme> = html_container.into();
 
-        // Create a top bar with an \"Open Notebook\" button
         let top_bar = Row::new()
             .push(
                 button("Open Notebook")
@@ -232,33 +298,44 @@ impl Application for Editor {
             .width(Length::Fill);
 
         let content_row = Row::new()
-            .push(note_explorer_view) // Note Explorer is on the left, always showing the list
-            .push(editor_container_element) // Editor is in the middle
-            .push(html_container_element) // HTML preview is on the right
+            .push(note_explorer_view)
+            .push(editor_container_element)
+            .push(html_container_element)
             .spacing(10)
             .padding(10)
             .width(Length::Fill)
-            .height(Length::FillPortion(10)); // Give content row most of the vertical space
+            .height(Length::FillPortion(10));
 
-        // Create the bottom bar for labels
         let mut labels_row = Row::new().spacing(10).padding(5).width(Length::Fill);
 
-        if !self.selected_note_labels.is_empty() {
+        if self.selected_note_path.is_some() {
             labels_row = labels_row.push(Text::new("Labels: "));
-            for label in &self.selected_note_labels {
-                labels_row = labels_row.push(Text::new(label.clone()));
+            if self.selected_note_labels.is_empty() {
+                labels_row = labels_row.push(Text::new("No labels"));
+            } else {
+                for label in &self.selected_note_labels {
+                    labels_row = labels_row.push(
+                        button(Text::new(label.clone()))
+                            .on_press(Message::RemoveLabel(label.clone())),
+                    );
+                }
             }
-        } else if self.selected_note_path.is_some() {
-            // Show "No labels" if a note is selected but has no labels
-            labels_row = labels_row.push(Text::new("No labels"));
+
+            labels_row = labels_row
+                .push(
+                    text_input("New Label", &self.new_label_text)
+                        .on_input(Message::NewLabelInputChanged)
+                        .on_submit(Message::AddLabel)
+                        .width(Length::Fixed(150.0)),
+                )
+                .push(button("Add Label").padding(5).on_press(Message::AddLabel));
         } else {
-            // Show nothing or a placeholder if no note is selected
             labels_row = labels_row.push(Text::new(""));
         }
 
         let bottom_bar: Element<'_, Self::Message, Self::Theme> = Container::new(labels_row)
             .width(Length::Fill)
-            .height(Length::FillPortion(1)) // Give bottom bar remaining vertical space
+            .height(Length::FillPortion(1))
             .into();
 
         let main_content = Column::new()
@@ -282,7 +359,6 @@ fn convert_markdown_to_html(markdown_input: String) -> String {
     options.insert(Options::ENABLE_STRIKETHROUGH);
     let parser = Parser::new_ext(&markdown_input, options);
 
-    // Write to String buffer.
     let mut html_output: String = String::new();
     html::push_html(&mut html_output, parser);
 

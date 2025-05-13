@@ -1,30 +1,23 @@
 use iced::widget::{Button, Column, Scrollable, Text};
 use iced::{Command, Element};
-use serde::{Deserialize, Serialize};
-use std::fs;
+use serde::{Deserialize, Serialize}; // Keep imports for structs if they were still here, but they moved
+use std::fs; // Keep imports for file system operations if needed, but load logic moved
+
+// Import structs and load_notes_metadata from the notebook module
+use crate::notebook::{self, NoteMetadata, NotebookMetadata};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    NoteSelected(String), // This message will now only trigger the Editor to load
+    NoteSelected(String),
     LoadNotes,
-    NotesLoaded(Vec<NoteMetadata>),
+    NotesLoaded(Vec<NoteMetadata>), // Now uses NoteMetadata from the notebook module
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteMetadata {
-    pub rel_path: String,
-    #[serde(default)] // Use default to handle notes without a labels field
-    pub labels: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotebookMetadata {
-    pub notes: Vec<NoteMetadata>,
-}
+// NoteMetadata and NotebookMetadata structs definitions are removed from here
 
 #[derive(Debug, Default)]
 pub struct NoteExplorer {
-    pub notes: Vec<NoteMetadata>,
+    pub notes: Vec<NoteMetadata>, // Now uses NoteMetadata from the notebook module
     pub notebook_path: String,
 }
 
@@ -44,7 +37,11 @@ impl NoteExplorer {
                     self.notebook_path
                 );
                 let notebook_path = self.notebook_path.clone();
-                Command::perform(load_notes_metadata(notebook_path), Message::NotesLoaded)
+                // Call the load_notes_metadata function from the notebook module
+                Command::perform(
+                    notebook::load_notes_metadata(notebook_path),
+                    Message::NotesLoaded,
+                )
             }
             Message::NotesLoaded(notes) => {
                 eprintln!(
@@ -54,10 +51,7 @@ impl NoteExplorer {
                 self.notes = notes;
                 Command::none()
             }
-            Message::NoteSelected(_path) => {
-                // Marked as unused - logic moved to Editor
-                Command::none()
-            }
+            Message::NoteSelected(_path) => Command::none(),
         }
     }
 
@@ -79,43 +73,4 @@ impl NoteExplorer {
     }
 }
 
-async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
-    let file_path = format!("{}/metadata.json", notebook_path);
-    eprintln!(
-        "load_notes_metadata: Attempting to read file: {}",
-        file_path
-    );
-
-    let contents = match fs::read_to_string(&file_path) {
-        Ok(c) => {
-            eprintln!("load_notes_metadata: Successfully read file: {}", file_path);
-            c
-        }
-        Err(err) => {
-            eprintln!(
-                "load_notes_metadata: Error reading metadata file {}: {}",
-                file_path, err
-            );
-            return Vec::new();
-        }
-    };
-
-    let metadata: NotebookMetadata = match serde_json::from_str(&contents) {
-        Ok(m) => {
-            eprintln!("load_notes_metadata: Successfully parsed metadata.");
-            m
-        }
-        Err(err) => {
-            eprintln!(
-                "load_notes_metadata: Error parsing metadata from {}: {}",
-                file_path, err
-            );
-            // This might happen if the file is empty or malformed initially
-            // Consider handling this case more gracefully, maybe by returning an empty NotebookMetadata
-            // For now, we return an empty vec of notes
-            return Vec::new();
-        }
-    };
-
-    metadata.notes
-}
+// load_notes_metadata function definition is removed from here
