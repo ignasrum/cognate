@@ -1,4 +1,4 @@
-use iced::widget::{Container, Row, Text, row, text_editor};
+use iced::widget::{Column, Container, Row, Text, button, column, text_editor};
 use iced::{Application, Command, Element, Length, Theme};
 use pulldown_cmark::{Options, Parser, html};
 
@@ -15,6 +15,7 @@ pub enum Message {
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
     NoteSelected(String),
+    OpenNotebook,
 }
 
 pub struct Editor {
@@ -87,6 +88,12 @@ impl Application for Editor {
                 );
                 return load_command;
             }
+            Message::OpenNotebook => {
+                // For now, just reload the notes from the example notebook
+                return Command::perform(async {}, |_| {
+                    Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
+                });
+            }
         }
         Command::none()
     }
@@ -113,6 +120,17 @@ impl Application for Editor {
         let html_display = Text::new(self.html_output.clone()).width(Length::FillPortion(4));
         let html_display_element: Element<'_, Self::Message, Self::Theme> = html_display.into();
 
+        // Create a top bar with an "Open Notebook" button
+        let top_bar = Row::new()
+            .push(
+                button("Open Notebook")
+                    .padding(5)
+                    .on_press(Message::OpenNotebook),
+            )
+            .spacing(10)
+            .padding(5)
+            .width(Length::Fill);
+
         let content_row = Row::new()
             .push(note_explorer_view)
             .push(editor_container_element)
@@ -122,7 +140,9 @@ impl Application for Editor {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        Container::new(content_row)
+        let main_content = Column::new().push(top_bar).push(content_row);
+
+        Container::new(main_content)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
