@@ -600,8 +600,14 @@ impl Application for Editor {
 
         // Only show "Show Visualizer" button if a notebook is open
         if !self.notebook_path.is_empty() {
+            // Change button text based on show_visualizer state
+            let visualizer_button_text = if self.show_visualizer {
+                "Hide Visualizer"
+            } else {
+                "Show Visualizer"
+            };
             top_bar = top_bar.push(
-                button("Show Visualizer")
+                button(visualizer_button_text) // Use the dynamic text
                     .padding(5)
                     .on_press(Message::ToggleVisualizer),
             );
