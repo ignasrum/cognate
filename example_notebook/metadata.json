@@ -3,7 +3,8 @@
     {
       "rel_path": "note1",
       "labels": [
-        "label1"
+        "label1",
+        "test"
       ]
     },
     {

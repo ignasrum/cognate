@@ -3,6 +3,7 @@ use iced::{
     Element, Length, Theme,
     widget::{Column, Container, Row, Scrollable, Text},
 }; // Import necessary widgets
+use std::collections::HashSet; // To easily get unique connected notes
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
@@ -48,6 +49,18 @@ impl Visualizer {
         } else {
             notes_list = notes_list.push(Text::new("Notes in Notebook:"));
             for note in &self.notes {
+                // Find notes connected to the current note via shared labels
+                let mut connected_note_paths = HashSet::new();
+                for label in &note.labels {
+                    for other_note in &self.notes {
+                        // Ensure it's a different note and it shares the label
+                        if other_note.rel_path != note.rel_path && other_note.labels.contains(label)
+                        {
+                            connected_note_paths.insert(other_note.rel_path.clone());
+                        }
+                    }
+                }
+
                 // Create the labels element separately to help with type inference
                 let labels_element: Element<'_, Message, Theme> = if note.labels.is_empty() {
                     Text::new("None").into()
@@ -55,12 +68,31 @@ impl Visualizer {
                     Text::new(note.labels.join(", ")).into()
                 };
 
+                // Create the connected notes element
+                let connected_notes_element: Element<'_, Message, Theme> =
+                    if connected_note_paths.is_empty() {
+                        Text::new("None").into()
+                    } else {
+                        // Convert the HashSet to a sorted Vec for consistent display
+                        let mut sorted_connected_notes: Vec<_> =
+                            connected_note_paths.into_iter().collect();
+                        sorted_connected_notes.sort();
+                        Text::new(sorted_connected_notes.join(", ")).into()
+                    };
+
                 let note_element = Column::new()
                     .push(Text::new(format!("Path: {}", note.rel_path)))
                     .push(
                         Row::new()
                             .push(Text::new("Labels: "))
                             .push(labels_element) // Push the explicitly typed element
+                            .spacing(5),
+                    )
+                    .push(
+                        // Add the connected notes row
+                        Row::new()
+                            .push(Text::new("Connected to: "))
+                            .push(connected_notes_element)
                             .spacing(5),
                     )
                     .spacing(5)
