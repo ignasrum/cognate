@@ -107,7 +107,7 @@ pub async fn save_note_content(
     fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))
 }
 
-// New function to create a new note
+// Function to create a new note
 pub async fn create_new_note(
     notebook_path: &str,
     rel_path: &str,
@@ -170,4 +170,66 @@ pub async fn create_new_note(
 
     eprintln!("New note created successfully: {}", rel_path);
     Ok(new_note_metadata) // Return the metadata of the newly created note
+}
+
+// New function to delete a note
+pub async fn delete_note(
+    notebook_path: &str,
+    rel_path: &str,
+    notes: &mut Vec<NoteMetadata>, // Pass the notes vector to update
+) -> Result<(), String> {
+    eprintln!("Attempting to delete note with rel_path: {}", rel_path);
+    let note_dir_path = Path::new(notebook_path).join(rel_path);
+
+    // Remove the note metadata from the in-memory notes vector
+    let initial_len = notes.len();
+    notes.retain(|note| note.rel_path != rel_path);
+    if notes.len() == initial_len {
+        // Note with this rel_path was not found in the metadata
+        eprintln!(
+            "Warning: Note with rel_path '{}' not found in metadata.",
+            rel_path
+        );
+        // We can still attempt to delete the directory on the filesystem
+    }
+
+    // Attempt to delete the note directory recursively
+    if note_dir_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&note_dir_path) {
+            eprintln!(
+                "Error deleting note directory {}: {}",
+                note_dir_path.display(),
+                e
+            );
+            // We might want to add the note back to the in-memory vector if fs deletion failed
+            // For now, we'll just return an error.
+            return Err(format!("Failed to delete note directory: {}", e));
+        }
+        eprintln!(
+            "Note directory deleted successfully: {}",
+            note_dir_path.display()
+        );
+    } else {
+        eprintln!(
+            "Warning: Note directory not found on filesystem for rel_path '{}'.",
+            rel_path
+        );
+        // If the directory didn't exist but it was in metadata, we proceed to save metadata
+    }
+
+    // Save the updated metadata file
+    if let Err(e) = save_metadata(notebook_path, notes) {
+        eprintln!(
+            "Critical Error: Failed to save metadata after deleting note: {}",
+            e
+        );
+        // This is a critical error, the metadata file is out of sync
+        return Err(format!(
+            "Failed to save metadata after deleting note: {}",
+            e
+        ));
+    }
+
+    eprintln!("Note deletion process completed for: {}", rel_path);
+    Ok(())
 }

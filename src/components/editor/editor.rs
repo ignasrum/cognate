@@ -3,9 +3,9 @@ use iced::widget::{
     text_input,
 }; // Import Iced TextInput and alias it
 use iced::{Application, Command, Element, Length, Theme};
-use native_dialog::FileDialog;
-use pulldown_cmark::{Options, Parser, html}; // Keep FileDialog import
-// Removed: use native_dialog::TextInput; // Explicitly import FileDialog and TextInput
+use native_dialog::FileDialog; // Keep FileDialog import
+use native_dialog::MessageDialog;
+use pulldown_cmark::{Options, Parser, html}; // Import MessageDialog for confirmation
 
 use crate::configuration::Configuration;
 use crate::notebook::{self, NoteMetadata};
@@ -36,6 +36,9 @@ pub enum Message {
     CreateNote,                  // Message to finalize new note creation
     NoteCreated(Result<NoteMetadata, String>), // Message indicating note creation result
     CancelNewNote,               // Message to cancel new note creation
+    DeleteNote,                  // Message to trigger the delete confirmation
+    ConfirmDeleteNote(bool),     // Message receiving the confirmation result
+    NoteDeleted(Result<(), String>), // Message indicating note deletion result
 }
 
 pub struct Editor {
@@ -365,8 +368,6 @@ impl Application for Editor {
                             self.selected_note_labels = Vec::new();
                         }
 
-                        // Load content only if not in visualizer mode (though clicking in visualizer usually means you are in it)
-                        // However, for consistency with NoteSelected, we include the logic.
                         // Also, switch back to the editor view when a note is selected in the visualizer
                         self.show_visualizer = false;
 
@@ -460,6 +461,78 @@ impl Application for Editor {
                     }
                 }
             }
+            Message::DeleteNote => {
+                if let Some(selected_path) = &self.selected_note_path {
+                    let note_path_clone = selected_path.clone();
+                    // Show confirmation dialog
+                    Command::perform(
+                        async move {
+                            MessageDialog::new()
+                                .set_type(native_dialog::MessageType::Warning)
+                                .set_title("Confirm Deletion")
+                                .set_text(&format!(
+                                    "Are you sure you want to delete the note '{}'?",
+                                    note_path_clone
+                                ))
+                                .show_confirm()
+                                .unwrap_or(false) // Handle potential error showing dialog
+                        },
+                        Message::ConfirmDeleteNote,
+                    )
+                } else {
+                    // Should not happen if button is only shown when a note is selected
+                    Command::none()
+                }
+            }
+            Message::ConfirmDeleteNote(confirmed) => {
+                if confirmed {
+                    if let Some(selected_path) = self.selected_note_path.take() {
+                        // Use take() to move ownership
+                        let notebook_path_clone = self.notebook_path.clone();
+                        let mut current_notes = self.note_explorer.notes.clone(); // Clone for the async block
+
+                        Command::perform(
+                            async move {
+                                notebook::delete_note(
+                                    &notebook_path_clone,
+                                    &selected_path,
+                                    &mut current_notes,
+                                )
+                                .await
+                            },
+                            Message::NoteDeleted,
+                        )
+                    } else {
+                        Command::none() // No note was selected to delete
+                    }
+                } else {
+                    eprintln!("Note deletion cancelled by user.");
+                    Command::none() // User cancelled
+                }
+            }
+            Message::NoteDeleted(result) => {
+                match result {
+                    Ok(()) => {
+                        eprintln!("Note deleted successfully.");
+                        // Clear the editor state and reload notes
+                        self.selected_note_path = None;
+                        self.selected_note_labels = Vec::new();
+                        self.content = text_editor::Content::with_text("");
+                        self.markdown_text = String::new();
+                        self.html_output = String::new();
+
+                        // Reload notes in NoteExplorer and Visualizer
+                        self.note_explorer
+                            .update(note_explorer::Message::LoadNotes)
+                            .map(Message::NoteExplorerMessage)
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to delete note: {}", err);
+                        // Maybe show an error dialog here
+                        Command::none()
+                    }
+                }
+            }
         }
     }
 
@@ -473,6 +546,15 @@ impl Application for Editor {
         // Add "New Note" button only if no new note input is currently shown
         if !self.show_new_note_input {
             top_bar = top_bar.push(button("New Note").padding(5).on_press(Message::NewNote));
+        }
+
+        // Add "Delete Note" button only if a note is selected and not showing new note input
+        if self.selected_note_path.is_some() && !self.show_new_note_input {
+            top_bar = top_bar.push(
+                button("Delete Note")
+                    .padding(5)
+                    .on_press(Message::DeleteNote),
+            );
         }
 
         top_bar = top_bar
