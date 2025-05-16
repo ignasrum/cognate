@@ -1,6 +1,11 @@
-use iced::widget::{Column, Container, Row, Scrollable, Text, button, text_editor, text_input};
+use iced::widget::{
+    Column, Container, Row, Scrollable, Text, TextInput as IcedTextInput, button, text_editor,
+    text_input,
+}; // Import Iced TextInput and alias it
 use iced::{Application, Command, Element, Length, Theme};
-use pulldown_cmark::{Options, Parser, html};
+use native_dialog::FileDialog;
+use pulldown_cmark::{Options, Parser, html}; // Keep FileDialog import
+// Removed: use native_dialog::TextInput; // Explicitly import FileDialog and TextInput
 
 use crate::configuration::Configuration;
 use crate::notebook::{self, NoteMetadata};
@@ -26,6 +31,11 @@ pub enum Message {
     NoteContentSaved(Result<(), String>),
     ToggleVisualizer,
     VisualizerMessage(visualizer::Message), // New message to handle visualizer actions
+    NewNote,                     // Message to trigger the new note creation flow (show input)
+    NewNoteInputChanged(String), // Message for updating the new note path input
+    CreateNote,                  // Message to finalize new note creation
+    NoteCreated(Result<NoteMetadata, String>), // Message indicating note creation result
+    CancelNewNote,               // Message to cancel new note creation
 }
 
 pub struct Editor {
@@ -41,6 +51,9 @@ pub struct Editor {
     selected_note_path: Option<String>,
     selected_note_labels: Vec<String>,
     new_label_text: String,
+    // State for new note creation UI
+    show_new_note_input: bool,
+    new_note_path_input: String,
 }
 
 impl Application for Editor {
@@ -51,7 +64,7 @@ impl Application for Editor {
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         let initial_text = String::new();
-        let mut editor_instance = Editor {
+        let editor_instance = Editor {
             content: text_editor::Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             configuration: flags,
@@ -64,14 +77,11 @@ impl Application for Editor {
             selected_note_path: None,
             selected_note_labels: Vec::new(),
             new_label_text: String::new(),
+            show_new_note_input: false, // Initially hide the new note input
+            new_note_path_input: String::new(),
         };
 
-        let initial_note_load_command = editor_instance
-            .note_explorer
-            .update(note_explorer::Message::LoadNotes)
-            .map(Message::NoteExplorerMessage);
-
-        let initial_command = Command::batch(vec![initial_note_load_command]);
+        let initial_command = Command::none();
         (editor_instance, initial_command)
     }
 
@@ -113,13 +123,29 @@ impl Application for Editor {
             Message::NoteExplorerMessage(note_explorer_message) => {
                 if let note_explorer::Message::NotesLoaded(notes) = note_explorer_message.clone() {
                     eprintln!(
-                        "Editor: Received NotesLoaded from NoteExplorer. Clearing editor state."
+                        "Editor: Received NotesLoaded from NoteExplorer. Updating editor state."
                     );
-                    self.selected_note_path = None;
-                    self.selected_note_labels = Vec::new();
-                    self.content = text_editor::Content::with_text("");
-                    self.markdown_text = String::new();
-                    self.html_output = String::new();
+                    // If notes were loaded, we might want to clear the editor or select the first note
+                    // For now, let's keep the current note selected if it still exists, otherwise clear.
+                    if let Some(selected_path) = &self.selected_note_path {
+                        if notes.iter().any(|n| &n.rel_path == selected_path) {
+                            // Keep the current note selected, no need to change content
+                        } else {
+                            // Current note no longer exists, clear editor
+                            self.selected_note_path = None;
+                            self.selected_note_labels = Vec::new();
+                            self.content = text_editor::Content::with_text("");
+                            self.markdown_text = String::new();
+                            self.html_output = String::new();
+                        }
+                    } else {
+                        // No note was selected, clear editor
+                        self.selected_note_path = None;
+                        self.selected_note_labels = Vec::new();
+                        self.content = text_editor::Content::with_text("");
+                        self.markdown_text = String::new();
+                        self.html_output = String::new();
+                    }
 
                     self.visualizer
                         .update(visualizer::Message::UpdateNotes(notes));
@@ -145,9 +171,11 @@ impl Application for Editor {
                 {
                     self.selected_note_labels = note.labels.clone();
                 } else {
+                    // This case should ideally not happen if NoteExplorer's notes are up-to-date
                     self.selected_note_labels = Vec::new();
                 }
 
+                // Load content only if not in visualizer mode
                 if !self.show_visualizer {
                     let notebook_path_clone = self.notebook_path.clone();
                     let note_path_clone = note_path.clone();
@@ -160,7 +188,7 @@ impl Application for Editor {
                                 Ok(content) => content,
                                 Err(err) => {
                                     eprintln!("Failed to read note file for editor: {}", err);
-                                    String::new()
+                                    String::new() // Return empty content on error
                                 }
                             }
                         },
@@ -170,39 +198,37 @@ impl Application for Editor {
                     Command::none()
                 }
             }
-            Message::OpenNotebook => {
-                use native_dialog::FileDialog;
-
-                Command::perform(
-                    async move {
-                        let folder = FileDialog::new().show_open_single_dir().unwrap();
-                        folder
-                    },
-                    |folder: Option<std::path::PathBuf>| {
-                        if let Some(path) = folder {
-                            let path_str = path.to_string_lossy().to_string();
-                            Message::NewNotebookPathSelected(path_str)
-                        } else {
-                            Message::NewNotebookPathSelected(String::new())
-                        }
-                    },
-                )
-            }
+            Message::OpenNotebook => Command::perform(
+                async move {
+                    let folder = FileDialog::new().show_open_single_dir().unwrap();
+                    folder
+                },
+                |folder: Option<std::path::PathBuf>| {
+                    if let Some(path) = folder {
+                        let path_str = path.to_string_lossy().to_string();
+                        Message::NewNotebookPathSelected(path_str)
+                    } else {
+                        Message::NewNotebookPathSelected(String::new())
+                    }
+                },
+            ),
             Message::NewNotebookPathSelected(path_str) => {
                 self.notebook_path = path_str.clone();
                 self.note_explorer.notebook_path = path_str;
 
+                // Clear editor state and reload notes when a new notebook is selected
                 self.content = text_editor::Content::with_text("");
                 self.markdown_text = String::new();
                 self.html_output = String::new();
                 self.selected_note_path = None;
                 self.selected_note_labels = Vec::new();
                 self.new_label_text = String::new();
-                self.show_visualizer = false;
+                self.show_visualizer = false; // Go back to editor view
                 self.visualizer
-                    .update(visualizer::Message::UpdateNotes(Vec::new()));
+                    .update(visualizer::Message::UpdateNotes(Vec::new())); // Clear visualizer notes
 
                 if !self.notebook_path.is_empty() {
+                    eprintln!("Editor: Loading notes for notebook: {}", self.notebook_path);
                     return self
                         .note_explorer
                         .update(note_explorer::Message::LoadNotes)
@@ -220,6 +246,7 @@ impl Application for Editor {
                     if !label.is_empty() && !self.selected_note_labels.contains(&label) {
                         self.selected_note_labels.push(label.clone());
 
+                        // Update the label in the note_explorer's internal notes list
                         if let Some(note) = self
                             .note_explorer
                             .notes
@@ -229,6 +256,7 @@ impl Application for Editor {
                             note.labels.push(label);
                         }
 
+                        // Update visualizer with the new label information
                         self.visualizer.update(visualizer::Message::UpdateNotes(
                             self.note_explorer.notes.clone(),
                         ));
@@ -253,6 +281,7 @@ impl Application for Editor {
                     self.selected_note_labels
                         .retain(|label| label != &label_to_remove);
 
+                    // Update the label in the note_explorer's internal notes list
                     if let Some(note) = self
                         .note_explorer
                         .notes
@@ -262,6 +291,7 @@ impl Application for Editor {
                         note.labels.retain(|label| label != &label_to_remove);
                     }
 
+                    // Update visualizer with the removed label information
                     self.visualizer.update(visualizer::Message::UpdateNotes(
                         self.note_explorer.notes.clone(),
                     ));
@@ -307,18 +337,93 @@ impl Application for Editor {
             Message::VisualizerMessage(visualizer_message) => {
                 // Handle messages from the visualizer if it were to emit any
                 self.visualizer.update(visualizer_message);
+                Command::none() // Visualizer messages don't trigger editor commands for now
+            }
+            Message::NewNote => {
+                if self.notebook_path.is_empty() {
+                    eprintln!("Cannot create a new note: No notebook is open.");
+                    Command::none() // Cannot create a note if no notebook is open
+                } else {
+                    // Show the new note input fields
+                    self.show_new_note_input = true;
+                    self.new_note_path_input = String::new(); // Clear previous input
+                    Command::none()
+                }
+            }
+            Message::NewNoteInputChanged(text) => {
+                self.new_note_path_input = text;
                 Command::none()
+            }
+            Message::CreateNote => {
+                let new_note_rel_path = self.new_note_path_input.trim().to_string();
+                if new_note_rel_path.is_empty() {
+                    eprintln!("New note name cannot be empty.");
+                    Command::none()
+                } else {
+                    // Hide the new note input fields
+                    self.show_new_note_input = false;
+                    let notebook_path = self.notebook_path.clone();
+                    let mut current_notes = self.note_explorer.notes.clone(); // Clone current notes to pass
+
+                    Command::perform(
+                        async move {
+                            notebook::create_new_note(
+                                &notebook_path,
+                                &new_note_rel_path,
+                                &mut current_notes,
+                            )
+                            .await
+                        },
+                        Message::NoteCreated,
+                    )
+                }
+            }
+            Message::CancelNewNote => {
+                // Hide the new note input fields and clear input
+                self.show_new_note_input = false;
+                self.new_note_path_input = String::new();
+                Command::none()
+            }
+            Message::NoteCreated(result) => {
+                match result {
+                    Ok(new_note_metadata) => {
+                        eprintln!("Note created successfully: {}", new_note_metadata.rel_path);
+                        // Reload the notes in NoteExplorer and Visualizer
+                        let reload_command = self
+                            .note_explorer
+                            .update(note_explorer::Message::LoadNotes)
+                            .map(Message::NoteExplorerMessage);
+
+                        // Select the newly created note after reloading
+                        let select_command = Command::perform(
+                            async { new_note_metadata.rel_path },
+                            Message::NoteSelected,
+                        );
+
+                        Command::batch(vec![reload_command, select_command])
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to create note: {}", err);
+                        Command::none()
+                    }
+                }
             }
         }
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
-        let top_bar = Row::new()
-            .push(
-                button("Open Notebook")
-                    .padding(5)
-                    .on_press(Message::OpenNotebook),
-            )
+        let mut top_bar = Row::new().push(
+            button("Open Notebook")
+                .padding(5)
+                .on_press(Message::OpenNotebook),
+        );
+
+        // Add "New Note" button only if no new note input is currently shown
+        if !self.show_new_note_input {
+            top_bar = top_bar.push(button("New Note").padding(5).on_press(Message::NewNote));
+        }
+
+        top_bar = top_bar
             .push(
                 button("Show Visualizer")
                     .padding(5)
@@ -333,6 +438,28 @@ impl Application for Editor {
             Container::new(self.visualizer.view().map(Message::VisualizerMessage)) // Correctly map visualizer messages
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .into()
+        } else if self.show_new_note_input {
+            // Display input fields for new note creation
+            Column::new()
+                .push(Text::new("Enter new note name/relative path:"))
+                .push(
+                    IcedTextInput::new("Note name...", &self.new_note_path_input)
+                        .on_input(Message::NewNoteInputChanged)
+                        .on_submit(Message::CreateNote)
+                        .width(Length::Fixed(300.0)),
+                )
+                .push(
+                    Row::new()
+                        .push(button("Create").padding(5).on_press(Message::CreateNote))
+                        .push(button("Cancel").padding(5).on_press(Message::CancelNewNote))
+                        .spacing(10),
+                )
+                .spacing(10)
+                .padding(20)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_items(iced::Alignment::Center) // Center the content
                 .into()
         } else {
             // Display the standard editor/preview layout
