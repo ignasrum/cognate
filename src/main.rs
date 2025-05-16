@@ -2,8 +2,7 @@
 mod configuration;
 #[path = "components/editor/editor.rs"]
 mod editor;
-//#[path = "notebook_io.rs"] // Remove this path
-mod notebook; // Declare the new notebook module
+mod notebook; // Use the updated notebook module
 
 use std::process::exit;
 
