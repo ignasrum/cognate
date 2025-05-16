@@ -2,8 +2,8 @@ use crate::notebook::NoteMetadata;
 use iced::{
     Element, Length, Theme,
     widget::{Column, Container, Row, Scrollable, Text},
-}; // Import necessary widgets
-use std::collections::HashSet; // To easily get unique connected notes
+};
+use std::collections::{HashMap, HashSet}; // Import HashMap and HashSet
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
@@ -32,7 +32,7 @@ impl Visualizer {
                     notes.len()
                 );
                 self.notes = notes;
-                // In a real implementation, you might need to process notes for visualization layout here
+                // No complex preprocessing needed here, grouping happens in view
             } // Handle other messages if defined
               // Message::SelectNote(path) => { /* logic for selecting a note */ }
         }
@@ -40,78 +40,84 @@ impl Visualizer {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
-        let mut notes_list = Column::new().spacing(10);
+        let mut content = Column::new().spacing(10);
 
         if self.notes.is_empty() {
-            notes_list = notes_list.push(Text::new(
+            content = content.push(Text::new(
                 "No notes available for visualization. Open a notebook first.",
             ));
         } else {
-            notes_list = notes_list.push(Text::new("Notes in Notebook:"));
+            content = content.push(Text::new("Notes Grouped by Label:"));
+
+            // Group notes by label
+            let mut notes_by_label: HashMap<String, Vec<NoteMetadata>> = HashMap::new();
+            let mut notes_without_labels: Vec<NoteMetadata> = Vec::new();
+            let mut all_labels: HashSet<String> = HashSet::new();
+
             for note in &self.notes {
-                // Find notes connected to the current note via shared labels
-                let mut connected_note_paths = HashSet::new();
-                for label in &note.labels {
-                    for other_note in &self.notes {
-                        // Ensure it's a different note and it shares the label
-                        if other_note.rel_path != note.rel_path && other_note.labels.contains(label)
-                        {
-                            connected_note_paths.insert(other_note.rel_path.clone());
-                        }
+                if note.labels.is_empty() {
+                    notes_without_labels.push(note.clone());
+                } else {
+                    for label in &note.labels {
+                        notes_by_label
+                            .entry(label.clone())
+                            .or_insert_with(Vec::new)
+                            .push(note.clone());
+                        all_labels.insert(label.clone());
                     }
                 }
+            }
 
-                // Create the labels element separately to help with type inference
-                let labels_element: Element<'_, Message, Theme> = if note.labels.is_empty() {
-                    Text::new("None").into()
-                } else {
-                    Text::new(note.labels.join(", ")).into()
-                };
+            // Display notes without labels first
+            if !notes_without_labels.is_empty() {
+                let mut no_label_column = Column::new().spacing(5);
+                no_label_column = no_label_column.push(Text::new("No Labels:").size(18).style(
+                    iced::theme::Text::Color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
+                )); // Slightly greyed out title
 
-                // Create the connected notes element
-                let connected_notes_element: Element<'_, Message, Theme> =
-                    if connected_note_paths.is_empty() {
-                        Text::new("None").into()
-                    } else {
-                        // Convert the HashSet to a sorted Vec for consistent display
-                        let mut sorted_connected_notes: Vec<_> =
-                            connected_note_paths.into_iter().collect();
-                        sorted_connected_notes.sort();
-                        Text::new(sorted_connected_notes.join(", ")).into()
-                    };
-
-                let note_element = Column::new()
-                    .push(Text::new(format!("Path: {}", note.rel_path)))
-                    .push(
-                        Row::new()
-                            .push(Text::new("Labels: "))
-                            .push(labels_element) // Push the explicitly typed element
-                            .spacing(5),
-                    )
-                    .push(
-                        // Add the connected notes row
-                        Row::new()
-                            .push(Text::new("Connected to: "))
-                            .push(connected_notes_element)
-                            .spacing(5),
-                    )
-                    .spacing(5)
-                    .padding(5)
-                    .width(Length::Fill);
-
-                notes_list = notes_list.push(
-                    Container::new(note_element)
-                        // Add some styling or borders to differentiate notes visually
+                for note in &notes_without_labels {
+                    no_label_column =
+                        no_label_column.push(Text::new(format!("- {}", note.rel_path)));
+                }
+                content = content.push(
+                    Container::new(no_label_column)
                         .style(iced::theme::Container::Box)
+                        .padding(10)
                         .width(Length::Fill),
                 );
             }
+
+            // Sort labels for consistent display
+            let mut sorted_labels: Vec<String> = all_labels.into_iter().collect();
+            sorted_labels.sort();
+
+            // Display notes grouped by label
+            for label in sorted_labels {
+                if let Some(notes_with_label) = notes_by_label.get(&label) {
+                    let mut label_column = Column::new().spacing(5);
+                    label_column =
+                        label_column.push(Text::new(format!("Label: {}", label)).size(20).style(
+                            iced::theme::Text::Color(iced::Color::from_rgb(0.1, 0.5, 0.9)),
+                        )); // Highlight label
+
+                    for note in notes_with_label {
+                        label_column = label_column.push(Text::new(format!("- {}", note.rel_path)));
+                    }
+
+                    content = content.push(
+                        Container::new(label_column)
+                            .style(iced::theme::Container::Box)
+                            .padding(10)
+                            .width(Length::Fill),
+                    );
+                }
+            }
         }
 
-        // Apply padding to the column before wrapping it in a scrollable widget
-        let padded_notes_list = notes_list.padding(10);
+        // Apply padding to the content column
+        let padded_content = content.padding(10);
 
         // Wrap the padded content in a scrollable widget
-        Scrollable::new(padded_notes_list).into()
+        Scrollable::new(padded_content).into()
     }
 }
