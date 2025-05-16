@@ -1,20 +1,19 @@
 use crate::notebook::NoteMetadata;
 use iced::{
     Element, Length, Theme,
-    widget::{Column, Container, Row, Scrollable, Text},
-};
+    widget::{Button, Column, Container, Row, Scrollable, Text},
+}; // Import Button
 use std::collections::{HashMap, HashSet}; // Import HashMap and HashSet
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    UpdateNotes(Vec<NoteMetadata>),   // Message to update notes data
+    NoteSelectedInVisualizer(String), // New message when a note is clicked in the visualizer
+}
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
     pub notes: Vec<NoteMetadata>, // Field to hold note metadata
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    UpdateNotes(Vec<NoteMetadata>), // Message to update notes data
-                                    // Add other messages here if you want to add interaction, e.g.,
-                                    // SelectNote(String),
 }
 
 impl Visualizer {
@@ -33,10 +32,13 @@ impl Visualizer {
                 );
                 self.notes = notes;
                 // No complex preprocessing needed here, grouping happens in view
-            } // Handle other messages if defined
-              // Message::SelectNote(path) => { /* logic for selecting a note */ }
+                iced::Command::none() // Return a command here
+            }
+            Message::NoteSelectedInVisualizer(_path) => {
+                // This message is primarily handled by the parent (Editor)
+                iced::Command::none()
+            }
         }
-        iced::Command::none()
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
@@ -76,8 +78,12 @@ impl Visualizer {
                 )); // Slightly greyed out title
 
                 for note in &notes_without_labels {
-                    no_label_column =
-                        no_label_column.push(Text::new(format!("- {}", note.rel_path)));
+                    // Wrap note text in a button
+                    let note_button = Button::new(Text::new(format!("- {}", note.rel_path)))
+                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                        .style(iced::theme::Button::Text); // Use Text style to make it look like plain text initially
+
+                    no_label_column = no_label_column.push(note_button);
                 }
                 content = content.push(
                     Container::new(no_label_column)
@@ -101,7 +107,12 @@ impl Visualizer {
                         )); // Highlight label
 
                     for note in notes_with_label {
-                        label_column = label_column.push(Text::new(format!("- {}", note.rel_path)));
+                        // Wrap note text in a button
+                        let note_button = Button::new(Text::new(format!("- {}", note.rel_path)))
+                            .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                            .style(iced::theme::Button::Text); // Use Text style
+
+                        label_column = label_column.push(note_button);
                     }
 
                     content = content.push(

@@ -81,6 +81,9 @@ impl Application for Editor {
             new_note_path_input: String::new(),
         };
 
+        // Initially load notes if a notebook path is available from config or elsewhere
+        // For now, assuming no initial notebook path from config, so no initial load
+        // The notebook will be loaded when the user selects a folder via Open Notebook.
         let initial_command = Command::none();
         (editor_instance, initial_command)
     }
@@ -335,9 +338,57 @@ impl Application for Editor {
                 Command::none()
             }
             Message::VisualizerMessage(visualizer_message) => {
-                // Handle messages from the visualizer if it were to emit any
-                self.visualizer.update(visualizer_message);
-                Command::none() // Visualizer messages don't trigger editor commands for now
+                match visualizer_message {
+                    visualizer::Message::UpdateNotes(notes) => {
+                        // This part is already handled when NotesLoaded is received by the Editor
+                        self.visualizer
+                            .update(visualizer::Message::UpdateNotes(notes));
+                        Command::none()
+                    }
+                    visualizer::Message::NoteSelectedInVisualizer(note_path) => {
+                        eprintln!(
+                            "Editor: Received NoteSelectedInVisualizer for path: {}",
+                            note_path
+                        );
+                        // Handle the note selection logic, similar to Message::NoteSelected
+                        self.selected_note_path = Some(note_path.clone());
+                        self.new_label_text = String::new();
+
+                        if let Some(note) = self
+                            .note_explorer
+                            .notes
+                            .iter()
+                            .find(|n| n.rel_path == note_path)
+                        {
+                            self.selected_note_labels = note.labels.clone();
+                        } else {
+                            self.selected_note_labels = Vec::new();
+                        }
+
+                        // Load content only if not in visualizer mode (though clicking in visualizer usually means you are in it)
+                        // However, for consistency with NoteSelected, we include the logic.
+                        // Also, switch back to the editor view when a note is selected in the visualizer
+                        self.show_visualizer = false;
+
+                        let notebook_path_clone = self.notebook_path.clone();
+                        let note_path_clone = note_path.clone();
+
+                        Command::perform(
+                            async move {
+                                let full_note_path =
+                                    format!("{}/{}/note.md", notebook_path_clone, note_path_clone);
+                                match std::fs::read_to_string(full_note_path) {
+                                    Ok(content) => content,
+                                    Err(err) => {
+                                        eprintln!("Failed to read note file for editor: {}", err);
+                                        String::new() // Return empty content on error
+                                    }
+                                }
+                            },
+                            Message::ContentChanged,
+                        )
+                    }
+                }
             }
             Message::NewNote => {
                 if self.notebook_path.is_empty() {
@@ -357,6 +408,7 @@ impl Application for Editor {
             Message::CreateNote => {
                 let new_note_rel_path = self.new_note_path_input.trim().to_string();
                 if new_note_rel_path.is_empty() {
+                    // Corrected typo here
                     eprintln!("New note name cannot be empty.");
                     Command::none()
                 } else {
