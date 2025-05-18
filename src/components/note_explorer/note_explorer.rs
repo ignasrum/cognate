@@ -142,12 +142,14 @@ impl NoteExplorer {
             for folder_path in sorted_folders {
                 let is_expanded = *self.expanded_folders.get(&folder_path).unwrap_or(&false);
 
-                // Folder button
-                let folder_button_text = if is_expanded {
-                    format!("▼ {}", folder_path) // Down arrow when expanded
+                // Folder button text with '>' for collapsed and 'v' for expanded
+                let folder_indicator = if is_expanded {
+                    'v' // 'v' when expanded
                 } else {
-                    format!("► {}", folder_path) // Right arrow when collapsed
+                    '>' // '>' when collapsed
                 };
+                let folder_button_text = format!("{} {}", folder_indicator, folder_path);
+
                 column = column.push(
                     Button::new(Text::new(folder_button_text).size(18)) // Slightly larger text for folders
                         .on_press(Message::ToggleFolder(folder_path.clone()))
