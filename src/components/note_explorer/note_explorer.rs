@@ -1,9 +1,9 @@
 use iced::widget::{Button, Column, Scrollable, Text};
 use iced::{Command, Element, Theme};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap; // Import HashMap
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path; // Import Path
+use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata, NotebookMetadata};
 
@@ -12,7 +12,7 @@ pub enum Message {
     NoteSelected(String),
     LoadNotes,
     NotesLoaded(Vec<NoteMetadata>),
-    ToggleFolder(String), // New message for toggling folder visibility
+    ToggleFolder(String), // Message for toggling folder visibility
 }
 
 #[derive(Debug, Default)]
@@ -27,7 +27,7 @@ impl NoteExplorer {
         Self {
             notes: Vec::new(),
             notebook_path,
-            expanded_folders: HashMap::new(), // Initialize the map
+            expanded_folders: HashMap::new(),
         }
     }
 
@@ -50,32 +50,35 @@ impl NoteExplorer {
                     notes.len()
                 );
                 self.notes = notes;
-                // Sorting by rel_path still helps with grouping in the HashMap later
                 self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-                // Initialize expanded state for new folders
-                let mut folders_to_initialize = HashMap::new();
+                // Initialize expanded state for new folders, preserving existing states
+                let mut current_folders: HashMap<String, bool> =
+                    self.expanded_folders.drain().collect(); // Preserve existing
                 for note in &self.notes {
                     if let Some(parent) = Path::new(&note.rel_path).parent() {
                         let folder_path = parent.to_string_lossy().into_owned();
-                        // If the folder path is empty, it's a root note, skip initializing it as a folder
                         if !folder_path.is_empty() {
-                            folders_to_initialize.entry(folder_path).or_insert(false);
+                            current_folders.entry(folder_path).or_insert(false); // Insert false only if not already present
                         }
                     }
                 }
-                // Only add new folders, don't overwrite existing expanded states
-                for (folder, state) in folders_to_initialize {
-                    self.expanded_folders.entry(folder).or_insert(state);
-                }
+                self.expanded_folders = current_folders;
 
                 Command::none()
             }
             Message::NoteSelected(_path) => Command::none(), // Handled by the parent
             Message::ToggleFolder(folder_path) => {
                 // Toggle the expanded state for the clicked folder
-                let is_expanded = self.expanded_folders.entry(folder_path).or_insert(false);
+                let is_expanded = self
+                    .expanded_folders
+                    .entry(folder_path.clone())
+                    .or_insert(false); // Use clone here
                 *is_expanded = !*is_expanded;
+                eprintln!(
+                    "Toggled folder '{}' to expanded: {}",
+                    folder_path, *is_expanded
+                );
                 Command::none()
             }
         }
@@ -94,7 +97,8 @@ impl NoteExplorer {
             for note in &self.notes {
                 if let Some(parent) = Path::new(&note.rel_path).parent() {
                     let folder_path = parent.to_string_lossy().into_owned();
-                    if folder_path.is_empty() {
+                    if folder_path.is_empty() || folder_path == "." {
+                        // Handle "." as root as well
                         root_notes.push(note);
                     } else {
                         notes_by_folder
@@ -114,7 +118,11 @@ impl NoteExplorer {
             // Display root notes first (if any)
             if !root_notes.is_empty() {
                 column = column.push(Text::new("Root Notes:").size(18));
-                for note in root_notes {
+                // Sort root notes by rel_path
+                let mut sorted_root_notes = root_notes.clone();
+                sorted_root_notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+
+                for note in sorted_root_notes {
                     let is_selected = Some(&note.rel_path) == selected_note_path;
                     let button_style = if is_selected {
                         iced::theme::Button::Primary
