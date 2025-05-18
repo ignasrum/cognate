@@ -1,10 +1,10 @@
 use crate::notebook::NoteMetadata;
 use iced::{
     Element, Length, Theme,
-    widget::{Button, Column, Container, Row, Scrollable, Text},
-}; // Import Button
-use std::collections::{HashMap, HashSet}; // Import HashMap and HashSet
-use std::path::Path; // Import Path
+    widget::{Button, Column, Container, Scrollable, Text},
+}; // Removed Row import
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -32,18 +32,14 @@ impl Visualizer {
                     notes.len()
                 );
                 self.notes = notes;
-                // No complex preprocessing needed here, grouping happens in view
-                iced::Command::none() // Return a command here
-            }
-            Message::NoteSelectedInVisualizer(_path) => {
-                // This message is primarily handled by the parent (Editor)
                 iced::Command::none()
             }
+            Message::NoteSelectedInVisualizer(_path) => iced::Command::none(),
         }
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
-        let mut content = Column::new().spacing(10); // Keep 10px spacing between containers
+        let mut content = Column::new().spacing(10);
 
         if self.notes.is_empty() {
             content = content.push(Text::new(
@@ -76,29 +72,25 @@ impl Visualizer {
                 let mut no_label_column = Column::new().spacing(5);
                 no_label_column = no_label_column.push(Text::new("No Labels:").size(18).style(
                     iced::theme::Text::Color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
-                )); // Slightly greyed out title
+                ));
 
-                // Sort notes without labels by rel_path
                 let mut sorted_notes_without_labels = notes_without_labels.clone();
                 sorted_notes_without_labels.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
                 for note in &sorted_notes_without_labels {
-                    // Wrap note text in a button
-                    let note_button = Button::new(
-                        Text::new(format!("- {}", note.rel_path)).size(16),
-                    ) // Slightly smaller text for notes
-                    .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                    .style(iced::theme::Button::Text); // Use Text style to make it look like plain text initially
+                    let note_button =
+                        Button::new(Text::new(format!("- {}", note.rel_path)).size(16))
+                            .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                            .style(iced::theme::Button::Text);
 
                     no_label_column = no_label_column.push(note_button);
                 }
                 content = content.push(
                     Container::new(no_label_column)
                         .style(iced::theme::Container::Box)
-                        .padding(5) // Reduced padding inside the container
+                        .padding(5)
                         .width(Length::Fill),
                 );
-                // Removed the extra Space widget here, relying on column spacing
             }
 
             // Sort labels for consistent display
@@ -112,26 +104,22 @@ impl Visualizer {
                     label_column =
                         label_column.push(Text::new(format!("Label: {}", label)).size(20).style(
                             iced::theme::Text::Color(iced::Color::from_rgb(0.1, 0.5, 0.9)),
-                        )); // Highlight label
+                        ));
 
-                    // Sort notes within the label by rel_path
                     let mut sorted_notes_with_label = notes_with_label.clone();
                     sorted_notes_with_label.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
                     for note in sorted_notes_with_label {
-                        // Wrap note text in a button
-                        // Extract just the note name (file name without the folder path)
                         let note_name = Path::new(&note.rel_path)
                             .file_name()
                             .unwrap_or_default()
                             .to_string_lossy()
                             .into_owned();
 
-                        let note_button = Button::new(
-                            Text::new(format!("- {}", note_name)).size(16),
-                        ) // Indent notes and use smaller text
-                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                        .style(iced::theme::Button::Text); // Use Text style
+                        let note_button =
+                            Button::new(Text::new(format!("- {}", note_name)).size(16))
+                                .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                                .style(iced::theme::Button::Text);
 
                         label_column = label_column.push(note_button);
                     }
@@ -139,18 +127,15 @@ impl Visualizer {
                     content = content.push(
                         Container::new(label_column)
                             .style(iced::theme::Container::Box)
-                            .padding(5) // Reduced padding inside the container
+                            .padding(5)
                             .width(Length::Fill),
                     );
-                    // Removed the extra Space widget here, relying on column spacing
                 }
             }
         }
 
-        // Apply uniform padding to the content column (padding between scrollable edge and content)
-        let padded_content = content.padding(10); // 10px padding on all sides of the scrollable content area
+        let padded_content = content.padding(10);
 
-        // Wrap the padded content in a scrollable widget
         Scrollable::new(padded_content).into()
     }
 }

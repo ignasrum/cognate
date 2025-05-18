@@ -3,7 +3,7 @@ use serde_json;
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path; // Removed PathBuf
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,10 +49,10 @@ pub fn save_metadata(
 // The load_notes_metadata function from note_explorer.rs should also probably live here
 // to keep metadata logic together. I'll move it and adjust note_explorer.rs accordingly.
 pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
-    let file_path = Path::new(&notebook_path).join("metadata.json"); // Use Path::join
+    let file_path = Path::new(&notebook_path).join("metadata.json");
     eprintln!(
         "load_notes_metadata: Attempting to read file: {}",
-        file_path.display() // Use display() for PathBuf
+        file_path.display()
     );
 
     let contents = match fs::read_to_string(&file_path) {
@@ -89,9 +89,6 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
                 file_path.display(),
                 err
             );
-            // This might happen if the file is empty or malformed initially
-            // Consider handling this case more gracefully, maybe by returning an empty NotebookMetadata
-            // For now, we return an empty vec of notes
             return Vec::new();
         }
     };
@@ -193,17 +190,14 @@ pub async fn create_new_note(
     };
 
     // Add the new note metadata to the in-memory notes vector
-    notes.push(new_note_metadata.clone()); // Clone to return it later
+    notes.push(new_note_metadata.clone());
 
     // Save the updated metadata file
     if let Err(e) = save_metadata(notebook_path, notes) {
-        // This is a critical error, the metadata file is out of sync
         eprintln!(
             "Critical Error: Failed to save metadata after creating note: {}",
             e
         );
-        // We might want to delete the created note directory here to avoid inconsistency
-        // For simplicity now, just log the error.
         return Err(format!(
             "Failed to save metadata after creating note: {}",
             e
@@ -211,14 +205,14 @@ pub async fn create_new_note(
     }
 
     eprintln!("New note created successfully: {}", rel_path);
-    Ok(new_note_metadata) // Return the metadata of the newly created note
+    Ok(new_note_metadata)
 }
 
 // Function to delete a note
 pub async fn delete_note(
     notebook_path: &str,
     rel_path: &str,
-    notes: &mut Vec<NoteMetadata>, // Pass the notes vector to update
+    notes: &mut Vec<NoteMetadata>,
 ) -> Result<(), String> {
     eprintln!("Attempting to delete note with rel_path: {}", rel_path);
     let note_dir_path = Path::new(notebook_path).join(rel_path);
@@ -234,23 +228,20 @@ pub async fn delete_note(
                 ));
             }
         } else {
-            // If canonicalize fails for the note path, it might not exist, or be invalid.
-            // Still proceed with metadata check and filesystem check, but log a warning.
             eprintln!(
                 "Warning: Could not canonicalize path '{}'. Proceeding with deletion attempt.",
                 rel_path
             );
         }
     } else {
-        // If canonicalize fails for notebook path, cannot perform path validation. Log warning.
         eprintln!(
-            "Warning: Could not canonicalize notebook path '{}'. Skipping path validation.",
+            "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
         );
     }
 
     // Find the note in the metadata
-    let initial_len = notes.len();
+    let _initial_len = notes.len();
     let note_index = notes.iter().position(|note| note.rel_path == rel_path);
 
     if note_index.is_none() {
@@ -258,15 +249,12 @@ pub async fn delete_note(
             "Warning: Note with rel_path '{}' not found in metadata.",
             rel_path
         );
-        // If not in metadata, we still attempt to delete the directory on the filesystem
     } else {
-        // Remove the note metadata from the in-memory notes vector
         notes.remove(note_index.unwrap());
     }
 
     // Attempt to delete the note directory recursively
     if note_dir_path.exists() {
-        // Double-check that the path is indeed a directory (and not a file at the root or something)
         if !note_dir_path.is_dir() {
             eprintln!(
                 "Warning: Path '{}' exists but is not a directory. Attempting to delete as file.",
@@ -274,20 +262,15 @@ pub async fn delete_note(
             );
             if let Err(e) = fs::remove_file(&note_dir_path) {
                 eprintln!("Error deleting file {}: {}", note_dir_path.display(), e);
-                // If metadata was removed but fs delete failed, it's inconsistent. Re-add to metadata?
-                // For simplicity now, just return error.
                 return Err(format!("Failed to delete file at note path: {}", e));
             }
         } else {
-            // It's a directory, proceed with recursive deletion
             if let Err(e) = fs::remove_dir_all(&note_dir_path) {
                 eprintln!(
                     "Error deleting note directory {}: {}",
                     note_dir_path.display(),
                     e
                 );
-                // If metadata was removed but fs delete failed, it's inconsistent. Re-add to metadata?
-                // For simplicity now, just return error.
                 return Err(format!("Failed to delete note directory: {}", e));
             }
             eprintln!(
@@ -300,7 +283,6 @@ pub async fn delete_note(
             "Warning: Note directory or file not found on filesystem for rel_path '{}'.",
             rel_path
         );
-        // If the directory/file didn't exist but it was in metadata, we proceed to save metadata
     }
 
     // Save the updated metadata file ONLY IF metadata was initially found and removed
@@ -310,7 +292,6 @@ pub async fn delete_note(
                 "Critical Error: Failed to save metadata after deleting note: {}",
                 e
             );
-            // This is a critical error, the metadata file is out of sync
             return Err(format!(
                 "Failed to save metadata after deleting note: {}",
                 e
@@ -429,16 +410,12 @@ pub async fn move_note(
                 ));
             }
         } else {
-            // If canonicalize fails for the new path, it might mean the parent directory doesn't exist yet,
-            // which is fine. We can't fully validate it's within the notebook until the parent exists.
-            // We'll rely on fs::create_dir_all failing later if the parent is outside.
             eprintln!(
                 "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
                 new_rel_path
             );
         }
     } else {
-        // If canonicalize fails for notebook path, cannot perform path validation. Log warning.
         eprintln!(
             "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
@@ -473,16 +450,13 @@ pub async fn move_note(
 
     // Save the updated metadata file
     if let Err(e) = save_metadata(notebook_path, notes) {
-        // This is a critical error, the metadata file is out of sync
         eprintln!(
             "Critical Error: Failed to save metadata after moving note: {}",
             e
         );
-        // Consider trying to move the directory back here to recover? Complex.
-        // For now, just report the error.
         return Err(format!("Failed to save metadata after moving note: {}", e));
     }
     eprintln!("Metadata updated successfully after moving note.");
 
-    Ok(new_rel_path.to_string()) // Return the new path
+    Ok(new_rel_path.to_string())
 }

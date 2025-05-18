@@ -1,11 +1,9 @@
 use iced::widget::{Button, Column, Scrollable, Text};
-use iced::{Command, Element, Theme};
-use serde::{Deserialize, Serialize};
+use iced::{Command, Element}; // Added Element back
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
-use crate::notebook::{self, NoteMetadata, NotebookMetadata};
+use crate::notebook::{self, NoteMetadata}; // Removed NotebookMetadata
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -54,12 +52,12 @@ impl NoteExplorer {
 
                 // Initialize expanded state for new folders, preserving existing states
                 let mut current_folders: HashMap<String, bool> =
-                    self.expanded_folders.drain().collect(); // Preserve existing
+                    self.expanded_folders.drain().collect();
                 for note in &self.notes {
                     if let Some(parent) = Path::new(&note.rel_path).parent() {
                         let folder_path = parent.to_string_lossy().into_owned();
                         if !folder_path.is_empty() {
-                            current_folders.entry(folder_path).or_insert(false); // Insert false only if not already present
+                            current_folders.entry(folder_path).or_insert(false);
                         }
                     }
                 }
@@ -67,13 +65,12 @@ impl NoteExplorer {
 
                 Command::none()
             }
-            Message::NoteSelected(_path) => Command::none(), // Handled by the parent
+            Message::NoteSelected(_path) => Command::none(),
             Message::ToggleFolder(folder_path) => {
-                // Toggle the expanded state for the clicked folder
                 let is_expanded = self
                     .expanded_folders
                     .entry(folder_path.clone())
-                    .or_insert(false); // Use clone here
+                    .or_insert(false);
                 *is_expanded = !*is_expanded;
                 eprintln!(
                     "Toggled folder '{}' to expanded: {}",
@@ -85,7 +82,7 @@ impl NoteExplorer {
     }
 
     pub fn view(&self, selected_note_path: Option<&String>) -> Element<'_, Message> {
-        let mut column = Column::new().spacing(5); // Reduced spacing
+        let mut column = Column::new().spacing(5);
 
         if self.notebook_path.is_empty() || self.notes.is_empty() {
             column = column.push(Text::new("No notes found."));
@@ -98,7 +95,6 @@ impl NoteExplorer {
                 if let Some(parent) = Path::new(&note.rel_path).parent() {
                     let folder_path = parent.to_string_lossy().into_owned();
                     if folder_path.is_empty() || folder_path == "." {
-                        // Handle "." as root as well
                         root_notes.push(note);
                     } else {
                         notes_by_folder
@@ -118,7 +114,6 @@ impl NoteExplorer {
             // Display root notes first (if any)
             if !root_notes.is_empty() {
                 column = column.push(Text::new("Root Notes:").size(18));
-                // Sort root notes by rel_path
                 let mut sorted_root_notes = root_notes.clone();
                 sorted_root_notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
@@ -130,40 +125,34 @@ impl NoteExplorer {
                         iced::theme::Button::Text
                     };
                     column = column.push(
-                         Button::new(Text::new(note.rel_path.clone()).size(16)) // Slightly smaller text for notes
-                             .on_press(Message::NoteSelected(note.rel_path.clone()))
-                             .style(button_style),
-                     );
+                        Button::new(Text::new(note.rel_path.clone()).size(16))
+                            .on_press(Message::NoteSelected(note.rel_path.clone()))
+                            .style(button_style),
+                    );
                 }
-                column = column.push(iced::widget::Space::with_height(iced::Length::Fixed(10.0))); // Add some space after root notes
+                column = column.push(iced::widget::Space::with_height(iced::Length::Fixed(10.0)));
             }
 
             // Display folders and their notes
             for folder_path in sorted_folders {
                 let is_expanded = *self.expanded_folders.get(&folder_path).unwrap_or(&false);
 
-                // Folder button text with '>' for collapsed and 'v' for expanded
-                let folder_indicator = if is_expanded {
-                    'v' // 'v' when expanded
-                } else {
-                    '>' // '>' when collapsed
-                };
+                let folder_indicator = if is_expanded { 'v' } else { '>' };
                 let folder_button_text = format!("{} {}", folder_indicator, folder_path);
 
                 column = column.push(
-                    Button::new(Text::new(folder_button_text).size(18)) // Slightly larger text for folders
+                    Button::new(Text::new(folder_button_text).size(18))
                         .on_press(Message::ToggleFolder(folder_path.clone()))
-                        .style(iced::theme::Button::Text), // Use Text style for folders
+                        .style(iced::theme::Button::Text),
                 );
 
                 // Display notes if folder is expanded
                 if is_expanded {
                     if let Some(notes_in_folder) = notes_by_folder.get(&folder_path) {
-                        // Sort notes within the folder alphabetically
                         let mut sorted_notes_in_folder = notes_in_folder.clone();
                         sorted_notes_in_folder.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-                        let mut folder_notes_column = Column::new().spacing(3); // Tighter spacing for notes within a folder
+                        let mut folder_notes_column = Column::new().spacing(3);
                         for note in sorted_notes_in_folder {
                             let is_selected = Some(&note.rel_path) == selected_note_path;
 
@@ -173,7 +162,6 @@ impl NoteExplorer {
                                 iced::theme::Button::Text
                             };
 
-                            // Extract just the note name (file name without the folder path)
                             let note_name = Path::new(&note.rel_path)
                                 .file_name()
                                 .unwrap_or_default()
@@ -181,7 +169,7 @@ impl NoteExplorer {
                                 .into_owned();
 
                             folder_notes_column = folder_notes_column.push(
-                                Button::new(Text::new(format!("  - {}", note_name)).size(16)) // Indent notes and use smaller text
+                                Button::new(Text::new(format!("  - {}", note_name)).size(16))
                                     .on_press(Message::NoteSelected(note.rel_path.clone()))
                                     .style(button_style),
                             );
