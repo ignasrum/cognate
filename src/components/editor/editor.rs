@@ -3,7 +3,8 @@ use iced::widget::{
 };
 use iced::{Application, Command, Element, Length, Theme};
 use native_dialog::MessageDialog;
-use std::path::Path; // Added import for Path
+use std::collections::HashSet;
+use std::path::Path; // Added import for Path // Added import for HashSet
 
 use crate::configuration::Configuration;
 use crate::notebook::{self, NoteMetadata};
@@ -857,14 +858,23 @@ impl Application for Editor {
             } else if self.show_new_note_input {
                 top_bar = top_bar.push(Text::new("Creating New Note..."));
             } else if self.show_move_note_input {
-                let operation_text = if self.move_note_current_path.as_deref().map_or(false, |p| {
-                    // Check if the path refers to a directory within the notebook.
-                    // This is a heuristic: check if the path in our notes list has no extension.
-                    self.note_explorer
-                        .notes
-                        .iter()
-                        .any(|n| n.rel_path == *p && Path::new(&n.rel_path).extension().is_none())
-                }) {
+                // Corrected heuristic to determine if it's a folder rename or note move
+                let mut all_folders_in_notes: HashSet<String> = HashSet::new();
+                for note in &self.note_explorer.notes {
+                    if let Some(parent) = Path::new(&note.rel_path).parent() {
+                        let folder_path = parent.to_string_lossy().into_owned();
+                        if !folder_path.is_empty() && folder_path != "." {
+                            all_folders_in_notes.insert(folder_path);
+                        }
+                    }
+                }
+
+                let is_renaming_folder = self
+                    .move_note_current_path
+                    .as_deref()
+                    .map_or(false, |p| all_folders_in_notes.contains(p));
+
+                let operation_text = if is_renaming_folder {
                     "Renaming Folder"
                 } else {
                     "Moving Note"
@@ -929,13 +939,23 @@ impl Application for Editor {
                 .align_items(iced::Alignment::Center)
                 .into()
         } else if self.show_move_note_input {
-            let prompt_text = if self.move_note_current_path.as_deref().map_or(false, |p| {
-                // Heuristic: check if the path in our notes list has no extension
-                self.note_explorer
-                    .notes
-                    .iter()
-                    .any(|n| n.rel_path == *p && Path::new(&n.rel_path).extension().is_none())
-            }) {
+            // Corrected heuristic to determine if it's a folder rename or note move
+            let mut all_folders_in_notes: HashSet<String> = HashSet::new();
+            for note in &self.note_explorer.notes {
+                if let Some(parent) = Path::new(&note.rel_path).parent() {
+                    let folder_path = parent.to_string_lossy().into_owned();
+                    if !folder_path.is_empty() && folder_path != "." {
+                        all_folders_in_notes.insert(folder_path);
+                    }
+                }
+            }
+
+            let is_renaming_folder = self
+                .move_note_current_path
+                .as_deref()
+                .map_or(false, |p| all_folders_in_notes.contains(p));
+
+            let prompt_text = if is_renaming_folder {
                 format!(
                     "Enter new relative path/name for folder '{}':",
                     self.move_note_current_path.as_deref().unwrap_or("")
