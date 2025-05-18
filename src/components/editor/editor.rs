@@ -577,7 +577,9 @@ impl Application for Editor {
                 .into()
         } else if self.show_new_note_input {
             Column::new()
-                .push(Text::new("Enter new note name/relative path:"))
+                .push(Text::new(
+                    "Enter new note name/relative path (e.g., folder/note_name):",
+                )) // Updated prompt
                 .push(
                     IcedTextInput::new("Note name...", &self.new_note_path_input)
                         .on_input(Message::NewNoteInputChanged)

@@ -1,5 +1,5 @@
 use iced::widget::{Button, Column, Scrollable, Text};
-use iced::{Command, Element, Theme}; // Import Theme
+use iced::{Command, Element, Theme};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -45,6 +45,8 @@ impl NoteExplorer {
                     notes.len()
                 );
                 self.notes = notes;
+                // Sort notes by relative path to group them by directory in the view
+                self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
                 Command::none()
             }
             Message::NoteSelected(_path) => Command::none(),
@@ -68,6 +70,7 @@ impl NoteExplorer {
                     iced::theme::Button::Text // Use Text theme for unselected notes
                 };
 
+                // Display the full relative path in the button
                 column = column.push(
                     Button::new(Text::new(note.rel_path.clone()))
                         .on_press(Message::NoteSelected(note.rel_path.clone()))
