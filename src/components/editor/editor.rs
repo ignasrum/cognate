@@ -19,7 +19,6 @@ pub enum Message {
     ContentChanged(String),
     NoteExplorerMessage(note_explorer::Message),
     NoteSelected(String),
-    // Removed: NewNotebookPathSelected(String), // This variant was never constructed by the current UI
     NewLabelInputChanged(String),
     AddLabel,
     RemoveLabel(String),
@@ -35,12 +34,14 @@ pub enum Message {
     DeleteNote,
     ConfirmDeleteNote(bool),
     NoteDeleted(Result<(), String>),
-    // New messages for moving notes
     MoveNote,
     MoveNoteInputChanged(String),
     ConfirmMoveNote,
     CancelMoveNote,
-    NoteMoved(Result<String, String>), // Result contains the new rel_path on success
+    NoteMoved(Result<String, String>),
+
+    // Message for About button click
+    AboutButtonClicked,
 }
 
 pub struct Editor {
@@ -56,10 +57,13 @@ pub struct Editor {
     new_label_text: String,
     show_new_note_input: bool,
     new_note_path_input: String,
-    // New state for moving notes
     show_move_note_input: bool,
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
+    app_version: String, // Storing the app version
+
+    // New state to control visibility of the about information
+    show_about_info: bool,
 }
 
 impl Application for Editor {
@@ -84,10 +88,13 @@ impl Application for Editor {
             new_label_text: String::new(),
             show_new_note_input: false,
             new_note_path_input: String::new(),
-            // Initialize new state for moving notes
             show_move_note_input: false,
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
+            // Initialize app version (hardcoded from Cargo.toml for now)
+            app_version: "0.1.0".to_string(),
+            // Initialize new about info state
+            show_about_info: false,
         };
 
         let initial_command = if !editor_instance.notebook_path.is_empty() {
@@ -114,10 +121,13 @@ impl Application for Editor {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::EditorAction(action) => {
+                // Only perform editor actions if not showing visualizer, new note input, or move note input, AND not showing about info
                 if self.selected_note_path.is_some()
                     && !self.show_visualizer
                     && !self.show_move_note_input
                     && !self.show_new_note_input
+                    && !self.show_about_info
+                // Added check for about info
                 {
                     self.content.perform(action);
                     self.markdown_text = self.content.text();
@@ -138,7 +148,12 @@ impl Application for Editor {
                 Command::none()
             }
             Message::ContentChanged(new_content) => {
-                if !self.show_visualizer && !self.show_move_note_input && !self.show_new_note_input
+                // Only update content if not showing visualizer, new note input, or move note input, AND not showing about info
+                if !self.show_visualizer
+                    && !self.show_move_note_input
+                    && !self.show_new_note_input
+                    && !self.show_about_info
+                // Added check for about info
                 {
                     self.content = text_editor::Content::with_text(&new_content);
                     self.markdown_text = new_content;
@@ -212,6 +227,7 @@ impl Application for Editor {
                 self.show_move_note_input = false;
                 self.move_note_current_path = None;
                 self.move_note_new_path_input = String::new();
+                self.show_about_info = false; // Hide about info when a note is selected
 
                 if !self.show_visualizer && !self.notebook_path.is_empty() {
                     let notebook_path_clone = self.notebook_path.clone();
@@ -235,16 +251,57 @@ impl Application for Editor {
                     Command::none()
                 }
             }
-            // Removed: Message::NewNotebookPathSelected(path_str) => { ... }
             Message::NewLabelInputChanged(text) => {
-                self.new_label_text = text;
+                if !self.show_about_info {
+                    // Prevent input change if about info is showing
+                    self.new_label_text = text;
+                }
                 Command::none()
             }
             Message::AddLabel => {
+                // Fixed: Use if let to correctly access selected_note_path
+                if !self.show_about_info {
+                    // Prevent adding labels if about info is showing
+                    if let Some(selected_path) = &self.selected_note_path {
+                        let label = self.new_label_text.trim().to_string();
+                        if !label.is_empty() && !self.selected_note_labels.contains(&label) {
+                            self.selected_note_labels.push(label.clone());
+
+                            if let Some(note) = self
+                                .note_explorer
+                                .notes
+                                .iter_mut()
+                                .find(|n| n.rel_path == *selected_path)
+                            {
+                                note.labels.push(label);
+                            }
+
+                            let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
+                                self.note_explorer.notes.clone(),
+                            ));
+
+                            self.new_label_text = String::new();
+
+                            let notebook_path = self.notebook_path.clone();
+                            let notes_to_save = self.note_explorer.notes.clone();
+                            return Command::perform(
+                                async move {
+                                    notebook::save_metadata(&notebook_path, &notes_to_save[..])
+                                        .map_err(|e| e.to_string())
+                                },
+                                Message::MetadataSaved,
+                            );
+                        }
+                    }
+                }
+                Command::none()
+            }
+            Message::RemoveLabel(label_to_remove) => {
                 if let Some(selected_path) = &self.selected_note_path {
-                    let label = self.new_label_text.trim().to_string();
-                    if !label.is_empty() && !self.selected_note_labels.contains(&label) {
-                        self.selected_note_labels.push(label.clone());
+                    if !self.show_about_info {
+                        // Prevent removing labels if about info is showing
+                        self.selected_note_labels
+                            .retain(|label| label != &label_to_remove);
 
                         if let Some(note) = self
                             .note_explorer
@@ -252,14 +309,12 @@ impl Application for Editor {
                             .iter_mut()
                             .find(|n| n.rel_path == *selected_path)
                         {
-                            note.labels.push(label);
+                            note.labels.retain(|label| label != &label_to_remove);
                         }
 
                         let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
                             self.note_explorer.notes.clone(),
                         ));
-
-                        self.new_label_text = String::new();
 
                         let notebook_path = self.notebook_path.clone();
                         let notes_to_save = self.note_explorer.notes.clone();
@@ -271,36 +326,6 @@ impl Application for Editor {
                             Message::MetadataSaved,
                         );
                     }
-                }
-                Command::none()
-            }
-            Message::RemoveLabel(label_to_remove) => {
-                if let Some(selected_path) = &self.selected_note_path {
-                    self.selected_note_labels
-                        .retain(|label| label != &label_to_remove);
-
-                    if let Some(note) = self
-                        .note_explorer
-                        .notes
-                        .iter_mut()
-                        .find(|n| n.rel_path == *selected_path)
-                    {
-                        note.labels.retain(|label| label != &label_to_remove);
-                    }
-
-                    let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
-                        self.note_explorer.notes.clone(),
-                    ));
-
-                    let notebook_path = self.notebook_path.clone();
-                    let notes_to_save = self.note_explorer.notes.clone();
-                    return Command::perform(
-                        async move {
-                            notebook::save_metadata(&notebook_path, &notes_to_save[..])
-                                .map_err(|e| e.to_string())
-                        },
-                        Message::MetadataSaved,
-                    );
                 }
                 Command::none()
             }
@@ -326,6 +351,7 @@ impl Application for Editor {
                     if self.show_visualizer {
                         self.show_new_note_input = false;
                         self.show_move_note_input = false;
+                        self.show_about_info = false; // Hide about info when visualizer is shown
                     }
                     eprintln!("Toggled visualizer visibility to: {}", self.show_visualizer);
                     if self.show_visualizer {
@@ -353,6 +379,7 @@ impl Application for Editor {
                         self.show_move_note_input = false;
                         self.move_note_current_path = None;
                         self.move_note_new_path_input = String::new();
+                        self.show_about_info = false; // Hide about info when a note is selected in visualizer
 
                         if let Some(note) = self
                             .note_explorer
@@ -405,35 +432,43 @@ impl Application for Editor {
                     self.new_note_path_input = String::new();
                     self.show_visualizer = false;
                     self.show_move_note_input = false;
-
+                    self.show_about_info = false; // Hide about info when creating a new note
                     Command::none()
                 }
             }
             Message::NewNoteInputChanged(text) => {
-                self.new_note_path_input = text;
+                if self.show_new_note_input {
+                    // Only allow input change if new note input is showing
+                    self.new_note_path_input = text;
+                }
                 Command::none()
             }
             Message::CreateNote => {
-                let new_note_rel_path = self.new_note_path_input.trim().to_string();
-                if new_note_rel_path.is_empty() {
-                    eprintln!("New note name cannot be empty.");
-                    Command::none()
-                } else {
-                    self.show_new_note_input = false;
-                    let notebook_path = self.notebook_path.clone();
-                    let mut current_notes = self.note_explorer.notes.clone();
+                if self.show_new_note_input {
+                    // Only allow create note if new note input is showing
+                    let new_note_rel_path = self.new_note_path_input.trim().to_string();
+                    if new_note_rel_path.is_empty() {
+                        eprintln!("New note name cannot be empty.");
+                        Command::none()
+                    } else {
+                        self.show_new_note_input = false;
+                        let notebook_path = self.notebook_path.clone();
+                        let mut current_notes = self.note_explorer.notes.clone();
 
-                    Command::perform(
-                        async move {
-                            notebook::create_new_note(
-                                &notebook_path,
-                                &new_note_rel_path,
-                                &mut current_notes,
-                            )
-                            .await
-                        },
-                        Message::NoteCreated,
-                    )
+                        Command::perform(
+                            async move {
+                                notebook::create_new_note(
+                                    &notebook_path,
+                                    &new_note_rel_path,
+                                    &mut current_notes,
+                                )
+                                .await
+                            },
+                            Message::NoteCreated,
+                        )
+                    }
+                } else {
+                    Command::none()
                 }
             }
             Message::CancelNewNote => {
@@ -478,25 +513,30 @@ impl Application for Editor {
             },
             Message::DeleteNote => {
                 if let Some(selected_path) = &self.selected_note_path {
-                    let note_path_clone = selected_path.clone();
-                    self.show_new_note_input = false;
-                    self.show_move_note_input = false;
-                    self.show_visualizer = false;
+                    if !self.show_about_info {
+                        // Prevent deleting if about info is showing
+                        let note_path_clone = selected_path.clone();
+                        self.show_new_note_input = false;
+                        self.show_move_note_input = false;
+                        self.show_visualizer = false;
 
-                    Command::perform(
-                        async move {
-                            MessageDialog::new()
-                                .set_type(native_dialog::MessageType::Warning)
-                                .set_title("Confirm Deletion")
-                                .set_text(&format!(
-                                    "Are you sure you want to delete the note '{}'?",
-                                    note_path_clone
-                                ))
-                                .show_confirm()
-                                .unwrap_or(false)
-                        },
-                        Message::ConfirmDeleteNote,
-                    )
+                        Command::perform(
+                            async move {
+                                MessageDialog::new()
+                                    .set_type(native_dialog::MessageType::Warning)
+                                    .set_title("Confirm Deletion")
+                                    .set_text(&format!(
+                                        "Are you sure you want to delete the note '{}'?",
+                                        note_path_clone
+                                    ))
+                                    .show_confirm()
+                                    .unwrap_or(false)
+                            },
+                            Message::ConfirmDeleteNote,
+                        )
+                    } else {
+                        Command::none()
+                    }
                 } else {
                     Command::none()
                 }
@@ -564,68 +604,80 @@ impl Application for Editor {
             }
             Message::MoveNote => {
                 if let Some(current_path) = &self.selected_note_path {
-                    self.show_new_note_input = false;
-                    self.show_visualizer = false;
+                    if !self.show_about_info {
+                        // Prevent moving if about info is showing
+                        self.show_new_note_input = false;
+                        self.show_visualizer = false;
+                        self.show_about_info = false; // Hide about info when moving a note
 
-                    self.show_move_note_input = true;
-                    self.move_note_current_path = Some(current_path.clone());
-                    self.move_note_new_path_input = current_path.clone();
-                    eprintln!("Showing move note input for: {}", current_path);
+                        self.show_move_note_input = true;
+                        self.move_note_current_path = Some(current_path.clone());
+                        self.move_note_new_path_input = current_path.clone();
+                        eprintln!("Showing move note input for: {}", current_path);
+                    }
                 } else {
                     eprintln!("No note selected to move.");
                 }
                 Command::none()
             }
             Message::MoveNoteInputChanged(text) => {
-                self.move_note_new_path_input = text;
+                if self.show_move_note_input {
+                    // Only allow input change if move note input is showing
+                    self.move_note_new_path_input = text;
+                }
                 Command::none()
             }
             Message::ConfirmMoveNote => {
-                if let Some(current_path) = self.move_note_current_path.take() {
-                    let new_path = self.move_note_new_path_input.trim().to_string();
-                    self.show_move_note_input = false;
-                    self.move_note_new_path_input = String::new();
+                if self.show_move_note_input {
+                    // Only allow confirm move if move note input is showing
+                    if let Some(current_path) = self.move_note_current_path.take() {
+                        let new_path = self.move_note_new_path_input.trim().to_string();
+                        self.show_move_note_input = false;
+                        self.move_note_new_path_input = String::new();
 
-                    if new_path.is_empty() {
-                        eprintln!("New path cannot be empty for moving note.");
-                        let dialog_command = Command::perform(
+                        if new_path.is_empty() {
+                            eprintln!("New path cannot be empty for moving note.");
+                            let dialog_command = Command::perform(
+                                async move {
+                                    let _ = MessageDialog::new()
+                                        .set_type(native_dialog::MessageType::Error)
+                                        .set_title("Error Moving Note")
+                                        .set_text("New path cannot be empty.")
+                                        .show_alert();
+                                },
+                                |()| Message::NoteMoved(Err(String::new())), // Dummy message
+                            );
+                            return dialog_command;
+                        }
+
+                        if new_path == current_path {
+                            eprintln!("New path is the same as the current path.");
+                            self.selected_note_path = Some(current_path.clone());
+                            return Command::none();
+                        }
+
+                        let notebook_path = self.notebook_path.clone();
+                        let mut current_notes = self.note_explorer.notes.clone();
+
+                        Command::perform(
                             async move {
-                                let _ = MessageDialog::new()
-                                    .set_type(native_dialog::MessageType::Error)
-                                    .set_title("Error Moving Note")
-                                    .set_text("New path cannot be empty.")
-                                    .show_alert();
+                                notebook::move_note(
+                                    &notebook_path,
+                                    &current_path,
+                                    &new_path,
+                                    &mut current_notes,
+                                )
+                                .await
                             },
-                            |()| Message::NoteMoved(Err(String::new())), // Dummy message
-                        );
-                        return dialog_command;
+                            Message::NoteMoved,
+                        )
+                    } else {
+                        eprintln!("ConfirmMoveNote called with no current note selected.");
+                        self.show_move_note_input = false;
+                        self.move_note_new_path_input = String::new();
+                        Command::none()
                     }
-
-                    if new_path == current_path {
-                        eprintln!("New path is the same as the current path.");
-                        self.selected_note_path = Some(current_path.clone());
-                        return Command::none();
-                    }
-
-                    let notebook_path = self.notebook_path.clone();
-                    let mut current_notes = self.note_explorer.notes.clone();
-
-                    Command::perform(
-                        async move {
-                            notebook::move_note(
-                                &notebook_path,
-                                &current_path,
-                                &new_path,
-                                &mut current_notes,
-                            )
-                            .await
-                        },
-                        Message::NoteMoved,
-                    )
                 } else {
-                    eprintln!("ConfirmMoveNote called with no current note selected.");
-                    self.show_move_note_input = false;
-                    self.move_note_new_path_input = String::new();
                     Command::none()
                 }
             }
@@ -668,27 +720,61 @@ impl Application for Editor {
                     Command::batch(vec![dialog_command, reload_command])
                 }
             },
+            Message::AboutButtonClicked => {
+                eprintln!("About button clicked. Toggling about info visibility.");
+                self.show_about_info = !self.show_about_info;
+                // Hide other transient UI elements when showing About
+                if self.show_about_info {
+                    self.show_visualizer = false;
+                    self.show_new_note_input = false;
+                    self.show_move_note_input = false;
+                }
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
         let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
-        if !self.notebook_path.is_empty() {
-            // Always show visualizer toggle when notebook is open
-            let visualizer_button_text = if self.show_visualizer {
-                "Hide Visualizer"
-            } else {
-                "Show Visualizer"
-            };
-            top_bar = top_bar.push(
-                button(visualizer_button_text)
-                    .padding(5)
-                    .on_press(Message::ToggleVisualizer),
-            );
+        // Determine the text for the About button based on whether about info is shown
+        let about_button_text = if self.show_about_info {
+            "Back"
+        } else {
+            "About"
+        };
 
-            // Show other action buttons only if no other input/visualizer is active
-            if !self.show_visualizer && !self.show_new_note_input && !self.show_move_note_input {
+        // Add the About/Back button
+        // Only show the About/Back button if the visualizer is NOT shown
+        if !self.show_visualizer {
+            top_bar = top_bar.push(
+                button(about_button_text)
+                    .padding(5)
+                    .on_press(Message::AboutButtonClicked),
+            );
+        }
+
+        if !self.notebook_path.is_empty() {
+            // Always show visualizer toggle when notebook is open, unless About is showing
+            if !self.show_about_info {
+                let visualizer_button_text = if self.show_visualizer {
+                    "Hide Visualizer"
+                } else {
+                    "Show Visualizer"
+                };
+                top_bar = top_bar.push(
+                    button(visualizer_button_text)
+                        .padding(5)
+                        .on_press(Message::ToggleVisualizer),
+                );
+            }
+
+            // Show other action buttons only if no other input/visualizer is active AND not showing about info
+            if !self.show_visualizer
+                && !self.show_new_note_input
+                && !self.show_move_note_input
+                && !self.show_about_info
+            {
                 top_bar = top_bar.push(button("New Note").padding(5).on_press(Message::NewNote));
                 if self.selected_note_path.is_some() {
                     top_bar = top_bar.push(
@@ -709,12 +795,30 @@ impl Application for Editor {
             }
         } else {
             // No notebook open message
-            top_bar = top_bar.push(Text::new(
-                "No notebook opened. Configure 'notebook_path' in config.json",
-            ));
+            if !self.show_about_info {
+                // Hide this message if about info is showing
+                top_bar = top_bar.push(Text::new(
+                    "No notebook opened. Configure 'notebook_path' in config.json",
+                ));
+            }
         }
 
-        let main_content: Element<'_, Self::Message, Self::Theme> = if self.show_visualizer {
+        let main_content: Element<'_, Self::Message, Self::Theme> = if self.show_about_info {
+            // Display about information
+            let about_info_column = Column::new()
+                .spacing(10)
+                .align_items(iced::Alignment::Center)
+                .push(Text::new("Cognate Note Taking App").size(30))
+                .push(Text::new(format!("Version: {}", self.app_version)).size(20));
+            // Could add more info here later, like license or authors
+
+            Container::new(about_info_column)
+                .center_x()
+                .center_y()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if self.show_visualizer {
             Container::new(self.visualizer.view().map(Message::VisualizerMessage))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -775,6 +879,7 @@ impl Application for Editor {
                 .align_items(iced::Alignment::Center)
                 .into()
         } else if self.notebook_path.is_empty() {
+            // Display the "No notebook" message when no notebook is open and not showing about
             Container::new(
                 Text::new("Please configure the 'notebook_path' in your config.json file to open a notebook.")
                     .size(20)
@@ -786,7 +891,7 @@ impl Application for Editor {
              .height(Length::Fill)
              .into()
         } else {
-            // Display the standard editor layout (without HTML preview)
+            // Display the standard editor layout
             let note_explorer_view: Element<'_, Self::Message, Self::Theme> = Container::new(
                 self.note_explorer
                     .view(self.selected_note_path.as_ref())
