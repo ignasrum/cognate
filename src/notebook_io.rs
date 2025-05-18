@@ -1,3 +1,7 @@
+// This file seems redundant as save_metadata has been moved to notebook.rs.
+// It should probably be removed or updated if more IO-specific functions are added.
+// For now, I will leave it as is but note its current state.
+
 use serde_json;
 use std::error::Error;
 use std::fs;
@@ -7,6 +11,9 @@ use std::path::Path; // Import the Error trait
 mod note_explorer;
 
 // Constrain the error to be Send and Sync
+// Note: This function is now a duplicate of the one in notebook.rs
+// and should likely be removed. Keeping it for now to avoid breaking
+// any potential external references, but it's a discrepancy.
 pub fn save_metadata(
     notebook_path: &str,
     notes: &[note_explorer::NoteMetadata],

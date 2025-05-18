@@ -1,9 +1,9 @@
-use iced::widget::{Button, Column, Scrollable, Text};
-use iced::{Command, Element}; // Added Element back
-use std::collections::HashMap;
+use iced::widget::{Button, Column, Row, Scrollable, Text};
+use iced::{Command, Element}; // Removed Length import
+use std::collections::{HashMap, HashSet}; // Added import for HashSet
 use std::path::Path;
 
-use crate::notebook::{self, NoteMetadata}; // Removed NotebookMetadata
+use crate::notebook::{self, NoteMetadata};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -11,6 +11,8 @@ pub enum Message {
     LoadNotes,
     NotesLoaded(Vec<NoteMetadata>),
     ToggleFolder(String), // Message for toggling folder visibility
+    // Added message to initiate folder rename from the explorer
+    InitiateFolderRename(String),
 }
 
 #[derive(Debug, Default)]
@@ -56,7 +58,7 @@ impl NoteExplorer {
                 for note in &self.notes {
                     if let Some(parent) = Path::new(&note.rel_path).parent() {
                         let folder_path = parent.to_string_lossy().into_owned();
-                        if !folder_path.is_empty() {
+                        if !folder_path.is_empty() && folder_path != "." {
                             current_folders.entry(folder_path).or_insert(false);
                         }
                     }
@@ -78,6 +80,11 @@ impl NoteExplorer {
                 );
                 Command::none()
             }
+            Message::InitiateFolderRename(_folder_path) => {
+                // This message is handled by the Editor to manage UI state.
+                // We just need to pass it up.
+                Command::none()
+            }
         }
     }
 
@@ -90,6 +97,7 @@ impl NoteExplorer {
             // Group notes by parent directory
             let mut notes_by_folder: HashMap<String, Vec<&NoteMetadata>> = HashMap::new();
             let mut root_notes: Vec<&NoteMetadata> = Vec::new();
+            let mut all_folders: HashSet<String> = HashSet::new();
 
             for note in &self.notes {
                 if let Some(parent) = Path::new(&note.rel_path).parent() {
@@ -98,9 +106,10 @@ impl NoteExplorer {
                         root_notes.push(note);
                     } else {
                         notes_by_folder
-                            .entry(folder_path)
+                            .entry(folder_path.clone())
                             .or_insert_with(Vec::new)
                             .push(note);
+                        all_folders.insert(folder_path);
                     }
                 } else {
                     root_notes.push(note);
@@ -108,7 +117,7 @@ impl NoteExplorer {
             }
 
             // Sort folders alphabetically
-            let mut sorted_folders: Vec<String> = notes_by_folder.keys().cloned().collect();
+            let mut sorted_folders: Vec<String> = all_folders.into_iter().collect();
             sorted_folders.sort();
 
             // Display root notes first (if any)
@@ -140,11 +149,22 @@ impl NoteExplorer {
                 let folder_indicator = if is_expanded { 'v' } else { '>' };
                 let folder_button_text = format!("{} {}", folder_indicator, folder_path);
 
-                column = column.push(
-                    Button::new(Text::new(folder_button_text).size(18))
-                        .on_press(Message::ToggleFolder(folder_path.clone()))
-                        .style(iced::theme::Button::Text),
-                );
+                let folder_row = Row::new()
+                    .push(
+                        Button::new(Text::new(folder_button_text).size(18))
+                            .on_press(Message::ToggleFolder(folder_path.clone()))
+                            .style(iced::theme::Button::Text),
+                    )
+                    .push(
+                        Button::new(Text::new("Rename").size(14))
+                            .on_press(Message::InitiateFolderRename(folder_path.clone())) // Added rename button
+                            .style(iced::theme::Button::Secondary)
+                            .padding(3),
+                    )
+                    .spacing(5)
+                    .align_items(iced::Alignment::Center);
+
+                column = column.push(folder_row);
 
                 // Display notes if folder is expanded
                 if is_expanded {

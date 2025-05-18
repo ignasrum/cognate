@@ -3,7 +3,7 @@ use serde_json;
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path; // Removed PathBuf
+use std::path::Path;
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +126,7 @@ pub async fn create_new_note(
     eprintln!("Attempting to create new note with rel_path: {}", rel_path);
     let note_dir_path = Path::new(notebook_path).join(rel_path);
     let note_file_path = note_dir_path.join("note.md");
+    let full_notebook_path = Path::new(notebook_path);
 
     // Basic validation for the new path
     if rel_path.is_empty()
@@ -140,6 +141,29 @@ pub async fn create_new_note(
         ));
     }
 
+    // Ensure the new path is within the notebook directory after canonicalization
+    if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
+        if let Ok(canonical_note_dir_path) = Path::new(notebook_path).join(rel_path).canonicalize()
+        {
+            if !canonical_note_dir_path.starts_with(&canonical_notebook_path) {
+                return Err(format!(
+                    "Cannot create note outside the notebook directory: '{}'",
+                    rel_path
+                ));
+            }
+        } else {
+            eprintln!(
+                "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
+                rel_path
+            );
+        }
+    } else {
+        eprintln!(
+            "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
+            notebook_path
+        );
+    }
+
     // Check if a note with the same relative path already exists in metadata
     if notes.iter().any(|note| note.rel_path == rel_path) {
         return Err(format!(
@@ -149,26 +173,13 @@ pub async fn create_new_note(
     }
 
     // Check if the directory or file already exists on the filesystem within the notebook path
-    let full_notebook_path = Path::new(notebook_path);
     if note_dir_path.exists() || note_file_path.exists() {
-        // Further check if the existing path is actually within the notebook directory
-        if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
-            if let Ok(canonical_note_dir_path) = note_dir_path.canonicalize() {
-                if canonical_note_dir_path.starts_with(&canonical_notebook_path) {
-                    return Err(format!(
-                        "A directory or file already exists at '{}'.",
-                        rel_path
-                    ));
-                }
-            }
-        } else {
-            // If canonicalize fails for notebook path, just rely on exists() which might be less safe
-            if note_dir_path.exists() || note_file_path.exists() {
-                return Err(format!(
-                    "A directory or file already exists at '{}'.",
-                    rel_path
-                ));
-            }
+        // We've already done canonicalize check above, but repeating the exists check is fine.
+        if note_dir_path.exists() {
+            return Err(format!(
+                "A directory or file already exists at '{}'.",
+                rel_path
+            ));
         }
     }
 
@@ -198,6 +209,8 @@ pub async fn create_new_note(
             "Critical Error: Failed to save metadata after creating note: {}",
             e
         );
+        // Attempt to clean up the filesystem changes to avoid inconsistency
+        let _ = fs::remove_dir_all(&note_dir_path);
         return Err(format!(
             "Failed to save metadata after creating note: {}",
             e
@@ -218,7 +231,7 @@ pub async fn delete_note(
     let note_dir_path = Path::new(notebook_path).join(rel_path);
     let full_notebook_path = Path::new(notebook_path);
 
-    // Before deleting, ensure the path is within the notebook directory
+    // Ensure the path is within the notebook directory
     if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
         if let Ok(canonical_note_dir_path) = note_dir_path.canonicalize() {
             if !canonical_note_dir_path.starts_with(&canonical_notebook_path) {
@@ -228,12 +241,27 @@ pub async fn delete_note(
                 ));
             }
         } else {
+            // If canonicalize fails, check if the path exists relative to the notebook root.
+            // This is less safe but better than nothing if canonicalize fails.
+            if !Path::new(notebook_path).join(rel_path).exists() {
+                return Err(format!(
+                    "Path '{}' does not exist within the notebook.",
+                    rel_path
+                ));
+            }
             eprintln!(
-                "Warning: Could not canonicalize path '{}'. Proceeding with deletion attempt.",
+                "Warning: Could not canonicalize path '{}'. Proceeding with deletion attempt based on relative path.",
                 rel_path
             );
         }
     } else {
+        // If canonicalize fails for notebook path, just rely on relative path existence check.
+        if !Path::new(notebook_path).join(rel_path).exists() {
+            return Err(format!(
+                "Path '{}' does not exist within the notebook.",
+                rel_path
+            ));
+        }
         eprintln!(
             "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
@@ -241,72 +269,66 @@ pub async fn delete_note(
     }
 
     // Find the note in the metadata
-    let _initial_len = notes.len();
     let note_index = notes.iter().position(|note| note.rel_path == rel_path);
 
     if note_index.is_none() {
         eprintln!(
-            "Warning: Note with rel_path '{}' not found in metadata.",
+            "Warning: Note with rel_path '{}' not found in metadata. Proceeding with filesystem deletion only.",
             rel_path
         );
+        // If not found in metadata, we still attempt to delete the directory on disk
     } else {
         notes.remove(note_index.unwrap());
     }
 
     // Attempt to delete the note directory recursively
     if note_dir_path.exists() {
-        if !note_dir_path.is_dir() {
+        if let Err(e) = fs::remove_dir_all(&note_dir_path) {
             eprintln!(
-                "Warning: Path '{}' exists but is not a directory. Attempting to delete as file.",
-                note_dir_path.display()
+                "Error deleting directory {}: {}",
+                note_dir_path.display(),
+                e
             );
-            if let Err(e) = fs::remove_file(&note_dir_path) {
-                eprintln!("Error deleting file {}: {}", note_dir_path.display(), e);
-                return Err(format!("Failed to delete file at note path: {}", e));
-            }
-        } else {
-            if let Err(e) = fs::remove_dir_all(&note_dir_path) {
-                eprintln!(
-                    "Error deleting note directory {}: {}",
-                    note_dir_path.display(),
-                    e
-                );
-                return Err(format!("Failed to delete note directory: {}", e));
-            }
-            eprintln!(
-                "Note directory deleted successfully: {}",
-                note_dir_path.display()
-            );
+            return Err(format!("Failed to delete item on filesystem: {}", e));
         }
+        eprintln!(
+            "Item deleted successfully from filesystem: {}",
+            note_dir_path.display()
+        );
     } else {
         eprintln!(
-            "Warning: Note directory or file not found on filesystem for rel_path '{}'.",
+            "Warning: Item not found on filesystem for rel_path '{}'. Metadata (if it existed) was removed.",
             rel_path
         );
     }
 
-    // Save the updated metadata file ONLY IF metadata was initially found and removed
+    // Save the updated metadata file ONLY IF metadata was initially found
     if note_index.is_some() {
         if let Err(e) = save_metadata(notebook_path, notes) {
             eprintln!(
                 "Critical Error: Failed to save metadata after deleting note: {}",
                 e
             );
+            // Note: File system action succeeded, but metadata save failed.
+            // This leaves the state inconsistent. Recovery would be complex.
             return Err(format!(
-                "Failed to save metadata after deleting note: {}",
+                "Failed to save metadata after deleting item: {}",
                 e
             ));
         }
-        eprintln!("Metadata saved successfully after deleting note.");
+        eprintln!("Metadata saved successfully after deleting item.");
     } else {
-        eprintln!("Skipping metadata save as note was not found in metadata.");
+        eprintln!(
+            "Metadata was already absent for '{}', skipping metadata save.",
+            rel_path
+        );
     }
 
-    eprintln!("Note deletion process completed for: {}", rel_path);
+    eprintln!("Deletion process completed for: {}", rel_path);
     Ok(())
 }
 
-// New function to move a note
+// Function to move/rename a note or folder
 pub async fn move_note(
     notebook_path: &str,
     current_rel_path: &str,
@@ -314,12 +336,12 @@ pub async fn move_note(
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<String, String> {
     eprintln!(
-        "Attempting to move note from '{}' to '{}'",
+        "Attempting to move/rename item from '{}' to '{}'",
         current_rel_path, new_rel_path
     );
 
-    let current_note_dir_path = Path::new(notebook_path).join(current_rel_path);
-    let new_note_dir_path = Path::new(notebook_path).join(new_rel_path);
+    let current_fs_path = Path::new(notebook_path).join(current_rel_path);
+    let new_fs_path = Path::new(notebook_path).join(new_rel_path);
     let full_notebook_path = Path::new(notebook_path);
 
     // --- Validation ---
@@ -337,81 +359,48 @@ pub async fn move_note(
         ));
     }
 
-    // Ensure the current path exists in metadata
-    let note_index = notes
-        .iter()
-        .position(|note| note.rel_path == current_rel_path)
-        .ok_or_else(|| {
-            format!(
-                "Note with path '{}' not found in metadata.",
-                current_rel_path
-            )
-        })?;
-
-    // Ensure the current path exists on the filesystem and is a directory
-    if !current_note_dir_path.exists() || !current_note_dir_path.is_dir() {
+    // Ensure the current path exists on the filesystem
+    if !current_fs_path.exists() {
         return Err(format!(
-            "Current note directory '{}' not found or is not a directory.",
+            "Item at path '{}' not found on the filesystem.",
             current_rel_path
         ));
     }
 
-    // Ensure the new path does not already exist in metadata
-    if notes.iter().any(|note| note.rel_path == new_rel_path) {
-        return Err(format!(
-            "A note with the target path '{}' already exists in metadata.",
-            new_rel_path
-        ));
-    }
-
-    // Ensure the target path does not already exist on the filesystem within the notebook path
-    if new_note_dir_path.exists() {
-        if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
-            if let Ok(canonical_new_note_dir_path) = new_note_dir_path.canonicalize() {
-                if canonical_new_note_dir_path.starts_with(&canonical_notebook_path) {
-                    return Err(format!(
-                        "A file or directory already exists at the target path '{}'.",
-                        new_rel_path
-                    ));
-                }
-            }
-        } else {
-            // If canonicalize fails for notebook path, just rely on exists()
-            if new_note_dir_path.exists() {
-                return Err(format!(
-                    "A file or directory already exists at the target path '{}'.",
-                    new_rel_path
-                ));
-            }
-        }
-    }
-
     // Ensure both current and new paths are within the notebook directory after canonicalization
     if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
-        if let Ok(canonical_current_path) = current_note_dir_path.canonicalize() {
+        if let Ok(canonical_current_path) = current_fs_path.canonicalize() {
             if !canonical_current_path.starts_with(&canonical_notebook_path) {
                 return Err(format!(
-                    "Cannot move note from path outside the notebook directory: '{}'",
+                    "Cannot move/rename item from path outside the notebook directory: '{}'",
                     current_rel_path
                 ));
             }
         } else {
             return Err(format!(
-                "Failed to canonicalize current note path: '{}'",
+                "Failed to canonicalize current item path: '{}'",
                 current_rel_path
             ));
         }
 
-        if let Ok(canonical_new_path) = new_note_dir_path.canonicalize() {
-            if !canonical_new_path.starts_with(&canonical_notebook_path) {
+        if let Ok(canonical_new_path) = new_fs_path.canonicalize() {
+            // The new path might not exist yet, so canonicalize might fail.
+            // If it succeeds, ensure it's within the notebook path.
+            if canonical_new_path.exists()
+                && !canonical_new_path.starts_with(&canonical_notebook_path)
+            {
                 return Err(format!(
-                    "Cannot move note to path outside the notebook directory: '{}'",
+                    "Cannot move/rename item to path outside the notebook directory: '{}'",
                     new_rel_path
                 ));
             }
         } else {
+            // If canonicalize of new path fails, it might be because the path doesn't exist (which is fine).
+            // We'll do a simpler check to see if the path formed by joining notebook_path and new_rel_path
+            // would resolve to something outside the notebook root, but this is tricky without canonicalize.
+            // For now, we'll rely on the filesystem rename failing if the target is invalid.
             eprintln!(
-                "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
+                "Warning: Could not canonicalize new item path '{}'. Proceeding with move attempt, but this might indicate a path issue.",
                 new_rel_path
             );
         }
@@ -422,41 +411,148 @@ pub async fn move_note(
         );
     }
 
-    // --- File System Operation ---
-
-    // Create parent directories for the new note path if they don't exist
-    if let Some(parent) = new_note_dir_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
+    // Check if the target path already exists on the filesystem within the notebook path
+    if new_fs_path.exists() {
+        // Re-check canonicalization safety if exists() is true
+        if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
+            if let Ok(canonical_new_fs_path) = new_fs_path.canonicalize() {
+                if canonical_new_fs_path.starts_with(&canonical_notebook_path) {
+                    return Err(format!(
+                        "An item already exists at the target path '{}'.",
+                        new_rel_path
+                    ));
+                }
+            }
+        } else {
+            // If canonicalize fails for notebook path, just rely on exists()
             return Err(format!(
-                "Failed to create parent directories for new note path: {}",
-                e
+                "An item already exists at the target path '{}'.",
+                new_rel_path
             ));
         }
     }
 
-    // Perform the actual move
-    if let Err(e) = fs::rename(&current_note_dir_path, &new_note_dir_path) {
+    // --- File System Operation ---
+
+    // Create parent directories for the new path if they don't exist
+    if let Some(parent) = new_fs_path.parent() {
+        if !parent.exists() {
+            eprintln!(
+                "Creating parent directories for new path: {}",
+                parent.display()
+            );
+            if let Err(e) = fs::create_dir_all(parent) {
+                return Err(format!(
+                    "Failed to create parent directories for new path: {}",
+                    e
+                ));
+            }
+        }
+    } else {
+        // This case means new_rel_path is just a name (e.g., "new_folder" or "new_note")
+        // and new_fs_path is directly inside notebook_path. No parent directory creation needed beyond the notebook root.
+        eprintln!("New path has no parent, attempting rename directly inside notebook root.");
+    }
+
+    // Perform the actual move/rename
+    eprintln!(
+        "Attempting filesystem rename from '{}' to '{}'",
+        current_fs_path.display(),
+        new_fs_path.display()
+    );
+    if let Err(e) = fs::rename(&current_fs_path, &new_fs_path) {
         return Err(format!(
-            "Failed to move note directory from '{}' to '{}': {}",
+            "Failed to move/rename item from '{}' to '{}': {}",
             current_rel_path, new_rel_path, e
         ));
     }
-    eprintln!("Note directory moved successfully.");
+    eprintln!("Filesystem move/rename successful.");
 
     // --- Metadata Update ---
 
-    // Update the relative path in the notes vector
-    notes[note_index].rel_path = new_rel_path.to_string();
+    // Update the relative paths in the notes vector
+    let mut updated_metadata = false;
 
-    // Save the updated metadata file
-    if let Err(e) = save_metadata(notebook_path, notes) {
-        eprintln!(
-            "Critical Error: Failed to save metadata after moving note: {}",
-            e
-        );
-        return Err(format!("Failed to save metadata after moving note: {}", e));
+    // Check if the current path corresponds to a note directory (contains note.md)
+    let is_moving_note_dir = Path::new(notebook_path)
+        .join(current_rel_path)
+        .join("note.md")
+        .exists();
+
+    if is_moving_note_dir {
+        // If moving a single note directory, update its path if found in metadata
+        if let Some(note) = notes
+            .iter_mut()
+            .find(|note| note.rel_path == current_rel_path)
+        {
+            note.rel_path = new_rel_path.to_string();
+            updated_metadata = true;
+            eprintln!("Updated metadata for the moved note.");
+        } else {
+            eprintln!(
+                "Warning: Moved note directory '{}' not found in metadata. Metadata was not updated for this item.",
+                current_rel_path
+            );
+        }
+    } else {
+        // Assume it's a folder move/rename, update paths of notes within it
+        let old_prefix = if current_rel_path.is_empty() {
+            // Moving the root? (Shouldn't happen with current UI, but defensive)
+            String::new()
+        } else {
+            format!("{}/", current_rel_path)
+        };
+
+        let new_prefix = if new_rel_path.is_empty() {
+            // Moving to root?
+            String::new()
+        } else {
+            format!("{}/", new_rel_path)
+        };
+
+        for note in notes.iter_mut() {
+            if note.rel_path.starts_with(&old_prefix) {
+                let suffix = note.rel_path.trim_start_matches(&old_prefix);
+                note.rel_path = format!("{}{}", new_prefix, suffix);
+                updated_metadata = true;
+            } else if note.rel_path == current_rel_path && !current_rel_path.is_empty() {
+                // Handle the edge case where the current_rel_path itself IS a note path
+                note.rel_path = new_rel_path.to_string();
+                updated_metadata = true;
+            }
+        }
+        if updated_metadata {
+            eprintln!("Updated metadata for notes within the moved/renamed folder.");
+        } else {
+            eprintln!(
+                "No notes found within the old path '{}' to update metadata for.",
+                current_rel_path
+            );
+        }
     }
-    eprintln!("Metadata updated successfully after moving note.");
 
+    // Save the updated metadata file ONLY IF any metadata was updated
+    if updated_metadata {
+        if let Err(e) = save_metadata(notebook_path, notes) {
+            eprintln!(
+                "Critical Error: Failed to save metadata after moving/renaming: {}",
+                e
+            );
+            // File system action succeeded, but metadata save failed. Leaves inconsistent state.
+            return Err(format!(
+                "Failed to save metadata after moving/renaming: {}",
+                e
+            ));
+        }
+        eprintln!("Metadata saved successfully after moving/renaming.");
+    } else {
+        eprintln!(
+            "No relevant metadata found or updated for '{}', skipping metadata save.",
+            current_rel_path
+        );
+    }
+
+    eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
+    // Return the new relative path of the item that was moved/renamed
     Ok(new_rel_path.to_string())
 }
