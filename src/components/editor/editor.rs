@@ -41,10 +41,7 @@ pub enum Message {
     ConfirmMoveNote,
     CancelMoveNote,
     NoteMoved(Result<String, String>),
-    // Added new message for initiating folder rename
     InitiateFolderRename(String),
-
-    // Message for About button click
     AboutButtonClicked,
 }
 
@@ -64,9 +61,8 @@ pub struct Editor {
     show_move_note_input: bool,
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
-    app_version: String, // Storing the app version
+    app_version: String,
 
-    // New state to control visibility of the about information
     show_about_info: bool,
 }
 
@@ -95,9 +91,7 @@ impl Application for Editor {
             show_move_note_input: false,
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
-            // Initialize app version from flags
             app_version: flags.version,
-            // Initialize new about info state
             show_about_info: false,
         };
 
@@ -125,13 +119,11 @@ impl Application for Editor {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::EditorAction(action) => {
-                // Only perform editor actions if not showing visualizer, new note input, or move note input, AND not showing about info
                 if self.selected_note_path.is_some()
                     && !self.show_visualizer
                     && !self.show_move_note_input
                     && !self.show_new_note_input
                     && !self.show_about_info
-                // Added check for about info
                 {
                     self.content.perform(action);
                     self.markdown_text = self.content.text();
@@ -152,12 +144,10 @@ impl Application for Editor {
                 Command::none()
             }
             Message::ContentChanged(new_content) => {
-                // Only update content if not showing visualizer, new note input, or move note input, AND not showing about info
                 if !self.show_visualizer
                     && !self.show_move_note_input
                     && !self.show_new_note_input
                     && !self.show_about_info
-                // Added check for about info
                 {
                     self.content = text_editor::Content::with_text(&new_content);
                     self.markdown_text = new_content;
@@ -184,7 +174,6 @@ impl Application for Editor {
                         self.note_explorer.notes.clone(),
                     ));
 
-                    // Handle case where the previously selected note was moved/deleted
                     if let Some(selected_path) = &self.selected_note_path {
                         if !self
                             .note_explorer
@@ -199,7 +188,7 @@ impl Application for Editor {
                             self.selected_note_labels = Vec::new();
                             self.content = text_editor::Content::with_text("");
                             self.markdown_text = String::new();
-                            self.show_move_note_input = false; // Hide move/rename input if the item is gone
+                            self.show_move_note_input = false;
                             self.move_note_current_path = None;
                             self.move_note_new_path_input = String::new();
                         } else if let Some(note) = self
@@ -208,11 +197,9 @@ impl Application for Editor {
                             .iter()
                             .find(|n| &n.rel_path == selected_path)
                         {
-                            // Update labels if the note still exists (labels might have changed)
                             self.selected_note_labels = note.labels.clone();
                         }
                     } else if !self.note_explorer.notes.is_empty() {
-                        // If no note was selected but there are notes, select the first one
                         let first_note_path = self.note_explorer.notes[0].rel_path.clone();
                         eprintln!(
                             "Editor: No note selected, selecting first note: {}",
@@ -235,8 +222,8 @@ impl Application for Editor {
                 self.show_move_note_input = false;
                 self.move_note_current_path = None;
                 self.move_note_new_path_input = String::new();
-                self.show_about_info = false; // Hide about info when a note is selected
-                self.show_new_note_input = false; // Hide new note input
+                self.show_about_info = false;
+                self.show_new_note_input = false;
 
                 if let Some(note) = self
                     .note_explorer
@@ -249,11 +236,22 @@ impl Application for Editor {
                     self.selected_note_labels = Vec::new();
                 }
 
+                let mut commands = Vec::new();
+
+                // Send the message to collapse all and then expand to the selected note
+                commands.push(
+                    self.note_explorer
+                        .update(note_explorer::Message::CollapseAllAndExpandToNote(
+                            note_path.clone(),
+                        ))
+                        .map(Message::NoteExplorerMessage),
+                );
+
                 if !self.show_visualizer && !self.notebook_path.is_empty() {
                     let notebook_path_clone = self.notebook_path.clone();
                     let note_path_clone = note_path.clone();
 
-                    Command::perform(
+                    commands.push(Command::perform(
                         async move {
                             let full_note_path =
                                 format!("{}/{}/note.md", notebook_path_clone, note_path_clone);
@@ -266,22 +264,19 @@ impl Application for Editor {
                             }
                         },
                         Message::ContentChanged,
-                    )
-                } else {
-                    Command::none()
+                    ));
                 }
+
+                Command::batch(commands)
             }
             Message::NewLabelInputChanged(text) => {
                 if !self.show_about_info {
-                    // Prevent input change if about info is showing
                     self.new_label_text = text;
                 }
                 Command::none()
             }
             Message::AddLabel => {
-                // Fixed: Use if let to correctly access selected_note_path
                 if !self.show_about_info {
-                    // Prevent adding labels if about info is showing
                     if let Some(selected_path) = &self.selected_note_path {
                         let label = self.new_label_text.trim().to_string();
                         if !label.is_empty() && !self.selected_note_labels.contains(&label) {
@@ -319,7 +314,6 @@ impl Application for Editor {
             Message::RemoveLabel(label_to_remove) => {
                 if let Some(selected_path) = &self.selected_note_path {
                     if !self.show_about_info {
-                        // Prevent removing labels if about info is showing
                         self.selected_note_labels
                             .retain(|label| label != &label_to_remove);
 
@@ -371,7 +365,7 @@ impl Application for Editor {
                     if self.show_visualizer {
                         self.show_new_note_input = false;
                         self.show_move_note_input = false;
-                        self.show_about_info = false; // Hide about info when visualizer is shown
+                        self.show_about_info = false;
                     }
                     eprintln!("Toggled visualizer visibility to: {}", self.show_visualizer);
                     if self.show_visualizer {
@@ -394,13 +388,11 @@ impl Application for Editor {
                             "Editor: Received NoteSelectedInVisualizer for path: {}",
                             note_path
                         );
-                        // When selecting from visualizer, hide other UI elements
                         self.show_visualizer = false;
                         self.show_new_note_input = false;
                         self.show_move_note_input = false;
-                        self.show_about_info = false; // Hide about info when a note is selected in visualizer
+                        self.show_about_info = false;
 
-                        // Then handle selecting the note as usual
                         self.selected_note_path = Some(note_path.clone());
                         self.new_label_text = String::new();
                         self.move_note_current_path = None;
@@ -417,11 +409,22 @@ impl Application for Editor {
                             self.selected_note_labels = Vec::new();
                         }
 
+                        let mut commands = Vec::new();
+
+                        // Send the message to collapse all and then expand to this note
+                        commands.push(
+                            self.note_explorer
+                                .update(note_explorer::Message::CollapseAllAndExpandToNote(
+                                    note_path.clone(),
+                                ))
+                                .map(Message::NoteExplorerMessage),
+                        );
+
                         if !self.notebook_path.is_empty() {
                             let notebook_path_clone = self.notebook_path.clone();
                             let note_path_clone = note_path.clone();
 
-                            Command::perform(
+                            commands.push(Command::perform(
                                 async move {
                                     let full_note_path = format!(
                                         "{}/{}/note.md",
@@ -439,10 +442,9 @@ impl Application for Editor {
                                     }
                                 },
                                 Message::ContentChanged,
-                            )
-                        } else {
-                            Command::none()
+                            ));
                         }
+                        Command::batch(commands)
                     }
                 }
             }
@@ -455,20 +457,18 @@ impl Application for Editor {
                     self.new_note_path_input = String::new();
                     self.show_visualizer = false;
                     self.show_move_note_input = false;
-                    self.show_about_info = false; // Hide about info when creating a new note
+                    self.show_about_info = false;
                     Command::none()
                 }
             }
             Message::NewNoteInputChanged(text) => {
                 if self.show_new_note_input {
-                    // Only allow input change if new note input is showing
                     self.new_note_path_input = text;
                 }
                 Command::none()
             }
             Message::CreateNote => {
                 if self.show_new_note_input {
-                    // Only allow create note if new note input is showing
                     let new_note_rel_path = self.new_note_path_input.trim().to_string();
                     if new_note_rel_path.is_empty() {
                         eprintln!("New note name cannot be empty.");
@@ -524,15 +524,7 @@ impl Application for Editor {
                                 .set_text(&err)
                                 .show_alert();
                         },
-                        |()| {
-                            // We need a message here to satisfy the type signature.
-                            // Ideally, this would trigger a state where the error is displayed,
-                            // but for simplicity, we'll just acknowledge it.
-                            // A unit struct or an ignored variant could be better.
-                            // For now, we'll just reload the notes in case the error
-                            // caused an inconsistent state, and the user can try again.
-                            Message::NoteExplorerMessage(note_explorer::Message::LoadNotes)
-                        },
+                        |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
                     );
                     dialog_command
                 }
@@ -540,12 +532,11 @@ impl Application for Editor {
             Message::DeleteNote => {
                 if let Some(selected_path) = &self.selected_note_path {
                     if !self.show_about_info {
-                        // Prevent deleting if about info is showing
                         let note_path_clone = selected_path.clone();
                         self.show_new_note_input = false;
                         self.show_move_note_input = false;
                         self.show_visualizer = false;
-                        self.show_about_info = false; // Hide about info
+                        self.show_about_info = false;
 
                         Command::perform(
                             async move {
@@ -595,49 +586,46 @@ impl Application for Editor {
                     Command::none()
                 }
             }
-            Message::NoteDeleted(result) => {
-                match result {
-                    Ok(()) => {
-                        eprintln!("Note deleted successfully.");
-                        self.selected_note_path = None;
-                        self.selected_note_labels = Vec::new();
-                        self.content = text_editor::Content::with_text("");
-                        self.markdown_text = String::new();
-                        self.show_move_note_input = false;
-                        self.move_note_current_path = None;
-                        self.move_note_new_path_input = String::new();
+            Message::NoteDeleted(result) => match result {
+                Ok(()) => {
+                    eprintln!("Note deleted successfully.");
+                    self.selected_note_path = None;
+                    self.selected_note_labels = Vec::new();
+                    self.content = text_editor::Content::with_text("");
+                    self.markdown_text = String::new();
+                    self.show_move_note_input = false;
+                    self.move_note_current_path = None;
+                    self.move_note_new_path_input = String::new();
 
-                        self.note_explorer
-                            .update(note_explorer::Message::LoadNotes)
-                            .map(Message::NoteExplorerMessage)
-                    }
-                    Err(err) => {
-                        eprintln!("Failed to delete note: {}", err);
-                        let dialog_command = Command::perform(
-                            async move {
-                                let _ = MessageDialog::new()
-                                    .set_type(native_dialog::MessageType::Error)
-                                    .set_title("Error Deleting Note")
-                                    .set_text(&err)
-                                    .show_alert();
-                            },
-                            |()| Message::NoteDeleted(Ok(())), // Dummy message to satisfy type
-                        );
-                        let reload_command = self
-                            .note_explorer
-                            .update(note_explorer::Message::LoadNotes)
-                            .map(Message::NoteExplorerMessage);
-                        Command::batch(vec![dialog_command, reload_command])
-                    }
+                    self.note_explorer
+                        .update(note_explorer::Message::LoadNotes)
+                        .map(Message::NoteExplorerMessage)
                 }
-            }
+                Err(err) => {
+                    eprintln!("Failed to delete note: {}", err);
+                    let dialog_command = Command::perform(
+                        async move {
+                            let _ = MessageDialog::new()
+                                .set_type(native_dialog::MessageType::Error)
+                                .set_title("Error Deleting Note")
+                                .set_text(&err)
+                                .show_alert();
+                        },
+                        |()| Message::NoteDeleted(Ok(())),
+                    );
+                    let reload_command = self
+                        .note_explorer
+                        .update(note_explorer::Message::LoadNotes)
+                        .map(Message::NoteExplorerMessage);
+                    Command::batch(vec![dialog_command, reload_command])
+                }
+            },
             Message::MoveNote => {
                 if let Some(current_path) = &self.selected_note_path {
                     if !self.show_about_info {
-                        // Prevent moving if about info is showing
                         self.show_new_note_input = false;
                         self.show_visualizer = false;
-                        self.show_about_info = false; // Hide about info when moving a note
+                        self.show_about_info = false;
 
                         self.show_move_note_input = true;
                         self.move_note_current_path = Some(current_path.clone());
@@ -651,15 +639,14 @@ impl Application for Editor {
             }
             Message::InitiateFolderRename(folder_path) => {
                 if !self.notebook_path.is_empty() && !self.show_about_info {
-                    // Prevent initiating rename if about info is showing
                     self.show_new_note_input = false;
                     self.show_visualizer = false;
-                    self.show_about_info = false; // Hide about info
+                    self.show_about_info = false;
 
                     self.show_move_note_input = true;
                     self.move_note_current_path = Some(folder_path.clone());
                     self.move_note_new_path_input = folder_path.clone();
-                    self.selected_note_path = None; // Deselect note when renaming folder
+                    self.selected_note_path = None;
 
                     eprintln!("Initiating folder rename for: {}", folder_path);
                 } else if self.notebook_path.is_empty() {
@@ -669,14 +656,12 @@ impl Application for Editor {
             }
             Message::MoveNoteInputChanged(text) => {
                 if self.show_move_note_input {
-                    // Only allow input change if move note input is showing
                     self.move_note_new_path_input = text;
                 }
                 Command::none()
             }
             Message::ConfirmMoveNote => {
                 if self.show_move_note_input {
-                    // Only allow confirm move if move note input is showing
                     if let Some(current_path) = self.move_note_current_path.take() {
                         let new_path = self.move_note_new_path_input.trim().to_string();
                         self.show_move_note_input = false;
@@ -692,17 +677,15 @@ impl Application for Editor {
                                         .set_text("New path cannot be empty.")
                                         .show_alert();
                                 },
-                                |()| Message::NoteMoved(Err(String::new())), // Dummy message
+                                |()| Message::NoteMoved(Err(String::new())),
                             );
                             return dialog_command;
                         }
 
-                        // Check if the new path is the same as the current path
                         if new_path == current_path {
                             eprintln!(
                                 "New path is the same as the current path. No action needed."
                             );
-                            // If we were renaming a folder, re-select the first note if available
                             let first_note_path =
                                 self.note_explorer.notes.get(0).map(|n| n.rel_path.clone());
                             if let Some(path) = first_note_path {
@@ -746,17 +729,14 @@ impl Application for Editor {
                 eprintln!("Move/Rename cancelled by user.");
 
                 let command = if let Some(selected_path) = self.selected_note_path.clone() {
-                    // If a note was selected before the move prompt, re-select it.
                     Command::perform(async move { selected_path }, Message::NoteSelected)
                 } else {
-                    // If no note was selected before (e.g., cancelling folder rename),
-                    // select the first note if available, or do nothing.
                     let first_note_path =
                         self.note_explorer.notes.get(0).map(|n| n.rel_path.clone());
                     if let Some(path) = first_note_path {
                         Command::perform(async { path }, Message::NoteSelected)
                     } else {
-                        Command::none() // No notes available to select
+                        Command::none()
                     }
                 };
 
@@ -770,10 +750,6 @@ impl Application for Editor {
                         .update(note_explorer::Message::LoadNotes)
                         .map(Message::NoteExplorerMessage);
 
-                    // After a move/rename, the note list is reloaded.
-                    // The NoteExplorerMessage handler will re-select the correct note
-                    // or the first note if the selected one was part of a moved folder.
-                    // So, we just need to trigger the reload.
                     reload_command
                 }
                 Err(err) => {
@@ -786,7 +762,7 @@ impl Application for Editor {
                                 .set_text(&err)
                                 .show_alert();
                         },
-                        |()| Message::NoteMoved(Err(String::new())), // Dummy message to satisfy type
+                        |()| Message::NoteMoved(Err(String::new())),
                     );
                     let reload_command = self
                         .note_explorer
@@ -798,7 +774,6 @@ impl Application for Editor {
             Message::AboutButtonClicked => {
                 eprintln!("About button clicked. Toggling about info visibility.");
                 self.show_about_info = !self.show_about_info;
-                // Hide other transient UI elements when showing About
                 if self.show_about_info {
                     self.show_visualizer = false;
                     self.show_new_note_input = false;
@@ -812,12 +787,9 @@ impl Application for Editor {
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
         let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
-        // Determine if any of the transient dialogs are open
         let is_dialog_open =
             self.show_new_note_input || self.show_move_note_input || self.show_about_info;
 
-        // Conditionally add the About button
-        // Only show if no dialog is open AND visualizer is not shown
         if !is_dialog_open && !self.show_visualizer {
             let about_button_text = if self.show_about_info {
                 "Back"
@@ -830,7 +802,6 @@ impl Application for Editor {
                     .on_press(Message::AboutButtonClicked),
             );
         } else if self.show_about_info {
-            // If About dialog IS open, still show the "Back" button
             top_bar = top_bar.push(
                 button("Back")
                     .padding(5)
@@ -839,8 +810,6 @@ impl Application for Editor {
         }
 
         if !self.notebook_path.is_empty() {
-            // Conditionally add the Visualizer toggle button
-            // Only show if no dialog is open AND visualizer is not shown
             if !is_dialog_open && !self.show_visualizer {
                 let visualizer_button_text = if self.show_visualizer {
                     "Hide Visualizer"
@@ -853,7 +822,6 @@ impl Application for Editor {
                         .on_press(Message::ToggleVisualizer),
                 );
             } else if self.show_visualizer && !is_dialog_open {
-                // If Visualizer IS shown AND no other dialog is open, show "Hide Visualizer"
                 top_bar = top_bar.push(
                     button("Hide Visualizer")
                         .padding(5)
@@ -861,7 +829,6 @@ impl Application for Editor {
                 );
             }
 
-            // Show other action buttons only if no other input/visualizer is active AND not showing about info
             if !self.show_visualizer
                 && !self.show_new_note_input
                 && !self.show_move_note_input
@@ -880,7 +847,6 @@ impl Application for Editor {
             } else if self.show_new_note_input {
                 top_bar = top_bar.push(Text::new("Creating New Note..."));
             } else if self.show_move_note_input {
-                // Corrected heuristic to determine if it's a folder rename or note move
                 let mut all_folders_in_notes: HashSet<String> = HashSet::new();
                 for note in &self.note_explorer.notes {
                     if let Some(parent) = Path::new(&note.rel_path).parent() {
@@ -891,11 +857,10 @@ impl Application for Editor {
                     }
                 }
 
-                let is_renaming_folder =
-                    self.move_note_current_path.as_deref().map_or(false, |p| {
-                        // Check if the current path is one of the known folder paths
-                        all_folders_in_notes.contains(p)
-                    });
+                let is_renaming_folder = self
+                    .move_note_current_path
+                    .as_deref()
+                    .map_or(false, |p| all_folders_in_notes.contains(p));
 
                 let operation_text = if is_renaming_folder {
                     "Renaming Folder"
@@ -909,8 +874,6 @@ impl Application for Editor {
                 )));
             }
         } else {
-            // No notebook open message
-            // Hide this message if about info is showing
             if !self.show_about_info {
                 top_bar = top_bar.push(Text::new(
                     "Please configure the 'notebook_path' in your config.json file to open a notebook.",
@@ -919,13 +882,11 @@ impl Application for Editor {
         }
 
         let main_content: Element<'_, Self::Message, Self::Theme> = if self.show_about_info {
-            // Display about information
             let about_info_column = Column::new()
                 .spacing(10)
                 .align_items(iced::Alignment::Center)
                 .push(Text::new("Cognate Note Taking App").size(30))
                 .push(Text::new(format!("Version: {}", self.app_version)).size(20));
-            // Could add more info here later, like license or authors
 
             Container::new(about_info_column)
                 .center_x()
@@ -962,7 +923,6 @@ impl Application for Editor {
                 .align_items(iced::Alignment::Center)
                 .into()
         } else if self.show_move_note_input {
-            // Corrected heuristic to determine if it's a folder rename or note move
             let mut all_folders_in_notes: HashSet<String> = HashSet::new();
             for note in &self.note_explorer.notes {
                 if let Some(parent) = Path::new(&note.rel_path).parent() {
@@ -1019,7 +979,6 @@ impl Application for Editor {
                 .align_items(iced::Alignment::Center)
                 .into()
         } else if self.notebook_path.is_empty() {
-            // Display the "No notebook" message when no notebook is open and not showing about
             Container::new(
                 Text::new("Please configure the 'notebook_path' in your config.json file to open a notebook.")
                     .size(20)
@@ -1031,7 +990,6 @@ impl Application for Editor {
              .height(Length::Fill)
              .into()
         } else {
-            // Display the standard editor layout
             let note_explorer_view: Element<'_, Self::Message, Self::Theme> = Container::new(
                 self.note_explorer
                     .view(self.selected_note_path.as_ref())
@@ -1042,8 +1000,7 @@ impl Application for Editor {
                         }
                         note_explorer::Message::InitiateFolderRename(path) => {
                             Message::InitiateFolderRename(path)
-                        } // Map the new message
-                        // Handle other messages if any, including the updated NoteExplorerMessage
+                        }
                         other_msg => Message::NoteExplorerMessage(other_msg),
                     }),
             )
