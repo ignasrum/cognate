@@ -115,7 +115,7 @@ impl Application for Editor {
     }
 
     fn title(&self) -> String {
-        String::from("Cognate")
+        String::from("Cognate - Note Taking App")
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
@@ -732,55 +732,47 @@ impl Application for Editor {
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
-        let mut top_bar = Row::new();
+        let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
-        // Only show these buttons if not currently showing a different input/visualizer
-        if !self.show_new_note_input && !self.show_move_note_input && !self.show_visualizer {
-            if !self.notebook_path.is_empty() {
-                top_bar = top_bar.push(button("New Note").padding(5).on_press(Message::NewNote));
-            }
-
-            if self.selected_note_path.is_some() && !self.notebook_path.is_empty() {
-                top_bar = top_bar.push(
-                    button("Delete Note")
-                        .padding(5)
-                        .on_press(Message::DeleteNote),
-                );
-                // Add Move Note button
-                top_bar = top_bar.push(button("Move Note").padding(5).on_press(Message::MoveNote));
-            }
-
-            if !self.notebook_path.is_empty() {
-                let visualizer_button_text = if self.show_visualizer {
-                    "Hide Visualizer"
-                } else {
-                    "Show Visualizer"
-                };
-                top_bar = top_bar.push(
-                    button(visualizer_button_text)
-                        .padding(5)
-                        .on_press(Message::ToggleVisualizer),
-                );
+        if !self.notebook_path.is_empty() {
+            // Always show visualizer toggle when notebook is open
+            let visualizer_button_text = if self.show_visualizer {
+                "Hide Visualizer"
             } else {
-                top_bar = top_bar.push(Text::new(
-                    "No notebook opened. Configure 'notebook_path' in config.json",
-                ));
-            }
-        } else {
-            // If an input is shown, maybe display a message indicating what's happening
-            if self.show_new_note_input {
+                "Show Visualizer"
+            };
+            top_bar = top_bar.push(
+                button(visualizer_button_text)
+                    .padding(5)
+                    .on_press(Message::ToggleVisualizer),
+            );
+
+            // Show other action buttons only if no other input/visualizer is active
+            if !self.show_visualizer && !self.show_new_note_input && !self.show_move_note_input {
+                top_bar = top_bar.push(button("New Note").padding(5).on_press(Message::NewNote));
+                if self.selected_note_path.is_some() {
+                    top_bar = top_bar.push(
+                        button("Delete Note")
+                            .padding(5)
+                            .on_press(Message::DeleteNote),
+                    );
+                    top_bar =
+                        top_bar.push(button("Move Note").padding(5).on_press(Message::MoveNote));
+                }
+            } else if self.show_new_note_input {
                 top_bar = top_bar.push(Text::new("Creating New Note..."));
             } else if self.show_move_note_input {
                 top_bar = top_bar.push(Text::new(format!(
                     "Moving Note '{}'...",
                     self.move_note_current_path.as_deref().unwrap_or("")
                 )));
-            } else if self.show_visualizer {
-                top_bar = top_bar.push(Text::new("Visualizer"));
             }
+        } else {
+            // No notebook open message
+            top_bar = top_bar.push(Text::new(
+                "No notebook opened. Configure 'notebook_path' in config.json",
+            ));
         }
-
-        top_bar = top_bar.spacing(10).padding(5).width(Length::Fill);
 
         let main_content: Element<'_, Self::Message, Self::Theme> = if self.show_visualizer {
             Container::new(self.visualizer.view().map(Message::VisualizerMessage))
