@@ -24,9 +24,10 @@ enum NodeOwned {
         path: String, // Store the full relative path of the folder
     },
     NoteDir {
-        name: String,           // The name of the note directory
+        name: String, // The name of the note directory
+        #[allow(dead_code)] // Allow dead code because this field is used by the Editor component
         metadata: NoteMetadata, // Owned copy
-        path: String,           // Store the full relative path of the note directory
+        path: String, // Store the full relative path of the note directory
     },
     // Add a placeholder variant for temporary use during tree construction
     Placeholder,

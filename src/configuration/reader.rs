@@ -5,9 +5,6 @@ use json::read_json_file;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
-use std::fs;
-use std::io::Read; // Still needed for read_json_file
-use toml; // toml is still needed for read_json_file (via dependency, though not directly used here) // Still needed for env! macro
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Configuration {
