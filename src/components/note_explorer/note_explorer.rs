@@ -333,7 +333,7 @@ impl NoteExplorer {
                         iced::theme::Button::Text
                     };
 
-                    let note_button_text = format!("{}- {}", indent_space, name);
+                    let note_button_text = format!("{}o {}", indent_space, name); // Changed '-' to 'o'
 
                     column = column.push(
                         Button::new(Text::new(note_button_text).size(16))

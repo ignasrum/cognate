@@ -745,17 +745,22 @@ impl Application for Editor {
                 self.move_note_new_path_input = String::new();
                 eprintln!("Move/Rename cancelled by user.");
 
-                // If we were renaming a folder, re-select the first note if available
-                let first_note_path = self.note_explorer.notes.get(0).map(|n| n.rel_path.clone());
-                if let Some(path) = first_note_path {
-                    // Select the first note if cancelling a folder rename/move
-                    Command::perform(async { path }, Message::NoteSelected)
-                } else if let Some(selected_path) = self.selected_note_path.clone() {
-                    // Otherwise, if a note was selected before the move prompt, re-select it
+                let command = if let Some(selected_path) = self.selected_note_path.clone() {
+                    // If a note was selected before the move prompt, re-select it.
                     Command::perform(async move { selected_path }, Message::NoteSelected)
                 } else {
-                    Command::none() // No notes available to select
-                }
+                    // If no note was selected before (e.g., cancelling folder rename),
+                    // select the first note if available, or do nothing.
+                    let first_note_path =
+                        self.note_explorer.notes.get(0).map(|n| n.rel_path.clone());
+                    if let Some(path) = first_note_path {
+                        Command::perform(async { path }, Message::NoteSelected)
+                    } else {
+                        Command::none() // No notes available to select
+                    }
+                };
+
+                command
             }
             Message::NoteMoved(result) => match result {
                 Ok(new_rel_path) => {
@@ -908,7 +913,7 @@ impl Application for Editor {
             // Hide this message if about info is showing
             if !self.show_about_info {
                 top_bar = top_bar.push(Text::new(
-                    "No notebook opened. Configure 'notebook_path' in config.json",
+                    "Please configure the 'notebook_path' in your config.json file to open a notebook.",
                 ));
             }
         }
