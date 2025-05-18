@@ -23,40 +23,21 @@ Cognate is a simple note taking application built with the Iced GUI library for 
 
 ### Building and Running
 
-You can build and run the application using the provided `Makefile`:
+You can build and run the application using the provided `Makefile`. Here are the relevant commands:
 
-```cognate/Makefile#L1-16
-prog :=cognate
+- `make build`: Builds the project in release mode.
+- `make run`: Runs the application.
+- `make install`: Builds and installs the application to `~/.local/bin`.
+- `make clean`: Cleans the build artifacts.
+- `make help`: Displays usage information for the make targets.
 
-debug ?=
+You can also specify `debug=1` to build in debug mode, for example: `make build debug=1`.
 
-$(info debug is $(debug))
+Alternatively, you can use Cargo commands directly:
 
-ifdef debug
-  release :=
-  target :=debug
-else
-  release :=--release
-  target :=release
-endif
-
-build:
-	cargo build $(release)
-
-run:
-	cargo run
-
-clean:
-	cargo clean
-
-install:
-	mkdir -p ~/bin
-	cp target/$(target)/$(prog) ~/.local/bin/$(prog)
-
-all: build install
-
-help:
-	@echo "usage: make $(prog) [debug=1]"
+```bash
+cargo build --release # or cargo build for debug
+cargo run --release # or cargo run
 ```
 
 ### Configuration
@@ -68,5 +49,5 @@ A sample `config.json` looks like this:
 ```cognate/config.json
 {
   "theme": "CatppuccinMacchiato",
-  "notebook_path": "/home/ignasr/Documents/cognate/example_notebook"
+  "notebook_path": "/home/{USER}/Documents/cognate/example_notebook"
 }
