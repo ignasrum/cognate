@@ -14,11 +14,13 @@ mod note_explorer;
 // Note: This function is now a duplicate of the one in notebook.rs
 // and should likely be removed. Keeping it for now to avoid breaking
 // any potential external references, but it's a discrepancy.
+#[allow(dead_code)] // Allow dead code for this function as it seems unused
 pub fn save_metadata(
     notebook_path: &str,
     notes: &[note_explorer::NoteMetadata],
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let metadata_path = Path::new(notebook_path).join("metadata.json");
+    #[cfg(debug_assertions)]
     eprintln!("Saving metadata to: {}", metadata_path.display());
 
     let notebook_metadata = note_explorer::NotebookMetadata {
@@ -29,6 +31,7 @@ pub fn save_metadata(
 
     fs::write(&metadata_path, json_string)?;
 
+    #[cfg(debug_assertions)]
     eprintln!("Metadata saved successfully.");
     Ok(())
 }

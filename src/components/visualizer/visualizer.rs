@@ -2,7 +2,7 @@ use crate::notebook::NoteMetadata;
 use iced::{
     Element, Length, Theme,
     widget::{Button, Column, Container, Scrollable, Text},
-}; // Removed Row import
+};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -27,6 +27,7 @@ impl Visualizer {
     pub fn update(&mut self, message: Message) -> iced::Command<Message> {
         match message {
             Message::UpdateNotes(notes) => {
+                #[cfg(debug_assertions)] // Added cfg attribute here
                 eprintln!(
                     "Visualizer: Received UpdateNotes message with {} notes.",
                     notes.len()
@@ -78,10 +79,15 @@ impl Visualizer {
                 sorted_notes_without_labels.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
                 for note in &sorted_notes_without_labels {
-                    let note_button =
-                        Button::new(Text::new(format!("- {}", note.rel_path)).size(16))
-                            .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                            .style(iced::theme::Button::Text);
+                    let note_name = Path::new(&note.rel_path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+
+                    let note_button = Button::new(Text::new(format!("- {}", note_name)).size(16))
+                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                        .style(iced::theme::Button::Text);
 
                     no_label_column = no_label_column.push(note_button);
                 }

@@ -96,6 +96,7 @@ impl Application for Editor {
         };
 
         let initial_command = if !editor_instance.notebook_path.is_empty() {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Editor: Initializing with notebook: {}",
                 editor_instance.notebook_path
@@ -105,6 +106,7 @@ impl Application for Editor {
                 .update(note_explorer::Message::LoadNotes)
                 .map(Message::NoteExplorerMessage)
         } else {
+            #[cfg(debug_assertions)]
             eprintln!("Editor: No notebook path provided in config. Starting without a notebook.");
             Command::none()
         };
@@ -132,6 +134,7 @@ impl Application for Editor {
                         let notebook_path = self.notebook_path.clone();
                         let note_path = selected_path.clone();
                         let content = self.markdown_text.clone();
+                        #[cfg(debug_assertions)]
                         eprintln!("Editor: Saving content for note: {}", note_path);
                         return Command::perform(
                             async move {
@@ -155,6 +158,7 @@ impl Application for Editor {
                 Command::none()
             }
             Message::NoteExplorerMessage(note_explorer_message) => {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "Editor: Received NoteExplorerMessage: {:?}",
                     note_explorer_message
@@ -165,10 +169,11 @@ impl Application for Editor {
                     .map(Message::NoteExplorerMessage);
 
                 let mut editor_command = Command::none();
-                if let note_explorer::Message::NotesLoaded(loaded_notes) = note_explorer_message {
+                if let note_explorer::Message::NotesLoaded(_loaded_notes) = note_explorer_message {
+                    #[cfg(debug_assertions)]
                     eprintln!(
                         "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
-                        loaded_notes.len()
+                        _loaded_notes.len()
                     );
                     let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
                         self.note_explorer.notes.clone(),
@@ -181,6 +186,7 @@ impl Application for Editor {
                             .iter()
                             .any(|n| &n.rel_path == selected_path)
                         {
+                            #[cfg(debug_assertions)]
                             eprintln!(
                                 "Editor: Selected note no longer exists. Clearing editor state."
                             );
@@ -201,6 +207,7 @@ impl Application for Editor {
                         }
                     } else if !self.note_explorer.notes.is_empty() {
                         let first_note_path = self.note_explorer.notes[0].rel_path.clone();
+                        #[cfg(debug_assertions)]
                         eprintln!(
                             "Editor: No note selected, selecting first note: {}",
                             first_note_path
@@ -213,6 +220,7 @@ impl Application for Editor {
                 Command::batch(vec![note_explorer_command, editor_command])
             }
             Message::NoteSelected(note_path) => {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "Editor: NoteSelected message received for path: {}",
                     note_path
@@ -257,8 +265,9 @@ impl Application for Editor {
                                 format!("{}/{}/note.md", notebook_path_clone, note_path_clone);
                             match std::fs::read_to_string(full_note_path) {
                                 Ok(content) => content,
-                                Err(err) => {
-                                    eprintln!("Failed to read note file for editor: {}", err);
+                                Err(_err) => {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("Failed to read note file for editor: {}", _err);
                                     String::new()
                                 }
                             }
@@ -344,17 +353,21 @@ impl Application for Editor {
                 Command::none()
             }
             Message::MetadataSaved(result) => {
-                if let Err(err) = result {
-                    eprintln!("Error saving metadata: {}", err);
+                if let Err(_err) = result {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Error saving metadata: {}", _err);
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("Metadata saved successfully.");
                 }
                 Command::none()
             }
             Message::NoteContentSaved(result) => {
-                if let Err(err) = result {
-                    eprintln!("Error saving note content: {}", err);
+                if let Err(_err) = result {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Error saving note content: {}", _err);
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("Note content saved successfully.");
                 }
                 Command::none()
@@ -367,6 +380,7 @@ impl Application for Editor {
                         self.show_move_note_input = false;
                         self.show_about_info = false;
                     }
+                    #[cfg(debug_assertions)]
                     eprintln!("Toggled visualizer visibility to: {}", self.show_visualizer);
                     if self.show_visualizer {
                         let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
@@ -374,6 +388,7 @@ impl Application for Editor {
                         ));
                     }
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("Cannot show visualizer: No notebook is open.");
                 }
                 Command::none()
@@ -384,6 +399,7 @@ impl Application for Editor {
                 match visualizer_message {
                     visualizer::Message::UpdateNotes(_) => Command::none(),
                     visualizer::Message::NoteSelectedInVisualizer(note_path) => {
+                        #[cfg(debug_assertions)]
                         eprintln!(
                             "Editor: Received NoteSelectedInVisualizer for path: {}",
                             note_path
@@ -411,7 +427,6 @@ impl Application for Editor {
 
                         let mut commands = Vec::new();
 
-                        // Send the message to collapse all and then expand to this note
                         commands.push(
                             self.note_explorer
                                 .update(note_explorer::Message::CollapseAllAndExpandToNote(
@@ -432,10 +447,11 @@ impl Application for Editor {
                                     );
                                     match std::fs::read_to_string(full_note_path) {
                                         Ok(content) => content,
-                                        Err(err) => {
+                                        Err(_err) => {
+                                            #[cfg(debug_assertions)]
                                             eprintln!(
                                                 "Failed to read note file for editor: {}",
-                                                err
+                                                _err
                                             );
                                             String::new()
                                         }
@@ -450,6 +466,7 @@ impl Application for Editor {
             }
             Message::NewNote => {
                 if self.notebook_path.is_empty() {
+                    #[cfg(debug_assertions)]
                     eprintln!("Cannot create a new note: No notebook is open.");
                     Command::none()
                 } else {
@@ -471,6 +488,7 @@ impl Application for Editor {
                 if self.show_new_note_input {
                     let new_note_rel_path = self.new_note_path_input.trim().to_string();
                     if new_note_rel_path.is_empty() {
+                        #[cfg(debug_assertions)]
                         eprintln!("New note name cannot be empty.");
                         Command::none()
                     } else {
@@ -501,6 +519,7 @@ impl Application for Editor {
             }
             Message::NoteCreated(result) => match result {
                 Ok(new_note_metadata) => {
+                    #[cfg(debug_assertions)]
                     eprintln!("Note created successfully: {}", new_note_metadata.rel_path);
                     let reload_command = self
                         .note_explorer
@@ -514,14 +533,15 @@ impl Application for Editor {
 
                     Command::batch(vec![reload_command, select_command])
                 }
-                Err(err) => {
-                    eprintln!("Failed to create note: {}", err);
+                Err(_err) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to create note: {}", _err);
                     let dialog_command = Command::perform(
                         async move {
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Creating Note")
-                                .set_text(&err)
+                                .set_text(&_err)
                                 .show_alert();
                         },
                         |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
@@ -556,6 +576,7 @@ impl Application for Editor {
                         Command::none()
                     }
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("No note selected to delete.");
                     Command::none()
                 }
@@ -578,16 +599,19 @@ impl Application for Editor {
                             Message::NoteDeleted,
                         )
                     } else {
+                        #[cfg(debug_assertions)]
                         eprintln!("ConfirmDeleteNote called with no selected note.");
                         Command::none()
                     }
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("Note deletion cancelled by user.");
                     Command::none()
                 }
             }
             Message::NoteDeleted(result) => match result {
                 Ok(()) => {
+                    #[cfg(debug_assertions)]
                     eprintln!("Note deleted successfully.");
                     self.selected_note_path = None;
                     self.selected_note_labels = Vec::new();
@@ -601,14 +625,15 @@ impl Application for Editor {
                         .update(note_explorer::Message::LoadNotes)
                         .map(Message::NoteExplorerMessage)
                 }
-                Err(err) => {
-                    eprintln!("Failed to delete note: {}", err);
+                Err(_err) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to delete note: {}", _err);
                     let dialog_command = Command::perform(
                         async move {
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Deleting Note")
-                                .set_text(&err)
+                                .set_text(&_err)
                                 .show_alert();
                         },
                         |()| Message::NoteDeleted(Ok(())),
@@ -630,9 +655,11 @@ impl Application for Editor {
                         self.show_move_note_input = true;
                         self.move_note_current_path = Some(current_path.clone());
                         self.move_note_new_path_input = current_path.clone();
+                        #[cfg(debug_assertions)]
                         eprintln!("Showing move note input for: {}", current_path);
                     }
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!("No note selected to move.");
                 }
                 Command::none()
@@ -648,8 +675,10 @@ impl Application for Editor {
                     self.move_note_new_path_input = folder_path.clone();
                     self.selected_note_path = None;
 
+                    #[cfg(debug_assertions)]
                     eprintln!("Initiating folder rename for: {}", folder_path);
                 } else if self.notebook_path.is_empty() {
+                    #[cfg(debug_assertions)]
                     eprintln!("Cannot rename folder: No notebook is open.");
                 }
                 Command::none()
@@ -668,6 +697,7 @@ impl Application for Editor {
                         self.move_note_new_path_input = String::new();
 
                         if new_path.is_empty() {
+                            #[cfg(debug_assertions)]
                             eprintln!("New path cannot be empty for moving/renaming.");
                             let dialog_command = Command::perform(
                                 async move {
@@ -683,6 +713,7 @@ impl Application for Editor {
                         }
 
                         if new_path == current_path {
+                            #[cfg(debug_assertions)]
                             eprintln!(
                                 "New path is the same as the current path. No action needed."
                             );
@@ -711,6 +742,7 @@ impl Application for Editor {
                             Message::NoteMoved,
                         )
                     } else {
+                        #[cfg(debug_assertions)]
                         eprintln!(
                             "ConfirmMoveNote called with no current item selected to move/rename."
                         );
@@ -726,6 +758,7 @@ impl Application for Editor {
                 self.show_move_note_input = false;
                 self.move_note_current_path = None;
                 self.move_note_new_path_input = String::new();
+                #[cfg(debug_assertions)]
                 eprintln!("Move/Rename cancelled by user.");
 
                 let command = if let Some(selected_path) = self.selected_note_path.clone() {
@@ -743,8 +776,9 @@ impl Application for Editor {
                 command
             }
             Message::NoteMoved(result) => match result {
-                Ok(new_rel_path) => {
-                    eprintln!("Item moved/renamed successfully to: {}", new_rel_path);
+                Ok(_new_rel_path) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Item moved/renamed successfully to: {}", _new_rel_path);
                     let reload_command = self
                         .note_explorer
                         .update(note_explorer::Message::LoadNotes)
@@ -752,14 +786,15 @@ impl Application for Editor {
 
                     reload_command
                 }
-                Err(err) => {
-                    eprintln!("Failed to move/rename item: {}", err);
+                Err(_err) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to move/rename item: {}", _err);
                     let dialog_command = Command::perform(
                         async move {
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Moving/Renaming")
-                                .set_text(&err)
+                                .set_text(&_err)
                                 .show_alert();
                         },
                         |()| Message::NoteMoved(Err(String::new())),
@@ -772,6 +807,7 @@ impl Application for Editor {
                 }
             },
             Message::AboutButtonClicked => {
+                #[cfg(debug_assertions)]
                 eprintln!("About button clicked. Toggling about info visibility.");
                 self.show_about_info = !self.show_about_info;
                 if self.show_about_info {

@@ -23,12 +23,18 @@ pub fn save_metadata(
     notebook_path: &str,
     notes: &[NoteMetadata],
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "Saving metadata to: {}",
+        Path::new(notebook_path).join("metadata.json").display()
+    );
+
     let metadata_path = Path::new(notebook_path).join("metadata.json");
-    eprintln!("Saving metadata to: {}", metadata_path.display());
 
     // Ensure the notebook directory exists before saving metadata
     if let Some(parent) = metadata_path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
+            #[cfg(debug_assertions)]
             eprintln!("Failed to create parent directory for metadata file: {}", e);
             return Err(Box::new(e));
         }
@@ -42,6 +48,7 @@ pub fn save_metadata(
 
     fs::write(&metadata_path, json_string)?;
 
+    #[cfg(debug_assertions)]
     eprintln!("Metadata saved successfully.");
     Ok(())
 }
@@ -50,6 +57,7 @@ pub fn save_metadata(
 // to keep metadata logic together. I'll move it and adjust note_explorer.rs accordingly.
 pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
     let file_path = Path::new(&notebook_path).join("metadata.json");
+    #[cfg(debug_assertions)]
     eprintln!(
         "load_notes_metadata: Attempting to read file: {}",
         file_path.display()
@@ -57,20 +65,25 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
 
     let contents = match fs::read_to_string(&file_path) {
         Ok(c) => {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "load_notes_metadata: Successfully read file: {}",
                 file_path.display()
             );
             c
         }
-        Err(err) => {
+        Err(_err) => {
+            // Added underscore here
+            #[cfg(debug_assertions)]
             eprintln!(
                 "load_notes_metadata: Error reading metadata file {}: {}",
                 file_path.display(),
-                err
+                _err // Use the underscore version here too
             );
             // If the file doesn't exist, assume it's a new notebook and return empty notes
-            if err.kind() == ErrorKind::NotFound {
+            if _err.kind() == ErrorKind::NotFound {
+                // Use the underscore version here too
+                #[cfg(debug_assertions)]
                 eprintln!("Metadata file not found, assuming new notebook.");
                 return Vec::new();
             }
@@ -80,14 +93,16 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
 
     let metadata: NotebookMetadata = match serde_json::from_str(&contents) {
         Ok(m) => {
+            #[cfg(debug_assertions)]
             eprintln!("load_notes_metadata: Successfully parsed metadata.");
             m
         }
-        Err(err) => {
+        Err(_err) => {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "load_notes_metadata: Error parsing metadata from {}: {}",
                 file_path.display(),
-                err
+                _err
             );
             return Vec::new();
         }
@@ -105,6 +120,7 @@ pub async fn save_note_content(
     let full_note_path = Path::new(&notebook_path)
         .join(&rel_note_path)
         .join("note.md");
+    #[cfg(debug_assertions)]
     eprintln!("Attempting to save note to: {}", full_note_path.display());
 
     // Ensure the directory exists before writing the file
@@ -123,6 +139,7 @@ pub async fn create_new_note(
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>, // Pass the notes vector to update
 ) -> Result<NoteMetadata, String> {
+    #[cfg(debug_assertions)]
     eprintln!("Attempting to create new note with rel_path: {}", rel_path);
     let note_dir_path = Path::new(notebook_path).join(rel_path);
     let note_file_path = note_dir_path.join("note.md");
@@ -152,12 +169,14 @@ pub async fn create_new_note(
                 ));
             }
         } else {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
                 rel_path
             );
         }
     } else {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
@@ -205,6 +224,7 @@ pub async fn create_new_note(
 
     // Save the updated metadata file
     if let Err(e) = save_metadata(notebook_path, notes) {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Critical Error: Failed to save metadata after creating note: {}",
             e
@@ -217,6 +237,7 @@ pub async fn create_new_note(
         ));
     }
 
+    #[cfg(debug_assertions)]
     eprintln!("New note created successfully: {}", rel_path);
     Ok(new_note_metadata)
 }
@@ -227,6 +248,7 @@ pub async fn delete_note(
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<(), String> {
+    #[cfg(debug_assertions)]
     eprintln!("Attempting to delete note with rel_path: {}", rel_path);
     let note_dir_path = Path::new(notebook_path).join(rel_path);
     let full_notebook_path = Path::new(notebook_path);
@@ -249,6 +271,7 @@ pub async fn delete_note(
                     rel_path
                 ));
             }
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Could not canonicalize path '{}'. Proceeding with deletion attempt based on relative path.",
                 rel_path
@@ -262,6 +285,7 @@ pub async fn delete_note(
                 rel_path
             ));
         }
+        #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
@@ -272,6 +296,7 @@ pub async fn delete_note(
     let note_index = notes.iter().position(|note| note.rel_path == rel_path);
 
     if note_index.is_none() {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Note with rel_path '{}' not found in metadata. Proceeding with filesystem deletion only.",
             rel_path
@@ -284,6 +309,7 @@ pub async fn delete_note(
     // Attempt to delete the note directory recursively
     if note_dir_path.exists() {
         if let Err(e) = fs::remove_dir_all(&note_dir_path) {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Error deleting directory {}: {}",
                 note_dir_path.display(),
@@ -291,11 +317,13 @@ pub async fn delete_note(
             );
             return Err(format!("Failed to delete item on filesystem: {}", e));
         }
+        #[cfg(debug_assertions)]
         eprintln!(
             "Item deleted successfully from filesystem: {}",
             note_dir_path.display()
         );
     } else {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Item not found on filesystem for rel_path '{}'. Metadata (if it existed) was removed.",
             rel_path
@@ -305,6 +333,7 @@ pub async fn delete_note(
     // Save the updated metadata file ONLY IF metadata was initially found
     if note_index.is_some() {
         if let Err(e) = save_metadata(notebook_path, notes) {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Critical Error: Failed to save metadata after deleting note: {}",
                 e
@@ -316,14 +345,17 @@ pub async fn delete_note(
                 e
             ));
         }
+        #[cfg(debug_assertions)]
         eprintln!("Metadata saved successfully after deleting item.");
     } else {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Metadata was already absent for '{}', skipping metadata save.",
             rel_path
         );
     }
 
+    #[cfg(debug_assertions)]
     eprintln!("Deletion process completed for: {}", rel_path);
     Ok(())
 }
@@ -335,6 +367,7 @@ pub async fn move_note(
     new_rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<String, String> {
+    #[cfg(debug_assertions)]
     eprintln!(
         "Attempting to move/rename item from '{}' to '{}'",
         current_rel_path, new_rel_path
@@ -399,12 +432,14 @@ pub async fn move_note(
             // We'll do a simpler check to see if the path formed by joining notebook_path and new_rel_path
             // would resolve to something outside the notebook root, but this is tricky without canonicalize.
             // For now, we'll rely on the filesystem rename failing if the target is invalid.
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Could not canonicalize new item path '{}'. Proceeding with move attempt, but this might indicate a path issue.",
                 new_rel_path
             );
         }
     } else {
+        #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
             notebook_path
@@ -437,6 +472,7 @@ pub async fn move_note(
     // Create parent directories for the new path if they don't exist
     if let Some(parent) = new_fs_path.parent() {
         if !parent.exists() {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Creating parent directories for new path: {}",
                 parent.display()
@@ -451,10 +487,12 @@ pub async fn move_note(
     } else {
         // This case means new_rel_path is just a name (e.g., "new_folder" or "new_note")
         // and new_fs_path is directly inside notebook_path. No parent directory creation needed beyond the notebook root.
+        #[cfg(debug_assertions)]
         eprintln!("New path has no parent, attempting rename directly inside notebook root.");
     }
 
     // Perform the actual move/rename
+    #[cfg(debug_assertions)]
     eprintln!(
         "Attempting filesystem rename from '{}' to '{}'",
         current_fs_path.display(),
@@ -466,6 +504,7 @@ pub async fn move_note(
             current_rel_path, new_rel_path, e
         ));
     }
+    #[cfg(debug_assertions)]
     eprintln!("Filesystem move/rename successful.");
 
     // --- Metadata Update ---
@@ -487,8 +526,10 @@ pub async fn move_note(
         {
             note.rel_path = new_rel_path.to_string();
             updated_metadata = true;
+            #[cfg(debug_assertions)]
             eprintln!("Updated metadata for the moved note.");
         } else {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Moved note directory '{}' not found in metadata. Metadata was not updated for this item.",
                 current_rel_path
@@ -522,10 +563,12 @@ pub async fn move_note(
             }
         }
         if updated_metadata {
+            #[cfg(debug_assertions)]
             eprintln!("Updated metadata for notes within the moved/renamed folder.");
         } else {
+            #[cfg(debug_assertions)]
             eprintln!(
-                "No notes found within the old path '{}' to update metadata for.",
+                "No relevant metadata found or updated for '{}', skipping metadata save.",
                 current_rel_path
             );
         }
@@ -534,6 +577,7 @@ pub async fn move_note(
     // Save the updated metadata file ONLY IF any metadata was updated
     if updated_metadata {
         if let Err(e) = save_metadata(notebook_path, notes) {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "Critical Error: Failed to save metadata after moving/renaming: {}",
                 e
@@ -544,14 +588,17 @@ pub async fn move_note(
                 e
             ));
         }
+        #[cfg(debug_assertions)]
         eprintln!("Metadata saved successfully after moving/renaming.");
     } else {
+        #[cfg(debug_assertions)]
         eprintln!(
             "No relevant metadata found or updated for '{}', skipping metadata save.",
             current_rel_path
         );
     }
 
+    #[cfg(debug_assertions)]
     eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
     // Return the new relative path of the item that was moved/renamed
     Ok(new_rel_path.to_string())

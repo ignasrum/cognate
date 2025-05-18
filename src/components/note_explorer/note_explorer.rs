@@ -52,6 +52,7 @@ impl NoteExplorer {
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::LoadNotes => {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "NoteExplorer: Received LoadNotes message. Loading from path: {}",
                     self.notebook_path
@@ -63,6 +64,7 @@ impl NoteExplorer {
                 )
             }
             Message::NotesLoaded(notes) => {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "NoteExplorer: Received NotesLoaded message with {} notes.",
                     notes.len()
@@ -105,11 +107,13 @@ impl NoteExplorer {
             Message::ToggleFolder(folder_path) => {
                 if let Some(is_expanded) = self.expanded_folders.get_mut(&folder_path) {
                     *is_expanded = !*is_expanded;
+                    #[cfg(debug_assertions)]
                     eprintln!(
                         "Toggled folder '{}' to expanded: {}",
                         folder_path, *is_expanded
                     );
                 } else {
+                    #[cfg(debug_assertions)]
                     eprintln!(
                         "Attempted to toggle non-existent folder path: {}",
                         folder_path
@@ -118,8 +122,8 @@ impl NoteExplorer {
                 Command::none()
             }
             Message::InitiateFolderRename(_folder_path) => Command::none(),
-            // Removed the redundant ExpandToNote message handler
             Message::CollapseAllAndExpandToNote(note_path) => {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "NoteExplorer: Received CollapseAllAndExpandToNote message for path: {}",
                     note_path
@@ -128,6 +132,7 @@ impl NoteExplorer {
                 for (_, is_expanded) in self.expanded_folders.iter_mut() {
                     *is_expanded = false;
                 }
+                #[cfg(debug_assertions)]
                 eprintln!("Collapsed all folders.");
 
                 // Then expand to the specific note
@@ -136,6 +141,7 @@ impl NoteExplorer {
                     let folder_path_str = path_buf.to_string_lossy().into_owned();
                     if !folder_path_str.is_empty() && folder_path_str != "." {
                         self.expanded_folders.insert(folder_path_str.clone(), true);
+                        #[cfg(debug_assertions)]
                         eprintln!("Expanded folder: {}", folder_path_str);
                         current_path = path_buf.parent().map(|p| p.to_path_buf());
                     } else {
@@ -330,6 +336,7 @@ impl NoteExplorer {
                     );
                 }
                 NodeOwned::Placeholder => {
+                    #[cfg(debug_assertions)]
                     eprintln!("Warning: Encountered a Placeholder node during rendering.");
                 }
             }
