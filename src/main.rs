@@ -4,7 +4,7 @@ mod configuration;
 mod editor;
 mod notebook;
 
-use std::env;
+use std::env; // Still needed for env::var if checking COGNATE_CONFIG_PATH
 use std::process::exit;
 
 use editor::Editor;
@@ -14,42 +14,44 @@ fn main() -> iced::Result {
     let config_path_env_var = "COGNATE_CONFIG_PATH";
     let default_config_path = "./config.json";
 
-    let config_path = match env::var(config_path_env_var) {
-        Ok(path) => {
-            println!(
-                "Using configuration path from environment variable {}: {}",
-                config_path_env_var, path
-            );
-            path
+    // Attempt to get the config path from the environment variable,
+    // falling back to the default path if not set.
+    let config_path = env::var(config_path_env_var).unwrap_or_else(|_| {
+        println!(
+            "Environment variable {} not set. Using default path: {}",
+            config_path_env_var, default_config_path
+        );
+        default_config_path.to_string()
+    });
+
+    // read_configuration now handles potential errors with config.json internally
+    // and always provides the embedded version.
+    let config = match configuration::read_configuration(&config_path) {
+        Ok(cfg) => {
+            // Configuration read successfully (potentially with default path/theme)
+            println!("Theme: {}", cfg.theme);
+            println!("Notebook Path: {}", cfg.notebook_path);
+            println!("App Version: {}", cfg.version);
+            cfg
         }
-        Err(_) => {
-            println!(
-                "Environment variable {} not set. Using default path: {}",
-                config_path_env_var, default_config_path
-            );
-            default_config_path.to_string()
+        Err(err) => {
+            // This branch should theoretically not be reachable anymore if
+            // read_configuration always returns Ok(Config) even on config.json error.
+            // However, keeping defensive programming is good.
+            eprintln!("Failed to read configuration: {}", err);
+            exit(1);
         }
     };
 
-    match configuration::read_configuration(&config_path) {
-        Ok(config) => {
-            println!("Theme: {}", config.theme);
-            println!("Notebook Path: {}", config.notebook_path);
-            println!("App Version: {}", config.version); // Print the read version
-            let settings = iced::Settings {
-                window: iced::window::Settings {
-                    size: iced::Size::new(1000.0, 800.0),
-                    ..iced::window::Settings::default()
-                },
-                flags: config, // Pass the entire config struct as flags
-                ..iced::Settings::default()
-            };
-            let _ = Editor::run(settings);
-        }
-        Err(err) => {
-            eprintln!("Failed to read configuration or Cargo.toml: {}", err);
-            exit(1);
-        }
-    }
+    let settings = iced::Settings {
+        window: iced::window::Settings {
+            size: iced::Size::new(1000.0, 800.0),
+            ..iced::window::Settings::default()
+        },
+        flags: config, // Pass the entire config struct as flags
+        ..iced::Settings::default()
+    };
+    let _ = Editor::run(settings);
+
     Ok(())
 }
