@@ -1,4 +1,4 @@
-prog :=xnixperms
+prog :=cognate
 
 debug ?=
 
@@ -7,11 +7,9 @@ $(info debug is $(debug))
 ifdef debug
   release :=
   target :=debug
-  extension :=debug
 else
   release :=--release
   target :=release
-  extension :=
 endif
 
 build:
@@ -24,7 +22,8 @@ clean:
 	cargo clean
 
 install:
-	cp target/$(target)/$(prog) ~/bin/$(prog)-$(extension)
+	mkdir -p ~/bin
+	cp target/$(target)/$(prog) ~/.local/bin/$(prog)
 
 all: build install
 
