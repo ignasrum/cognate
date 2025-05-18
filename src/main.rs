@@ -2,21 +2,18 @@
 mod configuration;
 #[path = "components/editor/editor.rs"]
 mod editor;
-mod notebook; // Use the updated notebook module
+mod notebook;
 
 use std::env;
-use std::process::exit; // Import the env module
+use std::process::exit;
 
 use editor::Editor;
 use iced::Application;
 
 fn main() -> iced::Result {
-    // Define the environment variable name to check
     let config_path_env_var = "COGNATE_CONFIG_PATH";
-    // Define the default configuration file path
     let default_config_path = "./config.json";
 
-    // Attempt to get the config path from the environment variable
     let config_path = match env::var(config_path_env_var) {
         Ok(path) => {
             println!(
@@ -37,7 +34,8 @@ fn main() -> iced::Result {
     match configuration::read_configuration(&config_path) {
         Ok(config) => {
             println!("Theme: {}", config.theme);
-            println!("Notebook Path: {}", config.notebook_path); // Print the read notebook path
+            println!("Notebook Path: {}", config.notebook_path);
+            println!("App Version: {}", config.version); // Print the read version
             let settings = iced::Settings {
                 window: iced::window::Settings {
                     size: iced::Size::new(1000.0, 800.0),
@@ -49,7 +47,7 @@ fn main() -> iced::Result {
             let _ = Editor::run(settings);
         }
         Err(err) => {
-            eprintln!("Failed to read configuration from {}: {}", config_path, err);
+            eprintln!("Failed to read configuration or Cargo.toml: {}", err);
             exit(1);
         }
     }

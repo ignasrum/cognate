@@ -95,8 +95,8 @@ impl Application for Editor {
             show_move_note_input: false,
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
-            // Initialize app version (hardcoded from Cargo.toml for now)
-            app_version: "0.1.0".to_string(),
+            // Initialize app version from flags
+            app_version: flags.version,
             // Initialize new about info state
             show_about_info: false,
         };
