@@ -4,6 +4,7 @@ use iced::{
     widget::{Button, Column, Container, Row, Scrollable, Text},
 }; // Import Button
 use std::collections::{HashMap, HashSet}; // Import HashMap and HashSet
+use std::path::Path; // Import Path
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -42,7 +43,7 @@ impl Visualizer {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
-        let mut content = Column::new().spacing(10);
+        let mut content = Column::new().spacing(10); // Keep 10px spacing between containers
 
         if self.notes.is_empty() {
             content = content.push(Text::new(
@@ -52,19 +53,19 @@ impl Visualizer {
             content = content.push(Text::new("Notes Grouped by Label:"));
 
             // Group notes by label
-            let mut notes_by_label: HashMap<String, Vec<NoteMetadata>> = HashMap::new();
-            let mut notes_without_labels: Vec<NoteMetadata> = Vec::new();
+            let mut notes_by_label: HashMap<String, Vec<&NoteMetadata>> = HashMap::new();
+            let mut notes_without_labels: Vec<&NoteMetadata> = Vec::new();
             let mut all_labels: HashSet<String> = HashSet::new();
 
             for note in &self.notes {
                 if note.labels.is_empty() {
-                    notes_without_labels.push(note.clone());
+                    notes_without_labels.push(note);
                 } else {
                     for label in &note.labels {
                         notes_by_label
                             .entry(label.clone())
                             .or_insert_with(Vec::new)
-                            .push(note.clone());
+                            .push(note);
                         all_labels.insert(label.clone());
                     }
                 }
@@ -77,20 +78,27 @@ impl Visualizer {
                     iced::theme::Text::Color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
                 )); // Slightly greyed out title
 
-                for note in &notes_without_labels {
+                // Sort notes without labels by rel_path
+                let mut sorted_notes_without_labels = notes_without_labels.clone();
+                sorted_notes_without_labels.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+
+                for note in &sorted_notes_without_labels {
                     // Wrap note text in a button
-                    let note_button = Button::new(Text::new(format!("- {}", note.rel_path)))
-                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                        .style(iced::theme::Button::Text); // Use Text style to make it look like plain text initially
+                    let note_button = Button::new(
+                        Text::new(format!("- {}", note.rel_path)).size(16),
+                    ) // Slightly smaller text for notes
+                    .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                    .style(iced::theme::Button::Text); // Use Text style to make it look like plain text initially
 
                     no_label_column = no_label_column.push(note_button);
                 }
                 content = content.push(
                     Container::new(no_label_column)
                         .style(iced::theme::Container::Box)
-                        .padding(10)
+                        .padding(5) // Reduced padding inside the container
                         .width(Length::Fill),
                 );
+                // Removed the extra Space widget here, relying on column spacing
             }
 
             // Sort labels for consistent display
@@ -106,11 +114,24 @@ impl Visualizer {
                             iced::theme::Text::Color(iced::Color::from_rgb(0.1, 0.5, 0.9)),
                         )); // Highlight label
 
-                    for note in notes_with_label {
+                    // Sort notes within the label by rel_path
+                    let mut sorted_notes_with_label = notes_with_label.clone();
+                    sorted_notes_with_label.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+
+                    for note in sorted_notes_with_label {
                         // Wrap note text in a button
-                        let note_button = Button::new(Text::new(format!("- {}", note.rel_path)))
-                            .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                            .style(iced::theme::Button::Text); // Use Text style
+                        // Extract just the note name (file name without the folder path)
+                        let note_name = Path::new(&note.rel_path)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+
+                        let note_button = Button::new(
+                            Text::new(format!("- {}", note_name)).size(16),
+                        ) // Indent notes and use smaller text
+                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
+                        .style(iced::theme::Button::Text); // Use Text style
 
                         label_column = label_column.push(note_button);
                     }
@@ -118,15 +139,16 @@ impl Visualizer {
                     content = content.push(
                         Container::new(label_column)
                             .style(iced::theme::Container::Box)
-                            .padding(10)
+                            .padding(5) // Reduced padding inside the container
                             .width(Length::Fill),
                     );
+                    // Removed the extra Space widget here, relying on column spacing
                 }
             }
         }
 
-        // Apply padding to the content column
-        let padded_content = content.padding(10);
+        // Apply uniform padding to the content column (padding between scrollable edge and content)
+        let padded_content = content.padding(10); // 10px padding on all sides of the scrollable content area
 
         // Wrap the padded content in a scrollable widget
         Scrollable::new(padded_content).into()
