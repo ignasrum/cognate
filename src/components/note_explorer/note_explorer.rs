@@ -1,6 +1,6 @@
 use iced::widget::{Button, Column, Row, Scrollable, Text};
-use iced::{Command, Element}; // Removed Length import
-use std::collections::{HashMap, HashSet}; // Added import for HashSet
+use iced::{Command, Element};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata};

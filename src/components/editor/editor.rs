@@ -4,7 +4,7 @@ use iced::widget::{
 use iced::{Application, Command, Element, Length, Theme};
 use native_dialog::MessageDialog;
 use std::collections::HashSet;
-use std::path::Path; // Added import for Path // Added import for HashSet
+use std::path::Path;
 
 use crate::configuration::Configuration;
 use crate::notebook::{self, NoteMetadata};
@@ -807,26 +807,36 @@ impl Application for Editor {
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
         let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
-        // Determine the text for the About button based on whether about info is shown
-        let about_button_text = if self.show_about_info {
-            "Back"
-        } else {
-            "About"
-        };
+        // Determine if any of the transient dialogs are open
+        let is_dialog_open =
+            self.show_new_note_input || self.show_move_note_input || self.show_about_info;
 
-        // Add the About/Back button
-        // Only show the About/Back button if the visualizer is NOT shown
-        if !self.show_visualizer {
+        // Conditionally add the About button
+        // Only show if no dialog is open AND visualizer is not shown
+        if !is_dialog_open && !self.show_visualizer {
+            let about_button_text = if self.show_about_info {
+                "Back"
+            } else {
+                "About"
+            };
             top_bar = top_bar.push(
                 button(about_button_text)
+                    .padding(5)
+                    .on_press(Message::AboutButtonClicked),
+            );
+        } else if self.show_about_info {
+            // If About dialog IS open, still show the "Back" button
+            top_bar = top_bar.push(
+                button("Back")
                     .padding(5)
                     .on_press(Message::AboutButtonClicked),
             );
         }
 
         if !self.notebook_path.is_empty() {
-            // Always show visualizer toggle when notebook is open, unless About is showing
-            if !self.show_about_info {
+            // Conditionally add the Visualizer toggle button
+            // Only show if no dialog is open AND visualizer is not shown
+            if !is_dialog_open && !self.show_visualizer {
                 let visualizer_button_text = if self.show_visualizer {
                     "Hide Visualizer"
                 } else {
@@ -834,6 +844,13 @@ impl Application for Editor {
                 };
                 top_bar = top_bar.push(
                     button(visualizer_button_text)
+                        .padding(5)
+                        .on_press(Message::ToggleVisualizer),
+                );
+            } else if self.show_visualizer && !is_dialog_open {
+                // If Visualizer IS shown AND no other dialog is open, show "Hide Visualizer"
+                top_bar = top_bar.push(
+                    button("Hide Visualizer")
                         .padding(5)
                         .on_press(Message::ToggleVisualizer),
                 );
@@ -869,10 +886,11 @@ impl Application for Editor {
                     }
                 }
 
-                let is_renaming_folder = self
-                    .move_note_current_path
-                    .as_deref()
-                    .map_or(false, |p| all_folders_in_notes.contains(p));
+                let is_renaming_folder =
+                    self.move_note_current_path.as_deref().map_or(false, |p| {
+                        // Check if the current path is one of the known folder paths
+                        all_folders_in_notes.contains(p)
+                    });
 
                 let operation_text = if is_renaming_folder {
                     "Renaming Folder"
@@ -887,8 +905,8 @@ impl Application for Editor {
             }
         } else {
             // No notebook open message
+            // Hide this message if about info is showing
             if !self.show_about_info {
-                // Hide this message if about info is showing
                 top_bar = top_bar.push(Text::new(
                     "No notebook opened. Configure 'notebook_path' in config.json",
                 ));
@@ -985,7 +1003,7 @@ impl Application for Editor {
                         .push(
                             button("Cancel")
                                 .padding(5)
-                                .on_press(Message::CancelMoveNote), // Corrected message variant
+                                .on_press(Message::CancelMoveNote),
                         )
                         .spacing(10),
                 )
