@@ -14,20 +14,18 @@ pub enum Message {
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
-    pub notes: Vec<NoteMetadata>, // Field to hold note metadata
+    pub notes: Vec<NoteMetadata>,
 }
 
 impl Visualizer {
     pub fn new() -> Self {
-        Self {
-            notes: Vec::new(), // Initialize with empty notes
-        }
+        Self { notes: Vec::new() }
     }
 
     pub fn update(&mut self, message: Message) -> iced::Command<Message> {
         match message {
             Message::UpdateNotes(notes) => {
-                #[cfg(debug_assertions)] // Added cfg attribute here
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "Visualizer: Received UpdateNotes message with {} notes.",
                     notes.len()
@@ -140,7 +138,7 @@ impl Visualizer {
             }
         }
 
-        let padded_content = content.padding(10);
+        let padded_content = content.padding(20); // Increased padding from 10 to 20
 
         Scrollable::new(padded_content).into()
     }
