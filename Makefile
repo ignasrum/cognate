@@ -25,6 +25,9 @@ install:
 	mkdir -p ~/bin
 	cp target/$(target)/$(prog) ~/.local/bin/$(prog)
 
+test:
+	cargo test
+
 all: build install
 
 help:
