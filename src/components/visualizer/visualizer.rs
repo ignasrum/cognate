@@ -4,7 +4,8 @@ use iced::{
     widget::{Button, Column, Container, Row, Scrollable, Text},
 };
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+// Removed unused import
+// use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum Message {

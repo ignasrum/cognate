@@ -283,15 +283,22 @@ impl NoteExplorer {
                     path: folder_path,
                 } => {
                     let folder_indicator = if *is_expanded { 'v' } else { '>' };
-                    let folder_button_text =
-                        format!("{} {} {}", indent_space, folder_indicator, name);
+                    let indicator_text =
+                        Text::new(format!("{} {}", indent_space, folder_indicator));
+                    let folder_name_text = Text::new(name.clone()).size(16);
 
-                    let folder_name_button = Button::new(Text::new(folder_button_text).size(16))
+                    let folder_content_row = Row::new()
+                        .push(indicator_text)
+                        .push(folder_name_text)
+                        .spacing(3) // Adjust spacing between indicator and name
+                        .align_items(iced::Alignment::Center);
+
+                    let folder_button = Button::new(folder_content_row)
                         .on_press(Message::ToggleFolder(folder_path.clone()))
                         .style(iced::theme::Button::Text)
                         .width(Length::Fill);
 
-                    let mut folder_row = Row::new().push(folder_name_button);
+                    let mut folder_row = Row::new().push(folder_button);
 
                     if !folder_path.is_empty() {
                         folder_row = folder_row.push(
@@ -318,6 +325,7 @@ impl NoteExplorer {
                 NodeOwned::NoteDir {
                     name,
                     path: note_path,
+                    // Corrected the pattern here
                     ..
                 } => {
                     let is_selected = Some(note_path) == selected_note_path;
