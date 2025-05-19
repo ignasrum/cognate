@@ -175,6 +175,7 @@ impl Application for Editor {
                         "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
                         _loaded_notes.len()
                     );
+                    // Update the visualizer with the new notes data
                     let _ = self.visualizer.update(visualizer::Message::UpdateNotes(
                         self.note_explorer.notes.clone(),
                     ));
@@ -394,17 +395,31 @@ impl Application for Editor {
                 Command::none()
             }
             Message::VisualizerMessage(visualizer_message) => {
-                let _ = self.visualizer.update(visualizer_message.clone());
+                let mut commands_to_return: Vec<Command<Self::Message>> = Vec::new();
+
+                // Update the visualizer state and get the command it might return
+                // Map the command from the visualizer to an editor message
+                commands_to_return.push(
+                    self.visualizer
+                        .update(visualizer_message.clone())
+                        .map(Message::VisualizerMessage),
+                );
 
                 match visualizer_message {
-                    visualizer::Message::UpdateNotes(_) => Command::none(),
+                    visualizer::Message::UpdateNotes(_) => {
+                        // No additional editor commands needed when visualizer just updates notes
+                    }
+                    visualizer::Message::ToggleLabel(_) => {
+                        // No additional editor commands needed when a label is toggled in the visualizer
+                    }
                     visualizer::Message::NoteSelectedInVisualizer(note_path) => {
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "Editor: Received NoteSelectedInVisualizer for path: {}",
                             note_path
                         );
-                        self.show_visualizer = false;
+                        // Trigger the logic to select the note in the editor
+                        self.show_visualizer = false; // Hide visualizer
                         self.show_new_note_input = false;
                         self.show_move_note_input = false;
                         self.show_about_info = false;
@@ -425,9 +440,8 @@ impl Application for Editor {
                             self.selected_note_labels = Vec::new();
                         }
 
-                        let mut commands = Vec::new();
-
-                        commands.push(
+                        // Commands to update the note explorer and load content
+                        commands_to_return.push(
                             self.note_explorer
                                 .update(note_explorer::Message::CollapseAllAndExpandToNote(
                                     note_path.clone(),
@@ -439,7 +453,7 @@ impl Application for Editor {
                             let notebook_path_clone = self.notebook_path.clone();
                             let note_path_clone = note_path.clone();
 
-                            commands.push(Command::perform(
+                            commands_to_return.push(Command::perform(
                                 async move {
                                     let full_note_path = format!(
                                         "{}/{}/note.md",
@@ -460,9 +474,10 @@ impl Application for Editor {
                                 Message::ContentChanged,
                             ));
                         }
-                        Command::batch(commands)
                     }
                 }
+                // Batch all collected commands
+                Command::batch(commands_to_return)
             }
             Message::NewNote => {
                 if self.notebook_path.is_empty() {
