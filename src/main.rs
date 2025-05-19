@@ -4,7 +4,12 @@ mod configuration;
 mod editor;
 mod notebook;
 
-use std::env; // Still needed for env::var if checking COGNATE_CONFIG_PATH
+mod json; // Declare the json module here
+
+#[cfg(test)]
+mod tests;
+
+use std::env;
 use std::process::exit;
 
 use editor::Editor;
