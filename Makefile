@@ -22,7 +22,6 @@ clean:
 	cargo clean
 
 install:
-	mkdir -p ~/bin
 	cp target/$(target)/$(prog) ~/.local/bin/$(prog)
 
 test:
