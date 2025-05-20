@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::fs::File;
 use std::io::Read;
 
+#[allow(dead_code)]
 pub fn read_json_file(file_path: &str) -> Result<Value, Box<dyn std::error::Error>> {
     // Open the file
     let mut file = File::open(file_path)?;
