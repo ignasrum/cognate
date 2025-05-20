@@ -1,7 +1,10 @@
+use iced::event::Event; // Removed Status as it's unused
+use iced::keyboard::Key; // Removed Modifiers as it's unused
+use iced::widget::text_editor::{Action, Content, Edit};
 use iced::widget::{
     Column, Container, Row, Text, TextInput as IcedTextInput, button, text_editor, text_input,
 };
-use iced::{Application, Command, Element, Length, Theme};
+use iced::{Application, Command, Element, Length, Subscription, Theme};
 use native_dialog::MessageDialog;
 use std::collections::HashSet;
 use std::path::Path;
@@ -43,10 +46,11 @@ pub enum Message {
     NoteMoved(Result<String, String>),
     InitiateFolderRename(String),
     AboutButtonClicked,
+    HandleTabKey, // New message for handling tab
 }
 
 pub struct Editor {
-    content: text_editor::Content,
+    content: Content,
     theme: Theme,
     markdown_text: String,
     note_explorer: note_explorer::NoteExplorer,
@@ -76,7 +80,7 @@ impl Application for Editor {
         let initial_text = String::new();
         let notebook_path_clone = flags.notebook_path.clone();
         let mut editor_instance = Editor {
-            content: text_editor::Content::with_text(&initial_text),
+            content: Content::with_text(&initial_text),
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             notebook_path: notebook_path_clone.clone(),
             markdown_text: String::new(),
@@ -120,14 +124,59 @@ impl Application for Editor {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::EditorAction(action) => {
+            Message::HandleTabKey => {
                 if self.selected_note_path.is_some()
                     && !self.show_visualizer
                     && !self.show_move_note_input
                     && !self.show_new_note_input
                     && !self.show_about_info
                 {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Editor: Handling HandleTabKey message by inserting 4 spaces.");
+
+                    // Perform 4 separate Insert actions to insert spaces
+                    self.content.perform(Action::Edit(Edit::Insert(' ')));
+                    self.content.perform(Action::Edit(Edit::Insert(' ')));
+                    self.content.perform(Action::Edit(Edit::Insert(' ')));
+                    self.content.perform(Action::Edit(Edit::Insert(' ')));
+
+                    // After inserting spaces, save the content
+                    self.markdown_text = self.content.text();
+                    if let Some(selected_path) = &self.selected_note_path {
+                        let notebook_path = self.notebook_path.clone();
+                        let note_path = selected_path.clone();
+                        let content = self.markdown_text.clone();
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Editor: Handling Tab: Saving content for note: {}",
+                            note_path
+                        );
+                        return Command::perform(
+                            async move {
+                                notebook::save_note_content(notebook_path, note_path, content).await
+                            },
+                            Message::NoteContentSaved,
+                        );
+                    }
+                }
+                Command::none() // Return Command::none() if not in an editable state
+            }
+            Message::EditorAction(action) => {
+                // This handles other editor actions like typing regular characters, moving cursor, selection, etc.
+                // The subscription should prevent the default tab key event (which would become an Action::Edit(Edit::Insert('\t')))
+                // from reaching here if the tab is intercepted.
+                // If the tab is not intercepted by the subscription (e.g., because of modifiers),
+                // the default behavior for that action will be performed by self.content.perform(action).
+                if self.selected_note_path.is_some()
+                    && !self.show_visualizer
+                    && !self.show_move_note_input
+                    && !self.show_new_note_input
+                    && !self.show_about_info
+                {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Editor: Performing other EditorAction: {:?}", action);
                     self.content.perform(action);
+
                     self.markdown_text = self.content.text();
 
                     if let Some(selected_path) = &self.selected_note_path {
@@ -135,7 +184,10 @@ impl Application for Editor {
                         let note_path = selected_path.clone();
                         let content = self.markdown_text.clone();
                         #[cfg(debug_assertions)]
-                        eprintln!("Editor: Saving content for note: {}", note_path);
+                        eprintln!(
+                            "Editor: Performing other EditorAction: Saving content for note: {}",
+                            note_path
+                        );
                         return Command::perform(
                             async move {
                                 notebook::save_note_content(notebook_path, note_path, content).await
@@ -152,7 +204,7 @@ impl Application for Editor {
                     && !self.show_new_note_input
                     && !self.show_about_info
                 {
-                    self.content = text_editor::Content::with_text(&new_content);
+                    self.content = Content::with_text(&new_content);
                     self.markdown_text = new_content;
                 }
                 Command::none()
@@ -193,7 +245,7 @@ impl Application for Editor {
                             );
                             self.selected_note_path = None;
                             self.selected_note_labels = Vec::new();
-                            self.content = text_editor::Content::with_text("");
+                            self.content = Content::with_text("");
                             self.markdown_text = String::new();
                             self.show_move_note_input = false;
                             self.move_note_current_path = None;
@@ -449,7 +501,7 @@ impl Application for Editor {
                                 .map(Message::NoteExplorerMessage),
                         );
 
-                        if !self.notebook_path.is_empty() {
+                        if !self.show_visualizer && !self.notebook_path.is_empty() {
                             let notebook_path_clone = self.notebook_path.clone();
                             let note_path_clone = note_path.clone();
 
@@ -551,12 +603,15 @@ impl Application for Editor {
                 Err(_err) => {
                     #[cfg(debug_assertions)]
                     eprintln!("Failed to create note: {}", _err);
+                    // Clone _err to be used in the async move block
+                    let error_message = _err.clone();
                     let dialog_command = Command::perform(
                         async move {
+                            // _err is moved here
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Creating Note")
-                                .set_text(&_err)
+                                .set_text(&error_message) // Use the cloned variable
                                 .show_alert();
                         },
                         |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
@@ -630,7 +685,7 @@ impl Application for Editor {
                     eprintln!("Note deleted successfully.");
                     self.selected_note_path = None;
                     self.selected_note_labels = Vec::new();
-                    self.content = text_editor::Content::with_text("");
+                    self.content = Content::with_text("");
                     self.markdown_text = String::new();
                     self.show_move_note_input = false;
                     self.move_note_current_path = None;
@@ -643,15 +698,18 @@ impl Application for Editor {
                 Err(_err) => {
                     #[cfg(debug_assertions)]
                     eprintln!("Failed to delete note: {}", _err);
+                    // Clone _err to be used in the async move block
+                    let error_message = _err.clone();
                     let dialog_command = Command::perform(
                         async move {
+                            // _err is moved here
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Deleting Note")
-                                .set_text(&_err)
+                                .set_text(&error_message) // Use the cloned variable
                                 .show_alert();
                         },
-                        |()| Message::NoteDeleted(Ok(())),
+                        |()| Message::NoteDeleted(Ok(())), // Pass Ok(()) to indicate dialog handled
                     );
                     let reload_command = self
                         .note_explorer
@@ -804,15 +862,18 @@ impl Application for Editor {
                 Err(_err) => {
                     #[cfg(debug_assertions)]
                     eprintln!("Failed to move/rename item: {}", _err);
+                    // Clone _err to be used in the async move block
+                    let error_message = _err.clone();
                     let dialog_command = Command::perform(
                         async move {
+                            // _err is moved here
                             let _ = MessageDialog::new()
                                 .set_type(native_dialog::MessageType::Error)
                                 .set_title("Error Moving/Renaming")
-                                .set_text(&_err)
+                                .set_text(&error_message) // Use the cloned variable
                                 .show_alert();
                         },
-                        |()| Message::NoteMoved(Err(String::new())),
+                        |()| Message::NoteMoved(Err(String::new())), // Pass Err to trigger reload after dialog
                     );
                     let reload_command = self
                         .note_explorer
@@ -833,6 +894,34 @@ impl Application for Editor {
                 Command::none()
             }
         }
+    }
+
+    // Implement the subscription method to listen for keyboard events
+    fn subscription(&self) -> Subscription<Self::Message> {
+        iced::event::listen_with(|event, _status| {
+            // Only handle key presses when the editor is logically active/visible.
+            // We can't directly check if the text_editor widget has focus here,
+            // so we'll rely on the state checks in the HandleTabKey message handler.
+            match event {
+                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                    // Match the specific Key::Named::Tab and ensure no modifiers are pressed.
+                    if key == Key::Named(iced::keyboard::key::Named::Tab) && modifiers.is_empty() {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Tab key (Named::Tab) pressed detected via subscription. Sending HandleTabKey message."
+                        );
+                        // Send the message to handle tab.
+                        // Returning Some(Message) here consumes the event for our application,
+                        // preventing the default text_editor behavior for Tab.
+                        Some(Message::HandleTabKey)
+                    } else {
+                        // For any other key press (including Tab with modifiers or other keys), let the event propagate.
+                        None
+                    }
+                }
+                _ => None, // Ignore other events
+            }
+        })
     }
 
     fn view(&self) -> Element<'_, Self::Message, Self::Theme> {
