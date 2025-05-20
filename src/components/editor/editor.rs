@@ -55,8 +55,9 @@ pub struct Editor {
     content: Content,
     theme: Theme,
     markdown_text: String,
-    undo_history: Vec<String>,    // Store previous states for undo
-    current_history_index: usize, // Track position in undo history
+    undo_histories: std::collections::HashMap<String, Vec<String>>,    // Store previous states for undo per note
+    undo_indices: std::collections::HashMap<String, usize>, // Track position in undo history per note
+    loading_note: bool, // Flag to indicate we're loading a new note (not editing)
     note_explorer: note_explorer::NoteExplorer,
     visualizer: visualizer::Visualizer,
     show_visualizer: bool,
@@ -88,8 +89,9 @@ impl Application for Editor {
             theme: local_theme::convert_str_to_theme(flags.theme.clone()),
             notebook_path: notebook_path_clone.clone(),
             markdown_text: String::new(),
-            undo_history: Vec::new(),
-            current_history_index: 0,
+            undo_histories: std::collections::HashMap::new(),
+            undo_indices: std::collections::HashMap::new(),
+            loading_note: false,
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone),
             visualizer: visualizer::Visualizer::new(),
             show_visualizer: false,
@@ -184,49 +186,72 @@ impl Application for Editor {
                 Command::none()
             }
             Message::Undo => {
-                if self.selected_note_path.is_some()
-                    && !self.show_visualizer
-                    && !self.show_move_note_input
-                    && !self.show_new_note_input
-                    && !self.show_about_info
-                    && self.current_history_index > 0
-                    && !self.undo_history.is_empty()
-                {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Editor: Handling Undo message. History index: {}/{}", 
-                        self.current_history_index, self.undo_history.len());
+                if let Some(note_path) = &self.selected_note_path {
+                    if !self.show_visualizer
+                        && !self.show_move_note_input
+                        && !self.show_new_note_input
+                        && !self.show_about_info
+                    {
+                        // Get this note's current history index, if it exists
+                        let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
+                        
+                        if current_index > 0 {
+                            // Get this note's history, if it exists
+                            if let Some(history) = self.undo_histories.get(note_path) {
+                                if !history.is_empty() {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("Editor: Handling Undo message for note '{}'. History index: {}/{}", 
+                                        note_path, current_index, history.len());
 
-                    // Get the previous state from history
-                    self.current_history_index -= 1;
-                    let previous_content = self.undo_history[self.current_history_index].clone();
+                                    // Calculate the previous state index
+                                    let new_index = current_index - 1;
+                                    let previous_content = history[new_index].clone();
+                                    
+                                    // Update the index for this note
+                                    self.undo_indices.insert(note_path.clone(), new_index);
 
-                    // Update content with the previous state
-                    self.content = Content::with_text(&previous_content);
-                    self.markdown_text = previous_content;
+                                    // Update content with the previous state
+                                    self.content = Content::with_text(&previous_content);
+                                    self.markdown_text = previous_content;
+                                
+                                    // Save the content after undo
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "Editor: Performing undo to previous state for note: {}",
+                                        note_path
+                                    );
 
-                    if let Some(selected_path) = &self.selected_note_path {
-                        // Save the content after undo
+                                    let notebook_path = self.notebook_path.clone();
+                                    let selected_path = note_path.clone();
+                                    let content = self.markdown_text.clone();
+
+                                    return Command::perform(
+                                        async move {
+                                            notebook::save_note_content(notebook_path, selected_path, content).await
+                                        },
+                                        Message::NoteContentSaved,
+                                    );
+                                } else {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("Editor: Cannot undo - history for note '{}' is empty", note_path);
+                                }
+                            } else {
+                                #[cfg(debug_assertions)]
+                                eprintln!("Editor: Cannot undo - no history found for note '{}'", note_path);
+                            }
+                        } else {
+                            #[cfg(debug_assertions)]
+                            eprintln!("Editor: Cannot undo - index is 0, cannot undo further");
+                        }
+                    } else {
                         #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Editor: Performing undo to previous state for note: {}",
-                            selected_path
-                        );
-
-                        let notebook_path = self.notebook_path.clone();
-                        let note_path = selected_path.clone();
-                        let content = self.markdown_text.clone();
-
-                        return Command::perform(
-                            async move {
-                                notebook::save_note_content(notebook_path, note_path, content).await
-                            },
-                            Message::NoteContentSaved,
-                        );
+                        eprintln!("Editor: Cannot undo - note is in a state that doesn't allow undo");
                     }
                 } else {
                     #[cfg(debug_assertions)]
-                    eprintln!("Editor: Cannot undo - no history available or at oldest state");
+                    eprintln!("Editor: Cannot undo - no note selected");
                 }
+                
                 Command::none()
             }
             Message::EditorAction(action) => {
@@ -238,18 +263,32 @@ impl Application for Editor {
                 {
                     // Save the current state to history before performing the action
                     // Only save if this is a modifying action (Edit)
-                    if matches!(action, Action::Edit(_)) {
+                    if matches!(action, Action::Edit(_)) && self.selected_note_path.is_some() {
+                        let note_path = self.selected_note_path.as_ref().unwrap().clone();
+                        
+                        // Get the current index for this note
+                        let current_index = self.undo_indices.get(&note_path).copied().unwrap_or(0);
+                        
+                        // Get the history for this note or create a new one
+                        let history = self.undo_histories
+                            .entry(note_path.clone())
+                            .or_insert_with(Vec::new);
+                            
                         // Remove any future redo states if we're in the middle of the history
-                        if self.current_history_index < self.undo_history.len() {
-                            self.undo_history.truncate(self.current_history_index);
+                        if current_index < history.len() {
+                            history.truncate(current_index);
                         }
                         
                         // Add current state to history
-                        self.undo_history.push(self.markdown_text.clone());
-                        self.current_history_index = self.undo_history.len();
+                        history.push(self.markdown_text.clone());
+                        let new_index = history.len();
+                        
+                        // Update the index for this note
+                        self.undo_indices.insert(note_path.clone(), new_index);
                         
                         #[cfg(debug_assertions)]
-                        eprintln!("Added state to undo history before Edit action. History size: {}", self.undo_history.len());
+                        eprintln!("Added state to undo history for note '{}' before Edit action. History size: {} Index: {}", 
+                            note_path, history.len(), new_index);
                     }
                     
                     #[cfg(debug_assertions)]
@@ -283,26 +322,106 @@ impl Application for Editor {
                     && !self.show_new_note_input
                     && !self.show_about_info
                 {
-                    // Handle undo history when content changes
-                    if !self.markdown_text.is_empty() && self.markdown_text != new_content {
-                        // Remove any future redo states if we're in the middle of the history
-                        if self.current_history_index < self.undo_history.len() {
-                            self.undo_history.truncate(self.current_history_index);
+                    if let Some(note_path) = &self.selected_note_path {
+                        // Check if we're loading a note (switching between notes)
+                        if self.loading_note {
+                            // Get the current history for this note, if it exists
+                            let history_exists = self.undo_histories.contains_key(note_path);
+                            let history = self.undo_histories
+                                .entry(note_path.clone())
+                                .or_insert_with(Vec::new);
+                            
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Loading note '{}'. History exists: {}, Size: {}",
+                                note_path, history_exists, history.len()
+                            );
+                            
+                            // Only initialize history if it doesn't exist or is empty
+                            if history.is_empty() {
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Initializing history for note '{}' as it's empty or new",
+                                    note_path
+                                );
+                                
+                                // Add the initial content as the first history entry
+                                if !new_content.is_empty() {
+                                    // Add initial content to history
+                                    history.push(new_content.clone());
+                                    self.undo_indices.insert(note_path.clone(), 1);
+                                    
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "Initialized history for note '{}' with first entry. History size: 1, Index: 1",
+                                        note_path
+                                    );
+                                } else {
+                                    self.undo_indices.insert(note_path.clone(), 0);
+                                    
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "Initialized empty history for note '{}'",
+                                        note_path
+                                    );
+                                }
+                            } else {
+                                // Note already has history - use existing history and verify current content
+                                let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
+                                
+                                // Verify that the loaded content matches what's in the history
+                                // This handles potential external file changes
+                                if current_index > 0 && current_index <= history.len() && 
+                                   history[current_index - 1] != new_content {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "Content for note '{}' changed externally, adding to history",
+                                        note_path
+                                    );
+                                    
+                                    // Content has changed, add it to history
+                                    history.push(new_content.clone());
+                                    self.undo_indices.insert(note_path.clone(), history.len());
+                                }
+                                
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Preserving existing history for note '{}'. History size: {}, Index: {}",
+                                    note_path, history.len(), self.undo_indices.get(note_path).unwrap_or(&0)
+                                );
+                            }
+                            
+                            // Reset the loading flag
+                            self.loading_note = false;
+                            
+                        } else if !self.markdown_text.is_empty() && self.markdown_text != new_content {
+                            // This is a regular content change, not a note switch
+                            // Get the current index for this note
+                            let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
+                            
+                            // Get the history for this note, or create a new one
+                            let history = self.undo_histories
+                                .entry(note_path.clone())
+                                .or_insert_with(Vec::new);
+                                
+                            // Remove any future redo states if we're in the middle of the history
+                            if current_index < history.len() {
+                                history.truncate(current_index);
+                            }
+
+                            // Add current state to history before updating
+                            history.push(self.markdown_text.clone());
+                            let new_index = history.len();
+                            
+                            // Update the index for this note
+                            self.undo_indices.insert(note_path.clone(), new_index);
+
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Added state to undo history for note '{}'. History size: {} Index: {}",
+                                note_path, history.len(), new_index
+                            );
                         }
-
-                        // Add current state to history before updating
-                        self.undo_history.push(self.markdown_text.clone());
-                        self.current_history_index = self.undo_history.len();
-
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Added state to undo history. History size: {}",
-                            self.undo_history.len()
-                        );
-                    } else if self.markdown_text.is_empty() && !new_content.is_empty() {
-                        // Initial content load - clear history
-                        self.undo_history.clear();
-                        self.current_history_index = 0;
                     }
 
                     self.content = Content::with_text(&new_content);
@@ -386,6 +505,25 @@ impl Application for Editor {
                 self.move_note_new_path_input = String::new();
                 self.show_about_info = false;
                 self.show_new_note_input = false;
+                
+                // Initialize history containers for this note if they don't exist yet
+                if !self.undo_histories.contains_key(&note_path) {
+                    // If this note has no history yet, create a new empty history
+                    self.undo_histories.insert(note_path.clone(), Vec::new());
+                }
+                
+                // Initialize or retrieve the history index for this note
+                let history_index = self.undo_histories.get(&note_path)
+                    .map_or(0, |history| history.len());
+                    
+                // Update the index for this note
+                self.undo_indices.insert(note_path.clone(), history_index);
+                
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Editor: Setting history index for note '{}' to {}", 
+                    note_path, history_index
+                );
 
                 if let Some(note) = self
                     .note_explorer
@@ -410,6 +548,15 @@ impl Application for Editor {
                 );
 
                 if !self.show_visualizer && !self.notebook_path.is_empty() {
+                    // Set loading flag before requesting content for the new note
+                    self.loading_note = true;
+                    
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Setting loading_note flag to true for note '{}'",
+                        note_path
+                    );
+                    
                     let notebook_path_clone = self.notebook_path.clone();
                     let note_path_clone = note_path.clone();
 
@@ -603,6 +750,15 @@ impl Application for Editor {
                         );
 
                         if !self.show_visualizer && !self.notebook_path.is_empty() {
+                            // Set loading flag before requesting content for the new note
+                            self.loading_note = true;
+                            
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Setting loading_note flag to true for note '{}' from visualizer",
+                                note_path
+                            );
+                            
                             let notebook_path_clone = self.notebook_path.clone();
                             let note_path_clone = note_path.clone();
 
@@ -784,6 +940,15 @@ impl Application for Editor {
                 Ok(()) => {
                     #[cfg(debug_assertions)]
                     eprintln!("Note deleted successfully.");
+                    
+                    // Clean up history for the deleted note
+                    if let Some(path) = &self.selected_note_path {
+                        self.undo_histories.remove(path);
+                        self.undo_indices.remove(path);
+                        #[cfg(debug_assertions)]
+                        eprintln!("Removed undo history and index for deleted note '{}'", path);
+                    }
+                    
                     self.selected_note_path = None;
                     self.selected_note_labels = Vec::new();
                     self.content = Content::with_text("");
@@ -951,9 +1116,27 @@ impl Application for Editor {
                 command
             }
             Message::NoteMoved(result) => match result {
-                Ok(_new_rel_path) => {
+                Ok(new_rel_path) => {
                     #[cfg(debug_assertions)]
-                    eprintln!("Item moved/renamed successfully to: {}", _new_rel_path);
+                    eprintln!("Item moved/renamed successfully to: {}", new_rel_path);
+                    
+                    // If we're moving a note that had an undo history, update the key
+                    if let Some(old_path) = &self.move_note_current_path {
+                        // Update the history collection
+                        if let Some(history) = self.undo_histories.remove(old_path) {
+                            self.undo_histories.insert(new_rel_path.clone(), history);
+                            #[cfg(debug_assertions)]
+                            eprintln!("Updated undo history key from '{}' to '{}'", old_path, new_rel_path);
+                        }
+                        
+                        // Update the index collection
+                        if let Some(index) = self.undo_indices.remove(old_path) {
+                            self.undo_indices.insert(new_rel_path.clone(), index);
+                            #[cfg(debug_assertions)]
+                            eprintln!("Updated undo index key from '{}' to '{}'", old_path, new_rel_path);
+                        }
+                    }
+                    
                     let reload_command = self
                         .note_explorer
                         .update(note_explorer::Message::LoadNotes)
