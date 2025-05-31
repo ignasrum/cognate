@@ -1,4 +1,4 @@
-use iced::widget::{Button, Column, Row, Scrollable, Text};
+use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{Command, Element, Length};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -310,7 +310,11 @@ impl NoteExplorer {
                         );
                     }
 
-                    folder_row = folder_row.spacing(5).align_items(iced::Alignment::Center);
+                    folder_row = folder_row
+                        .spacing(5)
+                        .align_items(iced::Alignment::Center)
+                        // Add a width constraint to prevent scrollbar overlap
+                        .width(Length::Fill);
 
                     column = column.push(folder_row);
 
@@ -353,7 +357,7 @@ impl NoteExplorer {
     }
 
     pub fn view(&self, selected_note_path: Option<&String>) -> Element<'_, Message> {
-        let mut column = Column::new().spacing(5);
+        let mut column = Column::new().spacing(5).width(Length::Fill);
 
         if self.notebook_path.is_empty() || self.notes.is_empty() {
             column = column.push(Text::new("No notes found."));
@@ -363,6 +367,12 @@ impl NoteExplorer {
             column = column.push(tree_view);
         }
 
-        Scrollable::new(column).into()
+        // Wrap the column in a container with right padding to avoid scrollbar overlap
+        Scrollable::new(
+            Container::new(column)
+                .padding([0, 15, 0, 0]) // top, right, bottom, left padding
+                .width(Length::Fill)
+        )
+        .into()
     }
 }
