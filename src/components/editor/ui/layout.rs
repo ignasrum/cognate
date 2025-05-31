@@ -166,8 +166,14 @@ pub fn generate_layout<'a>(
             editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
+        // Create a row with the editor and a spacer to add right-side padding only
+        let editor_with_right_padding = Row::new()
+            .push(editor_widget)
+            .push(Container::new(Text::new("").width(Length::Fixed(20.0)))) // 40px right padding with correct float type
+            .width(Length::Fill);
+
         // Keep the scrollable container with height constraints
-        let editor_scrollable = iced::widget::scrollable(editor_widget)
+        let editor_scrollable = iced::widget::scrollable(editor_with_right_padding)
             .width(Length::Fill)
             .height(Length::Fill);
             
