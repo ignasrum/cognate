@@ -62,7 +62,8 @@ impl UndoManager {
     }
     
     pub fn handle_initial_content(&mut self, note_path: &str, content: &str) {
-        let history_exists = self.undo_histories.contains_key(note_path);
+        // Add underscore to unused variable
+        let _history_exists = self.undo_histories.contains_key(note_path);
         let history = self.undo_histories
             .entry(note_path.to_string())
             .or_insert_with(Vec::new);
@@ -70,7 +71,7 @@ impl UndoManager {
         #[cfg(debug_assertions)]
         eprintln!(
             "Loading note '{}'. History exists: {}, Size: {}",
-            note_path, history_exists, history.len()
+            note_path, _history_exists, history.len()
         );
         
         // Only initialize history if it doesn't exist or is empty
