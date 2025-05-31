@@ -159,13 +159,22 @@ pub fn generate_layout<'a>(
         .width(Length::FillPortion(2))
         .into();
 
-        let mut editor_widget = text_editor(content).height(Length::Fill);
+        // Remove the height constraint from the editor widget
+        let mut editor_widget = text_editor(content);
 
         if state.selected_note_path().is_some() {
             editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
-        let editor_container = Container::new(editor_widget).width(Length::FillPortion(8));
+        // Keep the scrollable container with height constraints
+        let editor_scrollable = iced::widget::scrollable(editor_widget)
+            .width(Length::Fill)
+            .height(Length::Fill);
+            
+        // Create the editor container with the scrollable editor
+        let editor_container = Container::new(editor_scrollable)
+            .width(Length::FillPortion(8))
+            .height(Length::Fill);
 
         let content_row = Row::new()
             .push(note_explorer_view)
