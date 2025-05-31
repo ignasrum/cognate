@@ -1,10 +1,30 @@
 #[path = "configuration/reader.rs"]
 mod configuration;
-#[path = "components/editor/editor.rs"]
-mod editor;
-mod notebook;
 
-mod json; // Declare the json module here
+// Declare the components module with all the submodules
+mod components {
+    // Editor module and submodules
+    pub mod editor;
+    
+    // Note explorer module
+    pub mod note_explorer {
+        #[path = "../note_explorer/note_explorer.rs"]
+        pub mod note_explorer;
+        pub use self::note_explorer::NoteExplorer;
+        pub use self::note_explorer::Message;
+    }
+    
+    // Visualizer module
+    pub mod visualizer {
+        #[path = "../visualizer/visualizer.rs"]
+        pub mod visualizer;
+        pub use self::visualizer::Visualizer;
+        pub use self::visualizer::Message;
+    }
+}
+
+mod notebook;
+mod json;
 
 #[cfg(test)]
 mod tests;
@@ -12,7 +32,7 @@ mod tests;
 use std::env;
 use std::process::exit;
 
-use editor::Editor;
+use components::editor::Editor;
 use iced::Application;
 
 fn main() -> iced::Result {
