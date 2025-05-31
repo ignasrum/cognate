@@ -1,4 +1,4 @@
-use iced::Command;
+use iced::task::Task; // Use Task instead of Command
 use native_dialog::MessageDialog;
 use iced::widget::text_editor::Content;
 
@@ -20,7 +20,7 @@ pub fn handle_note_explorer_message(
     content: &mut Content,
     markdown_text: &mut String,
     note_explorer_message: note_explorer::Message,
-) -> Command<Message> {
+) -> Task<Message> {
     #[cfg(debug_assertions)]
     eprintln!(
         "Editor: Received NoteExplorerMessage: {:?}",
@@ -31,7 +31,7 @@ pub fn handle_note_explorer_message(
         .update(note_explorer_message.clone())
         .map(|msg| Message::NoteExplorerMessage(msg));
 
-    let mut editor_command = Command::none();
+    let mut editor_command = Task::none();
     
     if let note_explorer::Message::NotesLoaded(_loaded_notes) = note_explorer_message {
         #[cfg(debug_assertions)]
@@ -75,11 +75,11 @@ pub fn handle_note_explorer_message(
                 "Editor: No note selected, selecting first note: {}",
                 first_note_path
             );
-            editor_command = Command::perform(async { first_note_path }, Message::NoteSelected);
+            editor_command = Task::perform(async { first_note_path }, Message::NoteSelected);
         }
     }
 
-    Command::batch(vec![note_explorer_command, editor_command])
+    Task::batch(vec![note_explorer_command, editor_command])
 }
 
 // Handle note selection
@@ -90,7 +90,7 @@ pub fn handle_note_selected(
     _content: &mut Content,    // Added underscore
     _markdown_text: &mut String,    // Added underscore
     note_path: String,
-) -> Command<Message> {
+) -> Task<Message> {
     #[cfg(debug_assertions)]
     eprintln!(
         "Editor: NoteSelected message received for path: {}",
@@ -142,7 +142,7 @@ pub fn handle_note_selected(
         let notebook_path = state.notebook_path().to_string();
         let note_path_clone = note_path;
 
-        commands.push(Command::perform(
+        commands.push(Task::perform(
             async move {
                 let full_note_path = format!("{}/{}/note.md", notebook_path, note_path_clone);
                 match std::fs::read_to_string(full_note_path) {
@@ -158,7 +158,7 @@ pub fn handle_note_selected(
         ));
     }
 
-    Command::batch(commands)
+    Task::batch(commands)
 }
 
 // Handle visualizer messages
@@ -170,8 +170,8 @@ pub fn handle_visualizer_message(
     _markdown_text: &mut String,    // Added underscore
     undo_manager: &mut UndoManager,
     visualizer_message: visualizer::Message,
-) -> Command<Message> {
-    let mut commands_to_return: Vec<Command<Message>> = Vec::new();
+) -> Task<Message> {
+    let mut commands_to_return: Vec<Task<Message>> = Vec::new();
 
     // Update visualizer state and map the command
     commands_to_return.push(
@@ -237,7 +237,7 @@ pub fn handle_visualizer_message(
                 let notebook_path_clone = state.notebook_path().to_string();
                 let note_path_clone = note_path.clone();
 
-                commands_to_return.push(Command::perform(
+                commands_to_return.push(Task::perform(
                     async move {
                         let full_note_path = format!(
                             "{}/{}/note.md",
@@ -262,22 +262,22 @@ pub fn handle_visualizer_message(
     }
     
     // Batch all collected commands
-    Command::batch(commands_to_return)
+    Task::batch(commands_to_return)
 }
 
 // Get command to select a note
 pub fn get_select_note_command(
     selected_note_path: Option<&String>,
     notes: &[NoteMetadata],
-) -> Command<Message> {
+) -> Task<Message> {
     if let Some(selected_path) = selected_note_path.cloned() {
-        Command::perform(async { selected_path }, Message::NoteSelected)
+        Task::perform(async { selected_path }, Message::NoteSelected)
     } else {
         let first_note_path = notes.get(0).map(|n| n.rel_path.clone());
         if let Some(path) = first_note_path {
-            Command::perform(async { path }, Message::NoteSelected)
+            Task::perform(async { path }, Message::NoteSelected)
         } else {
-            Command::none()
+            Task::none()
         }
     }
 }
@@ -286,19 +286,19 @@ pub fn get_select_note_command(
 pub fn handle_create_note(
     state: &mut EditorState,
     current_notes: Vec<NoteMetadata>,
-) -> Command<Message> {
+) -> Task<Message> {
     if state.show_new_note_input() {
         let new_note_rel_path = state.new_note_path_input().trim().to_string();
         if new_note_rel_path.is_empty() {
             #[cfg(debug_assertions)]
             eprintln!("New note name cannot be empty.");
-            Command::none()
+            Task::none()
         } else {
             state.hide_new_note_dialog();
             let notebook_path = state.notebook_path().to_string();
             let mut notes = current_notes;
 
-            Command::perform(
+            Task::perform(
                 async move {
                     notebook::create_new_note(
                         &notebook_path,
@@ -311,7 +311,7 @@ pub fn handle_create_note(
             )
         }
     } else {
-        Command::none()
+        Task::none()
     }
 }
 
@@ -319,7 +319,7 @@ pub fn handle_create_note(
 pub fn handle_note_created(
     result: Result<NoteMetadata, String>,
     note_explorer: &mut NoteExplorer,
-) -> Command<Message> {
+) -> Task<Message> {
     match result {
         Ok(new_note_metadata) => {
             #[cfg(debug_assertions)]
@@ -328,21 +328,20 @@ pub fn handle_note_created(
                 .update(note_explorer::Message::LoadNotes)
                 .map(|msg| Message::NoteExplorerMessage(msg));
 
-            let select_command = Command::perform(
+            let select_command = Task::perform(
                 async { new_note_metadata.rel_path },
                 Message::NoteSelected,
             );
 
-            Command::batch(vec![reload_command, select_command])
+            Task::batch(vec![reload_command, select_command])
         }
         Err(_err) => {
             #[cfg(debug_assertions)]
             eprintln!("Failed to create note: {}", _err);
             // Clone _err to be used in the async move block
             let error_message = _err.clone();
-            let dialog_command = Command::perform(
+            let dialog_command = Task::perform(
                 async move {
-                    // _err is moved here
                     let _ = MessageDialog::new()
                         .set_type(native_dialog::MessageType::Error)
                         .set_title("Error Creating Note")
@@ -357,7 +356,7 @@ pub fn handle_note_created(
 }
 
 // Handle delete note
-pub fn handle_delete_note(state: &mut EditorState) -> Command<Message> {
+pub fn handle_delete_note(state: &mut EditorState) -> Task<Message> {
     if let Some(selected_path) = state.selected_note_path() {
         if !state.show_about_info() {
             let note_path_clone = selected_path.clone();
@@ -366,7 +365,7 @@ pub fn handle_delete_note(state: &mut EditorState) -> Command<Message> {
             state.set_show_visualizer(false);
             state.set_show_about_info(false);
 
-            Command::perform(
+            Task::perform(
                 async move {
                     MessageDialog::new()
                         .set_type(native_dialog::MessageType::Warning)
@@ -381,12 +380,12 @@ pub fn handle_delete_note(state: &mut EditorState) -> Command<Message> {
                 Message::ConfirmDeleteNote,
             )
         } else {
-            Command::none()
+            Task::none()
         }
     } else {
         #[cfg(debug_assertions)]
         eprintln!("No note selected to delete.");
-        Command::none()
+        Task::none()
     }
 }
 
@@ -395,13 +394,13 @@ pub fn handle_confirm_delete_note(
     confirmed: bool,
     state: &mut EditorState,
     current_notes: Vec<NoteMetadata>,
-) -> Command<Message> {
+) -> Task<Message> {
     if confirmed {
         if let Some(selected_path) = state.take_selected_note_path() {
             let notebook_path = state.notebook_path().to_string();
             let mut notes = current_notes;
 
-            Command::perform(
+            Task::perform(
                 async move {
                     notebook::delete_note(
                         &notebook_path,
@@ -415,12 +414,12 @@ pub fn handle_confirm_delete_note(
         } else {
             #[cfg(debug_assertions)]
             eprintln!("ConfirmDeleteNote called with no selected note.");
-            Command::none()
+            Task::none()
         }
     } else {
         #[cfg(debug_assertions)]
         eprintln!("Note deletion cancelled by user.");
-        Command::none()
+        Task::none()
     }
 }
 
@@ -432,7 +431,7 @@ pub fn handle_note_deleted(
     markdown_text: &mut String,
     undo_manager: &mut UndoManager,
     note_explorer: &mut NoteExplorer,
-) -> Command<Message> {
+) -> Task<Message> {
     match result {
         Ok(()) => {
             #[cfg(debug_assertions)]
@@ -458,8 +457,11 @@ pub fn handle_note_deleted(
             eprintln!("Failed to delete note: {}", _err);
             // Clone _err to be used in the async move block
             let error_message = _err.clone();
-            let error_message_clone = error_message.clone();
-            let dialog_command = Command::perform(
+            
+            // Create a final cloned copy for the callback closure
+            let error_msg_for_callback = error_message.clone();
+            
+            let dialog_command = Task::perform(
                 async move {
                     let _ = MessageDialog::new()
                         .set_type(native_dialog::MessageType::Error)
@@ -467,12 +469,12 @@ pub fn handle_note_deleted(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                move |()| Message::NoteDeleted(Err(error_message_clone)),
+                move |_| Message::NoteDeleted(Err(error_msg_for_callback.clone())),
             );
             let reload_command = note_explorer
                 .update(note_explorer::Message::LoadNotes)
                 .map(|msg| Message::NoteExplorerMessage(msg));
-            Command::batch(vec![dialog_command, reload_command])
+            Task::batch(vec![dialog_command, reload_command])
         }
     }
 }
@@ -481,7 +483,7 @@ pub fn handle_note_deleted(
 pub fn handle_confirm_move_note(
     state: &mut EditorState,
     current_notes: Vec<NoteMetadata>,
-) -> Command<Message> {
+) -> Task<Message> {
     if state.show_move_note_input() {
         if let Some(current_path) = state.take_move_note_current_path() {
             let new_path = state.move_note_new_path_input().trim().to_string();
@@ -490,7 +492,7 @@ pub fn handle_confirm_move_note(
             if new_path.is_empty() {
                 #[cfg(debug_assertions)]
                 eprintln!("New path cannot be empty for moving/renaming.");
-                let dialog_command = Command::perform(
+                let dialog_command = Task::perform(
                     async move {
                         let _ = MessageDialog::new()
                             .set_type(native_dialog::MessageType::Error)
@@ -514,7 +516,7 @@ pub fn handle_confirm_move_note(
             let notebook_path = state.notebook_path().to_string();
             let mut notes = current_notes;
 
-            Command::perform(
+            Task::perform(
                 async move {
                     notebook::move_note(
                         &notebook_path,
@@ -532,10 +534,10 @@ pub fn handle_confirm_move_note(
                 "ConfirmMoveNote called with no current item selected to move/rename."
             );
             state.hide_move_note_dialog();
-            Command::none()
+            Task::none()
         }
     } else {
-        Command::none()
+        Task::none()
     }
 }
 
@@ -545,7 +547,7 @@ pub fn handle_note_moved(
     state: &mut EditorState,
     undo_manager: &mut UndoManager,
     note_explorer: &mut NoteExplorer,
-) -> Command<Message> {
+) -> Task<Message> {
     match result {
         Ok(new_rel_path) => {
             #[cfg(debug_assertions)]
@@ -563,10 +565,14 @@ pub fn handle_note_moved(
         Err(_err) => {
             #[cfg(debug_assertions)]
             eprintln!("Failed to move/rename item: {}", _err);
+            
             // Clone _err to be used in the async move block
             let error_message = _err.clone();
-            let error_message_clone = error_message.clone();
-            let dialog_command = Command::perform(
+            
+            // Create a final cloned copy for the callback closure
+            let error_msg_for_callback = error_message.clone();
+            
+            let dialog_command = Task::perform(
                 async move {
                     let _ = MessageDialog::new()
                         .set_type(native_dialog::MessageType::Error)
@@ -574,12 +580,12 @@ pub fn handle_note_moved(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                move |()| Message::NoteMoved(Err(error_message_clone)),
+                move |_| Message::NoteMoved(Err(error_msg_for_callback.clone())),
             );
             let reload_command = note_explorer
                 .update(note_explorer::Message::LoadNotes)
                 .map(|msg| Message::NoteExplorerMessage(msg));
-            Command::batch(vec![dialog_command, reload_command])
+            Task::batch(vec![dialog_command, reload_command])
         }
     }
 }

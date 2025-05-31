@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use iced::{Command, widget::text_editor::Content};
+use iced::{task::Task, widget::text_editor::Content}; // Use Task instead of Command
 
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::Message;
@@ -174,7 +174,7 @@ pub fn handle_undo(
     selected_note_path: Option<&String>,
     notebook_path: &str,
     state: &EditorState,
-) -> Command<Message> {
+) -> Task<Message> {
     if let Some(note_path) = selected_note_path {
         if !state.show_visualizer() 
             && !state.show_move_note_input() 
@@ -196,7 +196,7 @@ pub fn handle_undo(
                 let notebook_path_clone = notebook_path.to_string();
                 let note_path_clone = note_path.clone();
 
-                return Command::perform(
+                return Task::perform(
                     async move {
                         notebook::save_note_content(notebook_path_clone, note_path_clone, previous_content).await
                     },
@@ -215,5 +215,5 @@ pub fn handle_undo(
         eprintln!("Editor: Cannot undo - no note selected");
     }
     
-    Command::none()
+    Task::none()
 }

@@ -130,10 +130,13 @@ pub fn generate_layout<'a>(
         Container::new(
             Text::new("Please configure the 'notebook_path' in your config.json file to open a notebook.")
                 .size(20)
-                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.7, 0.2, 0.2)))
+                .style(|_: &_| iced::widget::text::Style {
+                    color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
+                    ..Default::default()
+                })
         )
-         .center_x()
-         .center_y()
+         .center_x(Length::Fill)
+         .center_y(Length::Fill)
          .width(Length::Fill)
          .height(Length::Fill)
          .into()

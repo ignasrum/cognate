@@ -1,4 +1,4 @@
-use iced::Command;
+use iced::task::Task; // Use Task instead of Command
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
@@ -19,7 +19,7 @@ pub fn handle_add_label(
     state: &mut EditorState,
     note_explorer: &mut NoteExplorer,
     visualizer: &mut Visualizer,
-) -> Command<Message> {
+) -> Task<Message> {
     if !state.show_about_info() {
         if let Some(selected_path) = state.selected_note_path().cloned() {
             let label = state.new_label_text().trim().to_string();
@@ -45,7 +45,7 @@ pub fn handle_add_label(
 
                 let notebook_path = state.notebook_path().to_string();
                 let notes_to_save = note_explorer.notes.clone();
-                return Command::perform(
+                return Task::perform(
                     async move {
                         notebook::save_metadata(&notebook_path, &notes_to_save[..])
                             .map_err(|e| e.to_string())
@@ -55,7 +55,7 @@ pub fn handle_add_label(
             }
         }
     }
-    Command::none()
+    Task::none()
 }
 
 // Handle remove label
@@ -64,7 +64,7 @@ pub fn handle_remove_label(
     note_explorer: &mut NoteExplorer,
     visualizer: &mut Visualizer,
     label_to_remove: String,
-) -> Command<Message> {
+) -> Task<Message> {
     if let Some(selected_path) = state.selected_note_path().cloned() {
         if !state.show_about_info() {
             let mut selected_labels = state.selected_note_labels().to_vec();
@@ -85,7 +85,7 @@ pub fn handle_remove_label(
 
             let notebook_path = state.notebook_path().to_string();
             let notes_to_save = note_explorer.notes.clone();
-            return Command::perform(
+            return Task::perform(
                 async move {
                     notebook::save_metadata(&notebook_path, &notes_to_save[..])
                         .map_err(|e| e.to_string())
@@ -94,5 +94,5 @@ pub fn handle_remove_label(
             );
         }
     }
-    Command::none()
+    Task::none()
 }
