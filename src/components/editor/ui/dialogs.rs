@@ -7,13 +7,13 @@ use crate::components::editor::Message;
 pub fn about_dialog<'a>(app_version: &str) -> Element<'a, Message> {
     let about_info_column = Column::new()
         .spacing(10)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
         .push(Text::new("Cognate - Note Taking App").size(30))
         .push(Text::new(format!("Version: {}", app_version)).size(20));
 
     Container::new(about_info_column)
-        .center_x()
-        .center_y()
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -41,7 +41,7 @@ pub fn new_note_dialog<'a>(new_note_path_input: &str) -> Element<'a, Message> {
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
         .into()
 }
 
@@ -85,6 +85,6 @@ pub fn move_note_dialog<'a>(current_path: &str, new_path_input: &str, is_folder:
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
         .into()
 }

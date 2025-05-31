@@ -1,5 +1,5 @@
 use iced::widget::text_editor::{Action, Content, Edit, Motion};
-use iced::Command;
+use iced::task::Task; // Use Task instead of Command
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
@@ -13,7 +13,7 @@ pub fn handle_tab_key(
     selected_note_path: Option<&String>,
     notebook_path: &str,
     state: &EditorState,
-) -> Command<Message> {
+) -> Task<Message> {
     if selected_note_path.is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
@@ -38,7 +38,7 @@ pub fn handle_tab_key(
                 "Editor: Handling Tab: Saving content for note: {}",
                 note_path
             );
-            return Command::perform(
+            return Task::perform(
                 async move {
                     notebook::save_note_content(notebook_path, note_path, content_text).await
                 },
@@ -46,14 +46,14 @@ pub fn handle_tab_key(
             );
         }
     }
-    Command::none()
+    Task::none()
 }
 
 // Handler for select all action
 pub fn handle_select_all(
     content: &mut Content,
     state: &EditorState,
-) -> Command<Message> {
+) -> Task<Message> {
     if state.selected_note_path().is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
@@ -68,7 +68,7 @@ pub fn handle_select_all(
         content.perform(Action::Move(Motion::DocumentStart));
         content.perform(Action::Select(Motion::DocumentEnd));
     }
-    Command::none()
+    Task::none()
 }
 
 // Handler for editor actions
@@ -80,7 +80,7 @@ pub fn handle_editor_action(
     selected_note_path: Option<&String>,
     notebook_path: &str,
     state: &EditorState,
-) -> Command<Message> {
+) -> Task<Message> {
     if selected_note_path.is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
@@ -109,7 +109,7 @@ pub fn handle_editor_action(
                 "Editor: Performing EditorAction: Saving content for note: {}",
                 note_path_clone
             );
-            return Command::perform(
+            return Task::perform(
                 async move {
                     notebook::save_note_content(notebook_path_clone, note_path_clone, content_text).await
                 },
@@ -117,7 +117,7 @@ pub fn handle_editor_action(
             );
         }
     }
-    Command::none()
+    Task::none()
 }
 
 // Handler for content changed
@@ -127,7 +127,7 @@ pub fn handle_content_changed(
     undo_manager: &mut UndoManager,
     state: &mut EditorState,
     new_content: String,
-) -> Command<Message> {
+) -> Task<Message> {
     if !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
@@ -148,5 +148,5 @@ pub fn handle_content_changed(
         *content = Content::with_text(&new_content);
         *markdown_text = new_content;
     }
-    Command::none()
+    Task::none()
 }

@@ -1,7 +1,10 @@
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
-use iced::{Command, Element, Length};
+use iced::{task::Task, Element, Length};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+// Import the correct styling types - button directly
+use iced::widget::button;
 
 use crate::notebook::{self, NoteMetadata};
 
@@ -49,7 +52,7 @@ impl NoteExplorer {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::LoadNotes => {
                 #[cfg(debug_assertions)]
@@ -58,7 +61,7 @@ impl NoteExplorer {
                     self.notebook_path
                 );
                 let notebook_path = self.notebook_path.clone();
-                Command::perform(
+                Task::perform(
                     notebook::load_notes_metadata(notebook_path),
                     Message::NotesLoaded,
                 )
@@ -101,9 +104,9 @@ impl NoteExplorer {
 
                 self.expanded_folders = new_expanded_folders;
 
-                Command::none()
+                Task::none()
             }
-            Message::NoteSelected(_path) => Command::none(),
+            Message::NoteSelected(_path) => Task::none(),
             Message::ToggleFolder(folder_path) => {
                 if let Some(is_expanded) = self.expanded_folders.get_mut(&folder_path) {
                     *is_expanded = !*is_expanded;
@@ -119,9 +122,9 @@ impl NoteExplorer {
                         folder_path
                     );
                 }
-                Command::none()
+                Task::none()
             }
-            Message::InitiateFolderRename(_folder_path) => Command::none(),
+            Message::InitiateFolderRename(_folder_path) => Task::none(),
             Message::CollapseAllAndExpandToNote(note_path) => {
                 #[cfg(debug_assertions)]
                 eprintln!(
@@ -148,7 +151,7 @@ impl NoteExplorer {
                         break;
                     }
                 }
-                Command::none()
+                Task::none()
             }
         }
     }
@@ -291,11 +294,11 @@ impl NoteExplorer {
                         .push(indicator_text)
                         .push(folder_name_text)
                         .spacing(3) // Adjust spacing between indicator and name
-                        .align_items(iced::Alignment::Center);
+                        .align_y(iced::Alignment::Center);
 
                     let folder_button = Button::new(folder_content_row)
                         .on_press(Message::ToggleFolder(folder_path.clone()))
-                        .style(iced::theme::Button::Text)
+                        .style(button::text) // Use button styling function
                         .width(Length::Fill);
 
                     let mut folder_row = Row::new().push(folder_button);
@@ -304,7 +307,7 @@ impl NoteExplorer {
                         folder_row = folder_row.push(
                             Button::new(Text::new("Rename").size(14))
                                 .on_press(Message::InitiateFolderRename(folder_path.clone()))
-                                .style(iced::theme::Button::Secondary)
+                                .style(button::secondary) // Use button styling function
                                 .padding(3)
                                 .width(Length::Shrink),
                         );
@@ -312,8 +315,7 @@ impl NoteExplorer {
 
                     folder_row = folder_row
                         .spacing(5)
-                        .align_items(iced::Alignment::Center)
-                        // Add a width constraint to prevent scrollbar overlap
+                        .align_y(iced::Alignment::Center)
                         .width(Length::Fill);
 
                     column = column.push(folder_row);
@@ -334,9 +336,9 @@ impl NoteExplorer {
                 } => {
                     let is_selected = Some(note_path) == selected_note_path;
                     let button_style = if is_selected {
-                        iced::theme::Button::Primary
+                        button::primary // Use button styling function
                     } else {
-                        iced::theme::Button::Text
+                        button::text // Use button styling function
                     };
 
                     let note_button_text = format!("{}o {}", indent_space, name);
@@ -370,7 +372,7 @@ impl NoteExplorer {
         // Wrap the column in a container with right padding to avoid scrollbar overlap
         Scrollable::new(
             Container::new(column)
-                .padding([0, 15, 0, 0]) // top, right, bottom, left padding
+                .padding([0.0, 15.0])
                 .width(Length::Fill)
         )
         .into()

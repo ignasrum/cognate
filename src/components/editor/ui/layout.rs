@@ -130,10 +130,13 @@ pub fn generate_layout<'a>(
         Container::new(
             Text::new("Please configure the 'notebook_path' in your config.json file to open a notebook.")
                 .size(20)
-                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.7, 0.2, 0.2)))
+                .style(|_: &_| iced::widget::text::Style {
+                    color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
+                    ..Default::default()
+                })
         )
-         .center_x()
-         .center_y()
+         .center_x(Length::Fill)
+         .center_y(Length::Fill)
          .width(Length::Fill)
          .height(Length::Fill)
          .into()
@@ -156,13 +159,28 @@ pub fn generate_layout<'a>(
         .width(Length::FillPortion(2))
         .into();
 
-        let mut editor_widget = text_editor(content).height(Length::Fill);
+        // Remove the height constraint from the editor widget
+        let mut editor_widget = text_editor(content);
 
         if state.selected_note_path().is_some() {
             editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
-        let editor_container = Container::new(editor_widget).width(Length::FillPortion(8));
+        // Create a row with the editor and a spacer to add right-side padding only
+        let editor_with_right_padding = Row::new()
+            .push(editor_widget)
+            .push(Container::new(Text::new("").width(Length::Fixed(20.0)))) // 40px right padding with correct float type
+            .width(Length::Fill);
+
+        // Keep the scrollable container with height constraints
+        let editor_scrollable = iced::widget::scrollable(editor_with_right_padding)
+            .width(Length::Fill)
+            .height(Length::Fill);
+            
+        // Create the editor container with the scrollable editor
+        let editor_container = Container::new(editor_scrollable)
+            .width(Length::FillPortion(8))
+            .height(Length::Fill);
 
         let content_row = Row::new()
             .push(note_explorer_view)
