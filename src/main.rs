@@ -33,8 +33,6 @@ use std::env;
 use std::process::exit;
 use components::editor::Editor;
 use iced::Theme;
-use iced::Task;
-use components::editor::Message;
 
 pub fn main() -> iced::Result {
     let config_path_env_var = "COGNATE_CONFIG_PATH";

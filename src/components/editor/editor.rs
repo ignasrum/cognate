@@ -84,6 +84,7 @@ pub struct Editor {
     undo_manager: UndoManager,
     
     // UI components and state
+    #[allow(dead_code)] // Explicitly allow this field as it's used during initialization
     theme: Theme,
     note_explorer: NoteExplorer,
     visualizer: Visualizer,
