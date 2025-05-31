@@ -4,8 +4,6 @@ use iced::{
     widget::{Button, Column, Container, Row, Scrollable, Text},
 };
 use std::collections::{HashMap, HashSet};
-// Removed unused import
-// use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -102,7 +100,7 @@ impl Visualizer {
             if !notes_without_labels.is_empty() {
                 let mut no_label_column = Column::new().spacing(5);
                 no_label_column = no_label_column.push(Text::new("No Labels:").size(18).style(
-                    iced::theme::Text::Color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
+                    iced::theme::Text::Color(iced::Color::from_rgb(0.7, 0.7, 0.7)),
                 ));
 
                 let mut sorted_notes_without_labels = notes_without_labels.clone();
@@ -141,11 +139,12 @@ impl Visualizer {
 
                     label_header_row = label_header_row.push(
                         Button::new(
-                            Text::new(format!("{} Label: {}", indicator, label))
+                            Text::new(format!("{} {}", indicator, label))
                                 .size(20)
                                 .style(iced::theme::Text::Color(iced::Color::from_rgb(
-                                    0.1, 0.5, 0.9,
-                                ))),
+                                    0.0, 0.9, 1.0,
+                                )))
+                                .shaping(iced::widget::text::Shaping::Advanced),
                         )
                         .on_press(Message::ToggleLabel(label.clone()))
                         .style(iced::theme::Button::Text),
