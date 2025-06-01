@@ -160,8 +160,8 @@ impl Visualizer {
                         Button::new(
                             Text::new(format!("{} {}", indicator, label))
                                 .size(20)
-                                .style(|_: &_| iced::widget::text::Style {
-                                    color: Some(iced::Color::from_rgb(0.0, 0.9, 1.0)),
+                                .style(|theme: &Theme| iced::widget::text::Style {
+                                    color: Some(theme.palette().primary),
                                     ..Default::default()
                                 })
                                 .shaping(iced::widget::text::Shaping::Advanced),
