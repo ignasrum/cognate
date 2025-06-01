@@ -192,7 +192,6 @@ impl EditorState {
             self.show_move_note_input = true;
             self.move_note_current_path = Some(folder_path.clone());
             self.move_note_new_path_input = folder_path;
-            self.selected_note_path = None;
         }
     }
     
