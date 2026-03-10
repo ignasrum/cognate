@@ -24,9 +24,8 @@ mod tests {
         assert_eq!(state.move_note_new_path_input(), "a/b");
         state.update_move_note_path("a/c".to_string());
         assert_eq!(state.move_note_new_path_input(), "a/c");
-        assert_eq!(state.take_move_note_current_path(), Some("a/b".to_string()));
-        assert_eq!(state.move_note_current_path(), None);
         state.hide_move_note_dialog();
+        assert_eq!(state.move_note_current_path(), None);
         assert!(!state.show_move_note_input());
 
         state.show_rename_folder_dialog("folder".to_string());
@@ -74,7 +73,7 @@ mod tests {
 
         state.clear_new_label_text();
         assert_eq!(state.new_label_text(), "");
-        assert_eq!(state.take_selected_note_path(), Some("x/y".to_string()));
+        state.set_selected_note_path(None);
         assert_eq!(state.selected_note_path(), None);
     }
 

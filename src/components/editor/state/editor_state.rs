@@ -207,14 +207,6 @@ impl EditorState {
         }
     }
     
-    pub fn take_move_note_current_path(&mut self) -> Option<String> {
-        self.move_note_current_path.take()
-    }
-    
-    pub fn take_selected_note_path(&mut self) -> Option<String> {
-        self.selected_note_path.take()
-    }
-    
     // Note-related utilities
     pub fn is_folder_path(&self, path: &str, all_notes: &[crate::notebook::NoteMetadata]) -> bool {
         let mut all_folders: HashSet<String> = HashSet::new();
