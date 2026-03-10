@@ -8,7 +8,10 @@ use iced::{
 // Import correct styling modules
 use iced::widget::{button, container};
 
-use std::collections::{HashMap, HashSet};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -17,10 +20,24 @@ pub enum Message {
     ToggleLabel(String),
 }
 
+#[derive(Debug, Clone, Default)]
+struct LabelGroup {
+    label: String,
+    note_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GroupedNotesCache {
+    notes_without_labels: Vec<String>,
+    labels: Vec<LabelGroup>,
+}
+
 #[derive(Debug, Default)]
 pub struct Visualizer {
     pub notes: Vec<NoteMetadata>,
     pub expanded_labels: HashMap<String, bool>,
+    grouped_notes_cache: RefCell<GroupedNotesCache>,
+    grouped_notes_cache_key: Cell<Option<u64>>,
 }
 
 impl Visualizer {
@@ -28,7 +45,72 @@ impl Visualizer {
         Self {
             notes: Vec::new(),
             expanded_labels: HashMap::new(),
+            grouped_notes_cache: RefCell::new(GroupedNotesCache::default()),
+            grouped_notes_cache_key: Cell::new(None),
         }
+    }
+
+    fn compute_notes_cache_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        for note in &self.notes {
+            note.rel_path.hash(&mut hasher);
+            for label in &note.labels {
+                label.hash(&mut hasher);
+            }
+        }
+
+        hasher.finish()
+    }
+
+    fn build_grouped_notes_cache(notes: &[NoteMetadata]) -> GroupedNotesCache {
+        let mut notes_by_label: HashMap<String, Vec<String>> = HashMap::new();
+        let mut notes_without_labels: Vec<String> = Vec::new();
+
+        for note in notes {
+            if note.labels.is_empty() {
+                notes_without_labels.push(note.rel_path.clone());
+            } else {
+                for label in &note.labels {
+                    notes_by_label
+                        .entry(label.clone())
+                        .or_default()
+                        .push(note.rel_path.clone());
+                }
+            }
+        }
+
+        notes_without_labels.sort();
+
+        let mut sorted_labels: Vec<String> = notes_by_label.keys().cloned().collect();
+        sorted_labels.sort();
+
+        let mut labels = Vec::with_capacity(sorted_labels.len());
+        for label in sorted_labels {
+            if let Some(note_paths) = notes_by_label.get_mut(&label) {
+                note_paths.sort();
+                labels.push(LabelGroup {
+                    label,
+                    note_paths: note_paths.clone(),
+                });
+            }
+        }
+
+        GroupedNotesCache {
+            notes_without_labels,
+            labels,
+        }
+    }
+
+    fn refresh_grouped_notes_cache_if_needed(&self) {
+        let cache_key = self.compute_notes_cache_key();
+        if self.grouped_notes_cache_key.get() == Some(cache_key) {
+            return;
+        }
+
+        let grouped = Self::build_grouped_notes_cache(&self.notes);
+        *self.grouped_notes_cache.borrow_mut() = grouped;
+        self.grouped_notes_cache_key.set(Some(cache_key));
     }
 
     // Update method signatures
@@ -41,18 +123,16 @@ impl Visualizer {
                     notes.len()
                 );
                 self.notes = notes;
-                // Update expanded_labels to include new labels, keeping existing state
-                let mut all_labels: HashSet<String> = HashSet::new();
-                for note in &self.notes {
-                    for label in &note.labels {
-                        all_labels.insert(label.clone());
-                    }
-                }
+                self.refresh_grouped_notes_cache_if_needed();
+
+                // Update expanded_labels to include new labels, keeping existing state.
                 let mut new_expanded_labels = HashMap::new();
-                for label in all_labels {
-                    // Change default from true to false here
-                    let is_expanded = *self.expanded_labels.get(&label).unwrap_or(&false);
-                    new_expanded_labels.insert(label, is_expanded);
+                for group in &self.grouped_notes_cache.borrow().labels {
+                    let is_expanded = *self
+                        .expanded_labels
+                        .get(&group.label)
+                        .unwrap_or(&false);
+                    new_expanded_labels.insert(group.label.clone(), is_expanded);
                 }
                 self.expanded_labels = new_expanded_labels;
 
@@ -74,6 +154,8 @@ impl Visualizer {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
+        self.refresh_grouped_notes_cache_if_needed();
+
         let mut content = Column::new().spacing(10);
 
         if self.notes.is_empty() {
@@ -82,28 +164,9 @@ impl Visualizer {
             ));
         } else {
             content = content.push(Text::new("Notes Grouped by Label:"));
+            let grouped_cache = self.grouped_notes_cache.borrow();
 
-            // Group notes by label
-            let mut notes_by_label: HashMap<String, Vec<&NoteMetadata>> = HashMap::new();
-            let mut notes_without_labels: Vec<&NoteMetadata> = Vec::new();
-            let mut all_labels: HashSet<String> = HashSet::new();
-
-            for note in &self.notes {
-                if note.labels.is_empty() {
-                    notes_without_labels.push(note);
-                } else {
-                    for label in &note.labels {
-                        notes_by_label
-                            .entry(label.clone())
-                            .or_insert_with(Vec::new)
-                            .push(note);
-                        all_labels.insert(label.clone());
-                    }
-                }
-            }
-
-            // Display notes without labels first
-            if !notes_without_labels.is_empty() {
+            if !grouped_cache.notes_without_labels.is_empty() {
                 let mut no_label_column = Column::new().spacing(5);
                 no_label_column = no_label_column.push(
                     Text::new("No Labels:")
@@ -114,16 +177,10 @@ impl Visualizer {
                         }),
                 );
 
-                let mut sorted_notes_without_labels = notes_without_labels.clone();
-                sorted_notes_without_labels.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-
-                for note in sorted_notes_without_labels {
-                    // Use rel_path instead of file_name()
-                    let note_path = note.rel_path.clone();
-
+                for note_path in &grouped_cache.notes_without_labels {
                     let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
-                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                        .style(button::text); // Use button styling function
+                        .on_press(Message::NoteSelectedInVisualizer(note_path.clone()))
+                        .style(button::text);
 
                     no_label_column = no_label_column.push(note_button);
                 }
@@ -144,65 +201,53 @@ impl Visualizer {
                 );
             }
 
-            // Sort labels for consistent display
-            let mut sorted_labels: Vec<String> = all_labels.into_iter().collect();
-            sorted_labels.sort();
+            for group in &grouped_cache.labels {
+                let label = &group.label;
+                let is_expanded = *self.expanded_labels.get(label).unwrap_or(&false);
 
-            // Display notes grouped by label
-            for label in sorted_labels {
-                if let Some(notes_with_label) = notes_by_label.get(&label) {
-                    let is_expanded = *self.expanded_labels.get(&label).unwrap_or(&false); // Default to collapsed
+                let mut label_header_row = Row::new().spacing(5).align_y(iced::Alignment::Center);
+                let indicator = if is_expanded { 'v' } else { '>' };
 
-                    let mut label_header_row = Row::new().spacing(5).align_y(iced::Alignment::Center);
-                    let indicator = if is_expanded { 'v' } else { '>' };
-
-                    label_header_row = label_header_row.push(
-                        Button::new(
-                            Text::new(format!("{} {}", indicator, label))
-                                .size(20)
-                                .style(|theme: &Theme| iced::widget::text::Style {
-                                    color: Some(theme.palette().primary),
-                                    ..Default::default()
-                                })
-                                .shaping(iced::widget::text::Shaping::Advanced),
-                        )
-                        .on_press(Message::ToggleLabel(label.clone()))
-                        .style(button::text), // Use button styling function
-                    );
-
-                    let mut label_column = Column::new().spacing(5).push(label_header_row);
-
-                    if is_expanded {
-                        let mut sorted_notes_with_label = notes_with_label.clone();
-                        sorted_notes_with_label.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-
-                        for note in sorted_notes_with_label {
-                            // Use rel_path instead of file_name()
-                            let note_path = note.rel_path.clone();
-
-                            let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
-                                .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                                .style(button::text); // Use button styling function
-
-                            label_column = label_column.push(note_button);
-                        }
-                    }
-
-                    content = content.push(
-                        Container::new(label_column)
-                            .style(|theme| container::Style {
-                                background: Some(iced::Background::Color(theme.palette().background)),
-                                border: iced::Border {
-                                    radius: 2.0.into(),
-                                    width: 1.0,
-                                    color: theme.palette().primary,
-                                },
-                                ..container::Style::default()
+                label_header_row = label_header_row.push(
+                    Button::new(
+                        Text::new(format!("{} {}", indicator, label))
+                            .size(20)
+                            .style(|theme: &Theme| iced::widget::text::Style {
+                                color: Some(theme.palette().primary),
+                                ..Default::default()
                             })
-                            .padding(5)
-                            .width(Length::Fill),
-                    );
+                            .shaping(iced::widget::text::Shaping::Advanced),
+                    )
+                    .on_press(Message::ToggleLabel(label.clone()))
+                    .style(button::text),
+                );
+
+                let mut label_column = Column::new().spacing(5).push(label_header_row);
+
+                if is_expanded {
+                    for note_path in &group.note_paths {
+                        let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
+                            .on_press(Message::NoteSelectedInVisualizer(note_path.clone()))
+                            .style(button::text);
+
+                        label_column = label_column.push(note_button);
+                    }
                 }
+
+                content = content.push(
+                    Container::new(label_column)
+                        .style(|theme| container::Style {
+                            background: Some(iced::Background::Color(theme.palette().background)),
+                            border: iced::Border {
+                                radius: 2.0.into(),
+                                width: 1.0,
+                                color: theme.palette().primary,
+                            },
+                            ..container::Style::default()
+                        })
+                        .padding(5)
+                        .width(Length::Fill),
+                );
             }
         }
 

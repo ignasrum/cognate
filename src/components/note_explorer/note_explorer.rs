@@ -1,6 +1,9 @@
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
 use iced::{task::Task, Element, Length};
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 // Import the correct styling types - button directly
@@ -41,6 +44,8 @@ pub struct NoteExplorer {
     pub notes: Vec<NoteMetadata>,
     pub notebook_path: String,
     pub expanded_folders: HashMap<String, bool>,
+    tree_cache: RefCell<Option<Vec<NodeOwned>>>,
+    tree_cache_key: Cell<Option<u64>>,
 }
 
 impl NoteExplorer {
@@ -49,6 +54,8 @@ impl NoteExplorer {
             notes: Vec::new(),
             notebook_path,
             expanded_folders: HashMap::new(),
+            tree_cache: RefCell::new(None),
+            tree_cache_key: Cell::new(None),
         }
     }
 
@@ -268,6 +275,24 @@ impl NoteExplorer {
         root_children
     }
 
+    fn compute_tree_cache_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        for note in &self.notes {
+            note.rel_path.hash(&mut hasher);
+        }
+
+        let mut expanded_entries: Vec<(&String, &bool)> = self.expanded_folders.iter().collect();
+        expanded_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (path, is_expanded) in expanded_entries {
+            path.hash(&mut hasher);
+            is_expanded.hash(&mut hasher);
+        }
+
+        hasher.finish()
+    }
+
     fn render_owned_nodes(
         &self,
         nodes: &[NodeOwned],
@@ -364,9 +389,17 @@ impl NoteExplorer {
         if self.notebook_path.is_empty() || self.notes.is_empty() {
             column = column.push(Text::new("No notes found."));
         } else {
-            let root_tree = NoteExplorer::build_owned_tree(&self.notes, &self.expanded_folders);
-            let tree_view = self.render_owned_nodes(&root_tree, selected_note_path, 0);
-            column = column.push(tree_view);
+            let cache_key = self.compute_tree_cache_key();
+            if self.tree_cache_key.get() != Some(cache_key) {
+                let root_tree = NoteExplorer::build_owned_tree(&self.notes, &self.expanded_folders);
+                *self.tree_cache.borrow_mut() = Some(root_tree);
+                self.tree_cache_key.set(Some(cache_key));
+            }
+
+            if let Some(root_tree) = self.tree_cache.borrow().as_ref() {
+                let tree_view = self.render_owned_nodes(root_tree, selected_note_path, 0);
+                column = column.push(tree_view);
+            }
         }
 
         // Wrap the column in a container with right padding to avoid scrollbar overlap
