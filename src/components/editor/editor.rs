@@ -30,7 +30,7 @@ pub enum Message {
     Undo,
     
     // Note explorer interaction
-    NoteExplorerMessage(note_explorer::Message),
+    NoteExplorerMsg(note_explorer::Message),
     NoteSelected(String),
     
     // Label management
@@ -44,7 +44,7 @@ pub enum Message {
     
     // Visualizer
     ToggleVisualizer,
-    VisualizerMessage(visualizer::Message),
+    VisualizerMsg(visualizer::Message),
     
     // Note operations
     NewNote,
@@ -107,7 +107,7 @@ impl Editor {
             editor_instance
                 .note_explorer
                 .update(note_explorer::Message::LoadNotes)
-                .map(Message::NoteExplorerMessage)
+                .map(Message::NoteExplorerMsg)
         } else {
             Task::none()
         };
@@ -124,7 +124,7 @@ impl Editor {
             | Message::EditorAction(_)
             | Message::LoadedNoteContent(_, _) => Self::handle_text_messages(state, message),
 
-            Message::NoteExplorerMessage(_) | Message::NoteSelected(_) => {
+            Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => {
                 Self::handle_selection_messages(state, message)
             }
 
@@ -136,7 +136,7 @@ impl Editor {
                 Self::handle_save_feedback_messages(message)
             }
 
-            Message::ToggleVisualizer | Message::VisualizerMessage(_) => {
+            Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
                 Self::handle_visualizer_messages(state, message)
             }
 
@@ -203,7 +203,7 @@ impl Editor {
 
     fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
         match message {
-            Message::NoteExplorerMessage(note_explorer_message) => {
+            Message::NoteExplorerMsg(note_explorer_message) => {
                 note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,
                     &mut state.visualizer,
@@ -217,8 +217,6 @@ impl Editor {
                 &mut state.note_explorer,
                 &mut state.undo_manager,
                 &mut state.state,
-                &mut state.content,
-                &mut state.markdown_text,
                 note_path,
             ),
             _ => unreachable!("selection handler received invalid message"),
@@ -285,12 +283,10 @@ impl Editor {
 
                 Task::none()
             }
-            Message::VisualizerMessage(visualizer_message) => note_actions::handle_visualizer_message(
+            Message::VisualizerMsg(visualizer_message) => note_actions::handle_visualizer_message(
                 &mut state.visualizer,
                 &mut state.note_explorer,
                 &mut state.state,
-                &mut state.content,
-                &mut state.markdown_text,
                 &mut state.undo_manager,
                 visualizer_message,
             ),

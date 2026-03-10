@@ -40,7 +40,7 @@ impl UndoManager {
         
         let history = self.undo_histories
             .entry(note_path.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
             
         // Remove any future redo states if we're in the middle of the history
         if current_index < history.len() {
@@ -66,7 +66,7 @@ impl UndoManager {
         let _history_exists = self.undo_histories.contains_key(note_path);
         let history = self.undo_histories
             .entry(note_path.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         
         #[cfg(debug_assertions)]
         eprintln!(

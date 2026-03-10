@@ -1,4 +1,5 @@
-pub mod visualizer;
+#[path = "visualizer.rs"]
+mod core;
 
-pub use visualizer::Message;
-pub use visualizer::Visualizer;
+pub use core::Message;
+pub use core::Visualizer;

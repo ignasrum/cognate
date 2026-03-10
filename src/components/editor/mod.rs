@@ -4,9 +4,9 @@ pub mod text_management;
 pub mod ui;
 pub mod actions;
 
-// Import the actual editor module
-pub mod editor;
+#[path = "editor.rs"]
+mod core;
 
 // Re-export the main types directly from their definition here
-pub use editor::Editor;
-pub use editor::Message;
+pub use core::Editor;
+pub use core::Message;

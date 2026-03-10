@@ -1,4 +1,5 @@
-pub mod note_explorer;
+#[path = "note_explorer.rs"]
+mod core;
 
-pub use note_explorer::Message;
-pub use note_explorer::NoteExplorer;
+pub use core::Message;
+pub use core::NoteExplorer;

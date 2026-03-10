@@ -85,7 +85,7 @@ pub fn generate_layout<'a>(
             }
 
             let is_renaming_folder = state.move_note_current_path()
-                .map_or(false, |p| all_folders_in_notes.contains(p));
+                .is_some_and(|p| all_folders_in_notes.contains(p));
 
             let operation_text = if is_renaming_folder {
                 "Renaming Folder"
@@ -98,19 +98,17 @@ pub fn generate_layout<'a>(
                 state.move_note_current_path().unwrap_or(&String::new())
             )));
         }
-    } else {
-        if !state.show_about_info() {
-            top_bar = top_bar.push(Text::new(
-                "Please configure the 'notebook_path' in your config.json file to open a notebook.",
-            ));
-        }
+    } else if !state.show_about_info() {
+        top_bar = top_bar.push(Text::new(
+            "Please configure the 'notebook_path' in your config.json file to open a notebook.",
+        ));
     }
 
     // Main content area
     let main_content: Element<'_, Message> = if state.show_about_info() {
         dialogs::about_dialog(state.app_version())
     } else if state.show_visualizer() {
-        Container::new(visualizer_component.view().map(Message::VisualizerMessage))
+        Container::new(visualizer_component.view().map(Message::VisualizerMsg))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -132,7 +130,6 @@ pub fn generate_layout<'a>(
                 .size(20)
                 .style(|_: &_| iced::widget::text::Style {
                     color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
-                    ..Default::default()
                 })
         )
          .center_x(Length::Fill)
@@ -148,12 +145,12 @@ pub fn generate_layout<'a>(
                 .map(|note_explorer_message| match note_explorer_message {
                     note_explorer::Message::NoteSelected(path) => Message::NoteSelected(path),
                     note_explorer::Message::ToggleFolder(path) => {
-                        Message::NoteExplorerMessage(note_explorer::Message::ToggleFolder(path))
+                        Message::NoteExplorerMsg(note_explorer::Message::ToggleFolder(path))
                     }
                     note_explorer::Message::InitiateFolderRename(path) => {
                         Message::InitiateFolderRename(path)
                     }
-                    other_msg => Message::NoteExplorerMessage(other_msg),
+                    other_msg => Message::NoteExplorerMsg(other_msg),
                 }),
         )
         .width(Length::FillPortion(2))

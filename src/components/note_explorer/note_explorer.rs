@@ -97,7 +97,6 @@ impl NoteExplorer {
                                 all_folders.insert(current_folder_path.clone());
                             }
                         }
-                    } else {
                     }
                 }
 
@@ -247,7 +246,7 @@ impl NoteExplorer {
             }
         }
 
-        fn sort_owned_nodes(nodes: &mut Vec<NodeOwned>) {
+        fn sort_owned_nodes(nodes: &mut [NodeOwned]) {
             nodes.sort_by(|a, b| match (a, b) {
                 (
                     NodeOwned::Folder { name: name_a, .. },
@@ -294,11 +293,10 @@ impl NoteExplorer {
     }
 
     fn render_owned_nodes(
-        &self,
         nodes: &[NodeOwned],
-        selected_note_path: Option<&String>,
+        selected_note_path: Option<&str>,
         indent_level: usize,
-    ) -> Column<'_, Message> {
+    ) -> Column<'static, Message> {
         let mut column = Column::new().spacing(3);
         let indent_space = "  ".repeat(indent_level);
 
@@ -346,7 +344,7 @@ impl NoteExplorer {
                     column = column.push(folder_row);
 
                     if *is_expanded {
-                        column = column.push(self.render_owned_nodes(
+                        column = column.push(Self::render_owned_nodes(
                             children,
                             selected_note_path,
                             indent_level + 1,
@@ -359,7 +357,8 @@ impl NoteExplorer {
                     // Corrected the pattern here
                     ..
                 } => {
-                    let is_selected = Some(note_path) == selected_note_path;
+                    let is_selected = selected_note_path
+                        .is_some_and(|selected_path| note_path == selected_path);
                     let button_style = if is_selected {
                         button::primary // Use button styling function
                     } else {
@@ -397,7 +396,11 @@ impl NoteExplorer {
             }
 
             if let Some(root_tree) = self.tree_cache.borrow().as_ref() {
-                let tree_view = self.render_owned_nodes(root_tree, selected_note_path, 0);
+                let tree_view = Self::render_owned_nodes(
+                    root_tree,
+                    selected_note_path.map(|path| path.as_str()),
+                    0,
+                );
                 column = column.push(tree_view);
             }
         }

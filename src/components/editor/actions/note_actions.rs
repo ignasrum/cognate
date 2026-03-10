@@ -45,7 +45,7 @@ fn handle_note_selection_internal(
             .update(note_explorer::Message::CollapseAllAndExpandToNote(
                 note_path.clone(),
             ))
-            .map(|msg| Message::NoteExplorerMessage(msg)),
+            .map(Message::NoteExplorerMsg),
     ];
 
     if !state.show_visualizer() && !state.notebook_path().is_empty() {
@@ -88,13 +88,13 @@ pub fn handle_note_explorer_message(
 ) -> Task<Message> {
     #[cfg(debug_assertions)]
     eprintln!(
-        "Editor: Received NoteExplorerMessage: {:?}",
+        "Editor: Received NoteExplorerMsg: {:?}",
         note_explorer_message
     );
     
     let note_explorer_command = note_explorer
         .update(note_explorer_message.clone())
-        .map(|msg| Message::NoteExplorerMessage(msg));
+        .map(Message::NoteExplorerMsg);
 
     let mut editor_command = Task::none();
     
@@ -152,8 +152,6 @@ pub fn handle_note_selected(
     note_explorer: &mut NoteExplorer,
     undo_manager: &mut UndoManager,
     state: &mut EditorState,
-    _content: &mut Content,    // Added underscore
-    _markdown_text: &mut String,    // Added underscore
     note_path: String,
 ) -> Task<Message> {
     #[cfg(debug_assertions)]
@@ -170,8 +168,6 @@ pub fn handle_visualizer_message(
     visualizer: &mut Visualizer,
     note_explorer: &mut NoteExplorer,
     state: &mut EditorState,
-    _content: &mut Content,    // Added underscore
-    _markdown_text: &mut String,    // Added underscore
     undo_manager: &mut UndoManager,
     visualizer_message: visualizer::Message,
 ) -> Task<Message> {
@@ -181,7 +177,7 @@ pub fn handle_visualizer_message(
     commands_to_return.push(
         visualizer
             .update(visualizer_message.clone())
-            .map(|msg| Message::VisualizerMessage(msg)),
+            .map(Message::VisualizerMsg),
     );
 
     match visualizer_message {
@@ -220,7 +216,7 @@ pub fn get_select_note_command(
     if let Some(selected_path) = selected_note_path.cloned() {
         Task::perform(async { selected_path }, Message::NoteSelected)
     } else {
-        let first_note_path = notes.get(0).map(|n| n.rel_path.clone());
+        let first_note_path = notes.first().map(|n| n.rel_path.clone());
         if let Some(path) = first_note_path {
             Task::perform(async { path }, Message::NoteSelected)
         } else {
@@ -273,7 +269,7 @@ pub fn handle_note_created(
             eprintln!("Note created successfully: {}", new_note_metadata.rel_path);
             let reload_command = note_explorer
                 .update(note_explorer::Message::LoadNotes)
-                .map(|msg| Message::NoteExplorerMessage(msg));
+                .map(Message::NoteExplorerMsg);
 
             let select_command = Task::perform(
                 async { new_note_metadata.rel_path },
@@ -295,7 +291,7 @@ pub fn handle_note_created(
                         .set_text(&error_message) // Use the cloned variable
                         .show_alert();
                 },
-                |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
+                |()| Message::NoteExplorerMsg(note_explorer::Message::LoadNotes),
             );
             dialog_command
         }
@@ -397,7 +393,7 @@ pub fn handle_note_deleted(
 
             note_explorer
                 .update(note_explorer::Message::LoadNotes)
-                .map(|msg| Message::NoteExplorerMessage(msg))
+                .map(Message::NoteExplorerMsg)
         }
         Err(_err) => {
             #[cfg(debug_assertions)]
@@ -413,7 +409,7 @@ pub fn handle_note_deleted(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                |_| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
+                |_| Message::NoteExplorerMsg(note_explorer::Message::LoadNotes),
             );
             dialog_command
         }
@@ -441,7 +437,7 @@ pub fn handle_confirm_move_note(
                             .set_text("New path cannot be empty.")
                             .show_alert();
                     },
-                    |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
+                    |()| Message::NoteExplorerMsg(note_explorer::Message::LoadNotes),
                 );
                 return dialog_command;
             }
@@ -501,7 +497,7 @@ pub fn handle_note_moved(
             
             note_explorer
                 .update(note_explorer::Message::LoadNotes)
-                .map(|msg| Message::NoteExplorerMessage(msg))
+                .map(Message::NoteExplorerMsg)
         }
         Err(_err) => {
             #[cfg(debug_assertions)]
@@ -518,7 +514,7 @@ pub fn handle_note_moved(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                |_| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
+                |_| Message::NoteExplorerMsg(note_explorer::Message::LoadNotes),
             );
             dialog_command
         }

@@ -208,8 +208,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .err()
-                .expect("expected error")
+                .expect_err("expected error")
                 .contains("Invalid relative path"),
             "Expected invalid-path validation error",
         );
@@ -292,8 +291,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .err()
-                .expect("expected error")
+                .expect_err("expected error")
                 .contains("Invalid current relative path"),
             "Expected invalid current-path validation error",
         );

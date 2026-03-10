@@ -53,10 +53,10 @@ mod tests {
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err("save failed".to_string())),
             EditorMessage::LoadedNoteContent("folder/note".to_string(), "body".to_string()),
-            EditorMessage::NoteExplorerMessage(note_explorer::Message::ToggleFolder(
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(
                 "folder".to_string(),
             )),
-            EditorMessage::VisualizerMessage(visualizer::Message::ToggleLabel(
+            EditorMessage::VisualizerMsg(visualizer::Message::ToggleLabel(
                 "label".to_string(),
             )),
             EditorMessage::InitiateFolderRename("folder".to_string()),
@@ -71,7 +71,7 @@ mod tests {
 
         let _ = Editor::update(
             &mut editor,
-            EditorMessage::NoteExplorerMessage(note_explorer::Message::NotesLoaded(vec![
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(vec![
                 NoteMetadata {
                     rel_path: "folder/note".to_string(),
                     labels: vec!["tag".to_string()],

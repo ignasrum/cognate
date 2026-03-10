@@ -173,7 +173,6 @@ impl Visualizer {
                         .size(18)
                         .style(|_: &_| iced::widget::text::Style {
                             color: Some(iced::Color::from_rgb(0.7, 0.7, 0.7)),
-                            ..Default::default()
                         }),
                 );
 
@@ -188,13 +187,13 @@ impl Visualizer {
                     Container::new(no_label_column)
                         .style(|theme| container::Style {
                             background: Some(iced::Background::Color(theme.palette().background)),
+                            text_color: None,
                             border: iced::Border {
                                 radius: 2.0.into(),
                                 width: 1.0,
                                 color: theme.palette().primary,
                             },
-                            // No text_color field is needed
-                            ..container::Style::default()
+                            shadow: iced::Shadow::default(),
                         })
                         .padding(5)
                         .width(Length::Fill),
@@ -214,7 +213,6 @@ impl Visualizer {
                             .size(20)
                             .style(|theme: &Theme| iced::widget::text::Style {
                                 color: Some(theme.palette().primary),
-                                ..Default::default()
                             })
                             .shaping(iced::widget::text::Shaping::Advanced),
                     )
@@ -238,12 +236,13 @@ impl Visualizer {
                     Container::new(label_column)
                         .style(|theme| container::Style {
                             background: Some(iced::Background::Color(theme.palette().background)),
+                            text_color: None,
                             border: iced::Border {
                                 radius: 2.0.into(),
                                 width: 1.0,
                                 color: theme.palette().primary,
                             },
-                            ..container::Style::default()
+                            shadow: iced::Shadow::default(),
                         })
                         .padding(5)
                         .width(Length::Fill),

@@ -192,8 +192,6 @@ mod tests {
             &mut explorer,
             &mut undo,
             &mut state,
-            &mut content,
-            &mut markdown,
             "folder/note".to_string(),
         );
         assert_eq!(state.selected_note_path(), Some(&"folder/note".to_string()));
@@ -202,8 +200,6 @@ mod tests {
             &mut visualizer,
             &mut explorer,
             &mut state,
-            &mut content,
-            &mut markdown,
             &mut undo,
             visualizer::Message::ToggleLabel("tag".to_string()),
         );
@@ -211,8 +207,6 @@ mod tests {
             &mut visualizer,
             &mut explorer,
             &mut state,
-            &mut content,
-            &mut markdown,
             &mut undo,
             visualizer::Message::NoteSelectedInVisualizer("x".to_string()),
         );
