@@ -449,9 +449,9 @@ pub fn handle_confirm_move_note(
             if new_path == current_path {
                 #[cfg(debug_assertions)]
                 eprintln!(
-                    "New path is the same as the current path. No action needed."
+                    "New path is the same as the current path. No action needed; preserving current selection."
                 );
-                return get_select_note_command(None, &current_notes);
+                return Task::none();
             }
 
             let notebook_path = state.notebook_path().to_string();

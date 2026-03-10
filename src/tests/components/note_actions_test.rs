@@ -155,6 +155,21 @@ mod tests {
     }
 
     #[test]
+    fn no_op_move_preserves_existing_selection() {
+        let mut state = setup_state_with_notebook();
+        let notes = vec![note("a", &[]), note("b", &[])];
+        state.set_selected_note_path(Some("b".to_string()));
+
+        state.show_move_note_dialog("a".to_string());
+        state.update_move_note_path("a".to_string());
+
+        let _ = note_actions::handle_confirm_move_note(&mut state, notes);
+
+        assert_eq!(state.selected_note_path(), Some(&"b".to_string()));
+        assert!(!state.show_move_note_input());
+    }
+
+    #[test]
     fn explorer_and_visualizer_message_handlers_update_editor_state() {
         let mut state = setup_state_with_notebook();
         let mut explorer = NoteExplorer::new("dummy".to_string());
