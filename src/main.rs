@@ -1,27 +1,5 @@
-#[path = "configuration/reader.rs"]
 mod configuration;
-
-// Declare the components module with all the submodules
-mod components {
-    // Editor module and submodules
-    pub mod editor;
-    
-    // Note explorer module
-    pub mod note_explorer {
-        #[path = "../note_explorer/note_explorer.rs"]
-        pub mod note_explorer;
-        pub use self::note_explorer::NoteExplorer;
-        pub use self::note_explorer::Message;
-    }
-    
-    // Visualizer module
-    pub mod visualizer {
-        #[path = "../visualizer/visualizer.rs"]
-        pub mod visualizer;
-        pub use self::visualizer::Visualizer;
-        pub use self::visualizer::Message;
-    }
-}
+mod components;
 
 mod notebook;
 mod json;

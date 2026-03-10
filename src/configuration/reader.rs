@@ -1,7 +1,4 @@
-#[path = "../json/reader.rs"]
-mod json;
-
-use json::read_json_file;
+use crate::json::reader::read_json_file;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;

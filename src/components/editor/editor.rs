@@ -18,9 +18,7 @@ use crate::components::note_explorer::NoteExplorer;
 use crate::components::note_explorer;
 use crate::components::visualizer::Visualizer;
 use crate::components::visualizer;
-
-#[path = "../../configuration/theme.rs"]
-mod local_theme;
+use crate::configuration::theme;
 
 // Define the Message enum in this module
 #[derive(Debug, Clone)]
@@ -101,7 +99,7 @@ impl Editor {
             markdown_text: String::new(),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
-            theme: local_theme::convert_str_to_theme(flags.theme.clone()),
+            theme: theme::convert_str_to_theme(flags.theme.clone()),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
             visualizer: visualizer::Visualizer::new(),
         };
