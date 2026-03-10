@@ -121,98 +121,136 @@ impl Editor {
         (editor_instance, initial_command)
     }
 
-    // Update the update method to match the signature expected by iced::application
+    // Update method delegates to focused reducers by message domain.
     pub fn update(state: &mut Self, message: Message) -> Task<Message> {
         match message {
-            // Handle text editing operations
-            Message::HandleTabKey => {
-                return content_handler::handle_tab_key(
-                    &mut state.content, 
-                    &mut state.markdown_text, 
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(), 
-                    &state.state
-                );
-            },
-            Message::SelectAll => {
-                return content_handler::handle_select_all(
-                    &mut state.content,
-                    &state.state
-                );
-            },
-            Message::Undo => {
-                return undo_manager::handle_undo(
-                    &mut state.undo_manager,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state
-                );
-            },
-            Message::EditorAction(action) => {
-                return content_handler::handle_editor_action(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    action,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state
-                );
-            },
-            Message::ContentChanged(new_content) => {
-                return content_handler::handle_content_changed(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    &mut state.state,
-                    new_content
-                );
-            },
+            Message::HandleTabKey
+            | Message::SelectAll
+            | Message::Undo
+            | Message::EditorAction(_)
+            | Message::ContentChanged(_) => Self::handle_text_messages(state, message),
 
-            // Handle note explorer interactions
+            Message::NoteExplorerMessage(_) | Message::NoteSelected(_) => {
+                Self::handle_selection_messages(state, message)
+            }
+
+            Message::NewLabelInputChanged(_) | Message::AddLabel | Message::RemoveLabel(_) => {
+                Self::handle_label_messages(state, message)
+            }
+
+            Message::MetadataSaved(_) | Message::NoteContentSaved(_) => {
+                Self::handle_save_feedback_messages(message)
+            }
+
+            Message::ToggleVisualizer | Message::VisualizerMessage(_) => {
+                Self::handle_visualizer_messages(state, message)
+            }
+
+            Message::NewNote
+            | Message::NewNoteInputChanged(_)
+            | Message::CreateNote
+            | Message::CancelNewNote
+            | Message::NoteCreated(_)
+            | Message::DeleteNote
+            | Message::ConfirmDeleteNote(_)
+            | Message::NoteDeleted(_, _)
+            | Message::MoveNote
+            | Message::MoveNoteInputChanged(_)
+            | Message::ConfirmMoveNote
+            | Message::CancelMoveNote
+            | Message::NoteMoved(_, _) => Self::handle_note_lifecycle_messages(state, message),
+
+            Message::InitiateFolderRename(_) | Message::AboutButtonClicked => {
+                Self::handle_ui_messages(state, message)
+            }
+        }
+    }
+
+    fn handle_text_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
+            Message::HandleTabKey => content_handler::handle_tab_key(
+                &mut state.content,
+                &mut state.markdown_text,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            ),
+            Message::SelectAll => content_handler::handle_select_all(&mut state.content, &state.state),
+            Message::Undo => undo_manager::handle_undo(
+                &mut state.undo_manager,
+                &mut state.content,
+                &mut state.markdown_text,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            ),
+            Message::EditorAction(action) => content_handler::handle_editor_action(
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                action,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            ),
+            Message::ContentChanged(new_content) => content_handler::handle_content_changed(
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                &mut state.state,
+                new_content,
+            ),
+            _ => unreachable!("text handler received non-text message"),
+        }
+    }
+
+    fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
             Message::NoteExplorerMessage(note_explorer_message) => {
-                return note_actions::handle_note_explorer_message(
+                note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,
                     &mut state.visualizer,
                     &mut state.state,
                     &mut state.content,
                     &mut state.markdown_text,
-                    note_explorer_message
-                );
-            },
-            Message::NoteSelected(note_path) => {
-                return note_actions::handle_note_selected(
-                    &mut state.note_explorer,
-                    &mut state.undo_manager,
-                    &mut state.state,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    note_path
-                );
-            },
+                    note_explorer_message,
+                )
+            }
+            Message::NoteSelected(note_path) => note_actions::handle_note_selected(
+                &mut state.note_explorer,
+                &mut state.undo_manager,
+                &mut state.state,
+                &mut state.content,
+                &mut state.markdown_text,
+                note_path,
+            ),
+            _ => unreachable!("selection handler received invalid message"),
+        }
+    }
 
-            // Handle label management
+    fn handle_label_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
             Message::NewLabelInputChanged(text) => {
                 label_actions::handle_label_input_changed(&mut state.state, text);
                 Task::none()
-            },
-            Message::AddLabel => {
-                return label_actions::handle_add_label(
-                    &mut state.state,
-                    &mut state.note_explorer,
-                    &mut state.visualizer
-                );
-            },
-            Message::RemoveLabel(label) => {
-                return label_actions::handle_remove_label(
-                    &mut state.state,
-                    &mut state.note_explorer,
-                    &mut state.visualizer,
-                    label
-                );
-            },
+            }
+            Message::AddLabel => label_actions::handle_add_label(
+                &mut state.state,
+                &mut state.note_explorer,
+                &mut state.visualizer,
+            ),
+            Message::RemoveLabel(label) => label_actions::handle_remove_label(
+                &mut state.state,
+                &mut state.note_explorer,
+                &mut state.visualizer,
+                label,
+            ),
+            _ => unreachable!("label handler received invalid message"),
+        }
+    }
+
+    fn handle_save_feedback_messages(message: Message) -> Task<Message> {
+        match message {
             Message::MetadataSaved(result) => {
                 if let Err(_err) = result {
                     #[cfg(debug_assertions)]
@@ -222,9 +260,7 @@ impl Editor {
                     eprintln!("Metadata saved successfully.");
                 }
                 Task::none()
-            },
-
-            // Handle content management
+            }
             Message::NoteContentSaved(result) => {
                 if let Err(_err) = result {
                     #[cfg(debug_assertions)]
@@ -234,117 +270,114 @@ impl Editor {
                     eprintln!("Note content saved successfully.");
                 }
                 Task::none()
-            },
+            }
+            _ => unreachable!("save-feedback handler received invalid message"),
+        }
+    }
 
-            // Handle visualizer
+    fn handle_visualizer_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
             Message::ToggleVisualizer => {
                 state.state.toggle_visualizer();
-                
-                if state.state.show_visualizer() && !state.state.notebook_path().is_empty() {
-                    let _ = state.visualizer.update(visualizer::Message::UpdateNotes(
-                        state.note_explorer.notes.clone(),
-                    ));
-                }
-                
-                Task::none()
-            },
-            Message::VisualizerMessage(visualizer_message) => {
-                return note_actions::handle_visualizer_message(
-                    &mut state.visualizer,
-                    &mut state.note_explorer,
-                    &mut state.state,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    visualizer_message
-                );
-            },
 
-            // Handle note operations
+                if state.state.show_visualizer() && !state.state.notebook_path().is_empty() {
+                    let _ = state
+                        .visualizer
+                        .update(visualizer::Message::UpdateNotes(state.note_explorer.notes.clone()));
+                }
+
+                Task::none()
+            }
+            Message::VisualizerMessage(visualizer_message) => note_actions::handle_visualizer_message(
+                &mut state.visualizer,
+                &mut state.note_explorer,
+                &mut state.state,
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                visualizer_message,
+            ),
+            _ => unreachable!("visualizer handler received invalid message"),
+        }
+    }
+
+    fn handle_note_lifecycle_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
             Message::NewNote => {
                 state.state.show_new_note_dialog();
                 Task::none()
-            },
+            }
             Message::NewNoteInputChanged(text) => {
                 state.state.update_new_note_path(text);
                 Task::none()
-            },
+            }
             Message::CreateNote => {
-                return note_actions::handle_create_note(&mut state.state, state.note_explorer.notes.clone());
-            },
+                note_actions::handle_create_note(&mut state.state, state.note_explorer.notes.clone())
+            }
             Message::CancelNewNote => {
                 state.state.hide_new_note_dialog();
                 Task::none()
-            },
+            }
             Message::NoteCreated(result) => {
-                return note_actions::handle_note_created(result, &mut state.note_explorer);
-            },
-            Message::DeleteNote => {
-                return note_actions::handle_delete_note(&mut state.state);
-            },
-            Message::ConfirmDeleteNote(confirmed) => {
-                return note_actions::handle_confirm_delete_note(
-                    confirmed,
-                    &mut state.state,
-                    state.note_explorer.notes.clone()
-                );
-            },
-            Message::NoteDeleted(result, deleted_path) => {
-                return note_actions::handle_note_deleted(
-                    result,
-                    deleted_path,
-                    &mut state.state,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    &mut state.note_explorer
-                );
-            },
+                note_actions::handle_note_created(result, &mut state.note_explorer)
+            }
+            Message::DeleteNote => note_actions::handle_delete_note(&mut state.state),
+            Message::ConfirmDeleteNote(confirmed) => note_actions::handle_confirm_delete_note(
+                confirmed,
+                &mut state.state,
+                state.note_explorer.notes.clone(),
+            ),
+            Message::NoteDeleted(result, deleted_path) => note_actions::handle_note_deleted(
+                result,
+                deleted_path,
+                &mut state.state,
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                &mut state.note_explorer,
+            ),
             Message::MoveNote => {
                 if let Some(current_path) = state.state.selected_note_path() {
                     state.state.show_move_note_dialog(current_path.clone());
                 }
                 Task::none()
-            },
+            }
             Message::MoveNoteInputChanged(text) => {
                 state.state.update_move_note_path(text);
                 Task::none()
-            },
+            }
             Message::ConfirmMoveNote => {
-                return note_actions::handle_confirm_move_note(
-                    &mut state.state,
-                    state.note_explorer.notes.clone()
-                );
-            },
+                note_actions::handle_confirm_move_note(&mut state.state, state.note_explorer.notes.clone())
+            }
             Message::CancelMoveNote => {
                 state.state.hide_move_note_dialog();
-                let command = note_actions::get_select_note_command(
+                note_actions::get_select_note_command(
                     state.state.selected_note_path(),
-                    &state.note_explorer.notes
-                );
-                command
-            },
-            Message::NoteMoved(result, old_path) => {
-                return note_actions::handle_note_moved(
-                    result,
-                    old_path,
-                    &mut state.state,
-                    &mut state.undo_manager,
-                    &mut state.note_explorer
-                );
-            },
+                    &state.note_explorer.notes,
+                )
+            }
+            Message::NoteMoved(result, old_path) => note_actions::handle_note_moved(
+                result,
+                old_path,
+                &mut state.state,
+                &mut state.undo_manager,
+                &mut state.note_explorer,
+            ),
+            _ => unreachable!("note-lifecycle handler received invalid message"),
+        }
+    }
 
-            // Handle folder operations
+    fn handle_ui_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
             Message::InitiateFolderRename(folder_path) => {
                 state.state.show_rename_folder_dialog(folder_path);
                 Task::none()
-            },
-
-            // Handle UI interactions
+            }
             Message::AboutButtonClicked => {
                 state.state.toggle_about_info();
                 Task::none()
-            },
+            }
+            _ => unreachable!("ui handler received invalid message"),
         }
     }
 
