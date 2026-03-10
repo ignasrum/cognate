@@ -1,6 +1,15 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UiMode {
+    Editor,
+    Visualizer,
+    NewNoteDialog,
+    MoveNoteDialog,
+    About,
+}
+
 #[derive(Debug)]
 pub struct EditorState {
     // Core state
@@ -14,14 +23,11 @@ pub struct EditorState {
     // Text input states
     new_label_text: String,
     
-    // Dialog states
-    show_visualizer: bool,
-    show_new_note_input: bool,
+    // UI mode and dialog-specific state
+    ui_mode: UiMode,
     new_note_path_input: String,
-    show_move_note_input: bool,
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
-    show_about_info: bool,
     
     // Flag indicating if we're loading a new note
     loading_note: bool,
@@ -35,13 +41,10 @@ impl EditorState {
             selected_note_path: None,
             selected_note_labels: Vec::new(),
             new_label_text: String::new(),
-            show_visualizer: false,
-            show_new_note_input: false,
+            ui_mode: UiMode::Editor,
             new_note_path_input: String::new(),
-            show_move_note_input: false,
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
-            show_about_info: false,
             loading_note: false,
         }
     }
@@ -68,11 +71,11 @@ impl EditorState {
     }
     
     pub fn show_visualizer(&self) -> bool {
-        self.show_visualizer
+        self.ui_mode == UiMode::Visualizer
     }
     
     pub fn show_new_note_input(&self) -> bool {
-        self.show_new_note_input
+        self.ui_mode == UiMode::NewNoteDialog
     }
     
     pub fn new_note_path_input(&self) -> &str {
@@ -80,7 +83,7 @@ impl EditorState {
     }
     
     pub fn show_move_note_input(&self) -> bool {
-        self.show_move_note_input
+        self.ui_mode == UiMode::MoveNoteDialog
     }
     
     pub fn move_note_current_path(&self) -> Option<&String> {
@@ -92,7 +95,7 @@ impl EditorState {
     }
     
     pub fn show_about_info(&self) -> bool {
-        self.show_about_info
+        self.ui_mode == UiMode::About
     }
     
     pub fn is_loading_note(&self) -> bool {
@@ -101,7 +104,10 @@ impl EditorState {
     
     // Dialog state management
     pub fn is_any_dialog_open(&self) -> bool {
-        self.show_new_note_input || self.show_move_note_input || self.show_about_info
+        matches!(
+            self.ui_mode,
+            UiMode::NewNoteDialog | UiMode::MoveNoteDialog | UiMode::About
+        )
     }
     
     // Mutator methods
@@ -135,74 +141,65 @@ impl EditorState {
     
     // Dialog management
     pub fn toggle_visualizer(&mut self) {
-        self.show_visualizer = !self.show_visualizer;
-        
-        if self.show_visualizer {
-            self.show_new_note_input = false;
-            self.show_move_note_input = false;
-            self.show_about_info = false;
-        }
+        self.ui_mode = if self.ui_mode == UiMode::Visualizer {
+            UiMode::Editor
+        } else {
+            UiMode::Visualizer
+        };
     }
     
     pub fn toggle_about_info(&mut self) {
-        self.show_about_info = !self.show_about_info;
-        
-        if self.show_about_info {
-            self.show_visualizer = false;
-            self.show_new_note_input = false;
-            self.show_move_note_input = false;
-        }
+        self.ui_mode = if self.ui_mode == UiMode::About {
+            UiMode::Editor
+        } else {
+            UiMode::About
+        };
     }
     
     pub fn show_new_note_dialog(&mut self) {
         if !self.notebook_path.is_empty() {
-            self.show_new_note_input = true;
+            self.ui_mode = UiMode::NewNoteDialog;
             self.new_note_path_input = String::new();
-            self.show_visualizer = false;
-            self.show_move_note_input = false;
-            self.show_about_info = false;
         }
     }
     
     pub fn hide_new_note_dialog(&mut self) {
-        self.show_new_note_input = false;
+        if self.ui_mode == UiMode::NewNoteDialog {
+            self.ui_mode = UiMode::Editor;
+        }
         self.new_note_path_input = String::new();
     }
     
     pub fn update_new_note_path(&mut self, path: String) {
-        if self.show_new_note_input {
+        if self.show_new_note_input() {
             self.new_note_path_input = path;
         }
     }
     
     pub fn show_move_note_dialog(&mut self, current_path: String) {
-        self.show_new_note_input = false;
-        self.show_visualizer = false;
-        self.show_about_info = false;
-        self.show_move_note_input = true;
+        self.ui_mode = UiMode::MoveNoteDialog;
         self.move_note_current_path = Some(current_path.clone());
         self.move_note_new_path_input = current_path;
     }
     
     pub fn show_rename_folder_dialog(&mut self, folder_path: String) {
         if !self.notebook_path.is_empty() {
-            self.show_new_note_input = false;
-            self.show_visualizer = false;
-            self.show_about_info = false;
-            self.show_move_note_input = true;
+            self.ui_mode = UiMode::MoveNoteDialog;
             self.move_note_current_path = Some(folder_path.clone());
             self.move_note_new_path_input = folder_path;
         }
     }
     
     pub fn hide_move_note_dialog(&mut self) {
-        self.show_move_note_input = false;
+        if self.ui_mode == UiMode::MoveNoteDialog {
+            self.ui_mode = UiMode::Editor;
+        }
         self.move_note_current_path = None;
         self.move_note_new_path_input = String::new();
     }
     
     pub fn update_move_note_path(&mut self, path: String) {
-        if self.show_move_note_input {
+        if self.show_move_note_input() {
             self.move_note_new_path_input = path;
         }
     }
@@ -224,15 +221,27 @@ impl EditorState {
     
     // New mutator methods for private fields
     pub fn set_show_about_info(&mut self, show: bool) {
-        self.show_about_info = show;
+        if show {
+            self.ui_mode = UiMode::About;
+        } else if self.ui_mode == UiMode::About {
+            self.ui_mode = UiMode::Editor;
+        }
     }
     
     pub fn set_show_new_note_input(&mut self, show: bool) {
-        self.show_new_note_input = show;
+        if show {
+            self.ui_mode = UiMode::NewNoteDialog;
+        } else if self.ui_mode == UiMode::NewNoteDialog {
+            self.ui_mode = UiMode::Editor;
+        }
     }
     
     pub fn set_show_visualizer(&mut self, show: bool) {
-        self.show_visualizer = show;
+        if show {
+            self.ui_mode = UiMode::Visualizer;
+        } else if self.ui_mode == UiMode::Visualizer {
+            self.ui_mode = UiMode::Editor;
+        }
     }
 }
 
