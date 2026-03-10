@@ -457,10 +457,7 @@ pub fn handle_note_deleted(
             eprintln!("Failed to delete note: {}", _err);
             // Clone _err to be used in the async move block
             let error_message = _err.clone();
-            
-            // Create a final cloned copy for the callback closure
-            let error_msg_for_callback = error_message.clone();
-            
+
             let dialog_command = Task::perform(
                 async move {
                     let _ = MessageDialog::new()
@@ -469,12 +466,9 @@ pub fn handle_note_deleted(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                move |_| Message::NoteDeleted(Err(error_msg_for_callback.clone())),
+                |_| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
             );
-            let reload_command = note_explorer
-                .update(note_explorer::Message::LoadNotes)
-                .map(|msg| Message::NoteExplorerMessage(msg));
-            Task::batch(vec![dialog_command, reload_command])
+            dialog_command
         }
     }
 }
@@ -500,7 +494,7 @@ pub fn handle_confirm_move_note(
                             .set_text("New path cannot be empty.")
                             .show_alert();
                     },
-                    |()| Message::NoteMoved(Err(String::new())),
+                    |()| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
                 );
                 return dialog_command;
             }
@@ -568,10 +562,7 @@ pub fn handle_note_moved(
             
             // Clone _err to be used in the async move block
             let error_message = _err.clone();
-            
-            // Create a final cloned copy for the callback closure
-            let error_msg_for_callback = error_message.clone();
-            
+
             let dialog_command = Task::perform(
                 async move {
                     let _ = MessageDialog::new()
@@ -580,12 +571,9 @@ pub fn handle_note_moved(
                         .set_text(&error_message)
                         .show_alert();
                 },
-                move |_| Message::NoteMoved(Err(error_msg_for_callback.clone())),
+                |_| Message::NoteExplorerMessage(note_explorer::Message::LoadNotes),
             );
-            let reload_command = note_explorer
-                .update(note_explorer::Message::LoadNotes)
-                .map(|msg| Message::NoteExplorerMessage(msg));
-            Task::batch(vec![dialog_command, reload_command])
+            dialog_command
         }
     }
 }

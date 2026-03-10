@@ -1,0 +1,329 @@
+#[cfg(test)]
+mod tests {
+    use crate::notebook::{self, NoteMetadata};
+    use std::fs;
+    use std::future::Future;
+    use std::path::{Path, PathBuf};
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct NoopWaker;
+
+    impl Wake for NoopWaker {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(NoopWaker));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Pin::from(Box::new(future));
+
+        loop {
+            match Future::poll(future.as_mut(), &mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    struct TestNotebookDir {
+        path: PathBuf,
+    }
+
+    impl TestNotebookDir {
+        fn new(name: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("System clock error")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "cognate_test_{}_{}_{}",
+                name,
+                std::process::id(),
+                unique
+            ));
+            fs::create_dir_all(&path).expect("Failed to create temporary notebook directory");
+            Self { path }
+        }
+
+        fn as_str(&self) -> &str {
+            self.path.to_str().expect("Temporary path must be valid UTF-8")
+        }
+    }
+
+    impl Drop for TestNotebookDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn assert_note_md_exists(notebook: &TestNotebookDir, rel_path: &str) {
+        let note_path = Path::new(notebook.as_str()).join(rel_path).join("note.md");
+        assert!(
+            note_path.exists(),
+            "Expected note file to exist at '{}'",
+            note_path.display()
+        );
+    }
+
+    fn assert_note_md_not_exists(notebook: &TestNotebookDir, rel_path: &str) {
+        let note_path = Path::new(notebook.as_str()).join(rel_path).join("note.md");
+        assert!(
+            !note_path.exists(),
+            "Expected note file to be absent at '{}'",
+            note_path.display()
+        );
+    }
+
+    #[test]
+    fn create_new_note_creates_file_and_metadata() {
+        let notebook_dir = TestNotebookDir::new("create_note");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let created = block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "work/todo",
+            &mut notes,
+        ))
+        .expect("create_new_note should succeed");
+
+        assert_eq!(created.rel_path, "work/todo");
+        assert_eq!(notes.len(), 1);
+        assert_note_md_exists(&notebook_dir, "work/todo");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].rel_path, "work/todo");
+    }
+
+    #[test]
+    fn create_new_note_rejects_invalid_relative_path() {
+        let notebook_dir = TestNotebookDir::new("invalid_path");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let result = block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "../outside",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn create_new_note_rejects_duplicate_metadata_path() {
+        let notebook_dir = TestNotebookDir::new("duplicate_note");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "dup/note",
+            &mut notes,
+        ))
+        .expect("Initial note creation should succeed");
+
+        let duplicate = block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "dup/note",
+            &mut notes,
+        ));
+
+        assert!(duplicate.is_err());
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn delete_note_removes_file_and_metadata() {
+        let notebook_dir = TestNotebookDir::new("delete_note");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "alpha",
+            &mut notes,
+        ))
+        .expect("Failed to create alpha");
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "beta",
+            &mut notes,
+        ))
+        .expect("Failed to create beta");
+
+        block_on(notebook::delete_note(notebook_dir.as_str(), "alpha", &mut notes))
+            .expect("delete_note should succeed");
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].rel_path, "beta");
+        assert_note_md_not_exists(&notebook_dir, "alpha");
+        assert_note_md_exists(&notebook_dir, "beta");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].rel_path, "beta");
+    }
+
+    #[test]
+    fn delete_note_removes_filesystem_item_even_if_missing_from_metadata() {
+        let notebook_dir = TestNotebookDir::new("delete_without_metadata");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let external_note_dir = Path::new(notebook_dir.as_str()).join("external/note");
+        fs::create_dir_all(&external_note_dir).expect("Failed to create external note directory");
+        fs::write(external_note_dir.join("note.md"), "externally created")
+            .expect("Failed to create external note file");
+
+        block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "external/note",
+            &mut notes,
+        ))
+        .expect("Deletion should succeed even when metadata entry is missing");
+
+        assert_note_md_not_exists(&notebook_dir, "external/note");
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn move_note_moves_files_and_updates_metadata() {
+        let notebook_dir = TestNotebookDir::new("move_note");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "old/path",
+            &mut notes,
+        ))
+        .expect("Failed to create note for move");
+
+        let moved_to = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "old/path",
+            "new/path",
+            &mut notes,
+        ))
+        .expect("move_note should succeed");
+
+        assert_eq!(moved_to, "new/path");
+        assert_note_md_not_exists(&notebook_dir, "old/path");
+        assert_note_md_exists(&notebook_dir, "new/path");
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].rel_path, "new/path");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].rel_path, "new/path");
+    }
+
+    #[test]
+    fn move_note_fails_when_target_exists() {
+        let notebook_dir = TestNotebookDir::new("move_target_exists");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "source/note",
+            &mut notes,
+        ))
+        .expect("Failed to create source note");
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "target/note",
+            &mut notes,
+        ))
+        .expect("Failed to create target note");
+
+        let result = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "source/note",
+            "target/note",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert_note_md_exists(&notebook_dir, "source/note");
+        assert_note_md_exists(&notebook_dir, "target/note");
+    }
+
+    #[test]
+    fn save_note_content_creates_parent_directories_and_persists_text() {
+        let notebook_dir = TestNotebookDir::new("save_content");
+
+        block_on(notebook::save_note_content(
+            notebook_dir.as_str().to_string(),
+            "new/note".to_string(),
+            "hello from test".to_string(),
+        ))
+        .expect("save_note_content should succeed");
+
+        let content = fs::read_to_string(
+            Path::new(notebook_dir.as_str())
+                .join("new/note")
+                .join("note.md"),
+        )
+        .expect("Failed to read saved note content");
+
+        assert_eq!(content, "hello from test");
+    }
+
+    #[test]
+    fn load_notes_metadata_returns_empty_for_invalid_json() {
+        let notebook_dir = TestNotebookDir::new("invalid_metadata");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json"),
+            "{ not_valid_json ",
+        )
+        .expect("Failed to write invalid metadata");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn move_folder_updates_nested_note_paths() {
+        let notebook_dir = TestNotebookDir::new("move_folder");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "folder/note_a",
+            &mut notes,
+        ))
+        .expect("Failed to create folder/note_a");
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "folder/sub/note_b",
+            &mut notes,
+        ))
+        .expect("Failed to create folder/sub/note_b");
+
+        let moved_to = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "folder",
+            "renamed",
+            &mut notes,
+        ))
+        .expect("move_note for folder should succeed");
+
+        assert_eq!(moved_to, "renamed");
+        assert_note_md_not_exists(&notebook_dir, "folder/note_a");
+        assert_note_md_not_exists(&notebook_dir, "folder/sub/note_b");
+        assert_note_md_exists(&notebook_dir, "renamed/note_a");
+        assert_note_md_exists(&notebook_dir, "renamed/sub/note_b");
+
+        let mut rel_paths: Vec<String> = notes.iter().map(|n| n.rel_path.clone()).collect();
+        rel_paths.sort();
+        assert_eq!(
+            rel_paths,
+            vec![
+                "renamed/note_a".to_string(),
+                "renamed/sub/note_b".to_string()
+            ]
+        );
+    }
+}
