@@ -18,6 +18,142 @@ pub struct NotebookMetadata {
     pub notes: Vec<NoteMetadata>,
 }
 
+fn validate_notebook_relative_path(
+    rel_path: &str,
+    path_kind: &str,
+) -> Result<(), String> {
+    if rel_path.is_empty()
+        || rel_path == "."
+        || rel_path == ".."
+        || rel_path.starts_with('/')
+        || rel_path.contains("..")
+    {
+        return Err(format!(
+            "Invalid {} '{}'. Paths cannot be empty, '.', '..', start with '/', or contain '..'.",
+            path_kind, rel_path
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_path_within_notebook_if_canonicalizable(
+    notebook_path: &Path,
+    target_path: &Path,
+    rel_path: &str,
+    outside_error_prefix: &str,
+    target_canonicalize_warning: &str,
+) -> Result<(), String> {
+    if let Ok(canonical_notebook_path) = notebook_path.canonicalize() {
+        if let Ok(canonical_target_path) = target_path.canonicalize() {
+            if !canonical_target_path.starts_with(&canonical_notebook_path) {
+                return Err(format!("{} '{}'", outside_error_prefix, rel_path));
+            }
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("{}", target_canonicalize_warning);
+        }
+    } else {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
+            notebook_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn remove_note_from_metadata(
+    notes: &mut Vec<NoteMetadata>,
+    rel_path: &str,
+) -> bool {
+    if let Some(index) = notes.iter().position(|note| note.rel_path == rel_path) {
+        notes.remove(index);
+        true
+    } else {
+        false
+    }
+}
+
+fn update_metadata_paths_for_move(
+    notes: &mut [NoteMetadata],
+    current_rel_path: &str,
+    new_rel_path: &str,
+    is_moving_note_dir: bool,
+) -> bool {
+    let mut updated_metadata = false;
+
+    if is_moving_note_dir {
+        if let Some(note) = notes
+            .iter_mut()
+            .find(|note| note.rel_path == current_rel_path)
+        {
+            note.rel_path = new_rel_path.to_string();
+            updated_metadata = true;
+        }
+    } else {
+        let old_prefix = if current_rel_path.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", current_rel_path)
+        };
+
+        let new_prefix = if new_rel_path.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", new_rel_path)
+        };
+
+        for note in notes.iter_mut() {
+            if note.rel_path.starts_with(&old_prefix) {
+                let suffix = note.rel_path.trim_start_matches(&old_prefix);
+                note.rel_path = format!("{}{}", new_prefix, suffix);
+                updated_metadata = true;
+            } else if note.rel_path == current_rel_path && !current_rel_path.is_empty() {
+                note.rel_path = new_rel_path.to_string();
+                updated_metadata = true;
+            }
+        }
+    }
+
+    updated_metadata
+}
+
+fn persist_metadata_if_changed(
+    notebook_path: &str,
+    notes: &[NoteMetadata],
+    metadata_changed: bool,
+    operation_description: &str,
+    rel_path: &str,
+) -> Result<(), String> {
+    if metadata_changed {
+        if let Err(e) = save_metadata(notebook_path, notes) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Critical Error: Failed to save metadata after {}: {}",
+                operation_description, e
+            );
+            return Err(format!(
+                "Failed to save metadata after {}: {}",
+                operation_description, e
+            ));
+        }
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Metadata saved successfully after {}.",
+            operation_description
+        );
+    } else {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "No relevant metadata found or updated for '{}', skipping metadata save.",
+            rel_path
+        );
+    }
+
+    Ok(())
+}
+
 // The save_metadata function also lives here
 pub fn save_metadata(
     notebook_path: &str,
@@ -141,47 +277,21 @@ pub async fn create_new_note(
 ) -> Result<NoteMetadata, String> {
     #[cfg(debug_assertions)]
     eprintln!("Attempting to create new note with rel_path: {}", rel_path);
-    let note_dir_path = Path::new(notebook_path).join(rel_path);
-    let note_file_path = note_dir_path.join("note.md");
     let full_notebook_path = Path::new(notebook_path);
+    let note_dir_path = full_notebook_path.join(rel_path);
+    let note_file_path = note_dir_path.join("note.md");
 
-    // Basic validation for the new path
-    if rel_path.is_empty()
-        || rel_path == "."
-        || rel_path == ".."
-        || rel_path.starts_with('/')
-        || rel_path.contains("..")
-    {
-        return Err(format!(
-            "Invalid relative path '{}'. Paths cannot be empty, '.', '..', start with '/', or contain '..'.",
+    validate_notebook_relative_path(rel_path, "relative path")?;
+    ensure_path_within_notebook_if_canonicalizable(
+        full_notebook_path,
+        &note_dir_path,
+        rel_path,
+        "Cannot create note outside the notebook directory:",
+        &format!(
+            "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
             rel_path
-        ));
-    }
-
-    // Ensure the new path is within the notebook directory after canonicalization
-    if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
-        if let Ok(canonical_note_dir_path) = Path::new(notebook_path).join(rel_path).canonicalize()
-        {
-            if !canonical_note_dir_path.starts_with(&canonical_notebook_path) {
-                return Err(format!(
-                    "Cannot create note outside the notebook directory: '{}'",
-                    rel_path
-                ));
-            }
-        } else {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
-                rel_path
-            );
-        }
-    } else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Warning: Could not canonicalize notebook path '{}'. Skipping thorough path validation.",
-            notebook_path
-        );
-    }
+        ),
+    )?;
 
     // Check if a note with the same relative path already exists in metadata
     if notes.iter().any(|note| note.rel_path == rel_path) {
@@ -292,18 +402,15 @@ pub async fn delete_note(
         );
     }
 
-    // Find the note in the metadata
-    let note_index = notes.iter().position(|note| note.rel_path == rel_path);
+    let metadata_changed = remove_note_from_metadata(notes, rel_path);
 
-    if note_index.is_none() {
+    if !metadata_changed {
         #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Note with rel_path '{}' not found in metadata. Proceeding with filesystem deletion only.",
             rel_path
         );
         // If not found in metadata, we still attempt to delete the directory on disk
-    } else {
-        notes.remove(note_index.unwrap());
     }
 
     // Attempt to delete the note directory recursively
@@ -330,30 +437,13 @@ pub async fn delete_note(
         );
     }
 
-    // Save the updated metadata file ONLY IF metadata was initially found
-    if note_index.is_some() {
-        if let Err(e) = save_metadata(notebook_path, notes) {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Critical Error: Failed to save metadata after deleting note: {}",
-                e
-            );
-            // Note: File system action succeeded, but metadata save failed.
-            // This leaves the state inconsistent. Recovery would be complex.
-            return Err(format!(
-                "Failed to save metadata after deleting item: {}",
-                e
-            ));
-        }
-        #[cfg(debug_assertions)]
-        eprintln!("Metadata saved successfully after deleting item.");
-    } else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Metadata was already absent for '{}', skipping metadata save.",
-            rel_path
-        );
-    }
+    persist_metadata_if_changed(
+        notebook_path,
+        notes,
+        metadata_changed,
+        "deleting item",
+        rel_path,
+    )?;
 
     #[cfg(debug_assertions)]
     eprintln!("Deletion process completed for: {}", rel_path);
@@ -379,18 +469,7 @@ pub async fn move_note(
 
     // --- Validation ---
 
-    // Basic validation for the new path
-    if new_rel_path.is_empty()
-        || new_rel_path == "."
-        || new_rel_path == ".."
-        || new_rel_path.starts_with('/')
-        || new_rel_path.contains("..")
-    {
-        return Err(format!(
-            "Invalid new relative path '{}'. Paths cannot be empty, '.', '..', start with '/', or contain '..'.",
-            new_rel_path
-        ));
-    }
+    validate_notebook_relative_path(new_rel_path, "new relative path")?;
 
     // Ensure the current path exists on the filesystem
     if !current_fs_path.exists() {
@@ -416,28 +495,16 @@ pub async fn move_note(
             ));
         }
 
-        if let Ok(canonical_new_path) = new_fs_path.canonicalize() {
-            // The new path might not exist yet, so canonicalize might fail.
-            // If it succeeds, ensure it's within the notebook path.
-            if canonical_new_path.exists()
-                && !canonical_new_path.starts_with(&canonical_notebook_path)
-            {
-                return Err(format!(
-                    "Cannot move/rename item to path outside the notebook directory: '{}'",
-                    new_rel_path
-                ));
-            }
-        } else {
-            // If canonicalize of new path fails, it might be because the path doesn't exist (which is fine).
-            // We'll do a simpler check to see if the path formed by joining notebook_path and new_rel_path
-            // would resolve to something outside the notebook root, but this is tricky without canonicalize.
-            // For now, we'll rely on the filesystem rename failing if the target is invalid.
-            #[cfg(debug_assertions)]
-            eprintln!(
+        ensure_path_within_notebook_if_canonicalizable(
+            full_notebook_path,
+            &new_fs_path,
+            new_rel_path,
+            "Cannot move/rename item to path outside the notebook directory:",
+            &format!(
                 "Warning: Could not canonicalize new item path '{}'. Proceeding with move attempt, but this might indicate a path issue.",
                 new_rel_path
-            );
-        }
+            ),
+        )?;
     } else {
         #[cfg(debug_assertions)]
         eprintln!(
@@ -509,23 +576,21 @@ pub async fn move_note(
 
     // --- Metadata Update ---
 
-    // Update the relative paths in the notes vector
-    let mut updated_metadata = false;
-
     // Check if the current path corresponds to a note directory (contains note.md)
     let is_moving_note_dir = Path::new(notebook_path)
         .join(current_rel_path)
         .join("note.md")
         .exists();
 
+    let updated_metadata = update_metadata_paths_for_move(
+        notes,
+        current_rel_path,
+        new_rel_path,
+        is_moving_note_dir,
+    );
+
     if is_moving_note_dir {
-        // If moving a single note directory, update its path if found in metadata
-        if let Some(note) = notes
-            .iter_mut()
-            .find(|note| note.rel_path == current_rel_path)
-        {
-            note.rel_path = new_rel_path.to_string();
-            updated_metadata = true;
+        if updated_metadata {
             #[cfg(debug_assertions)]
             eprintln!("Updated metadata for the moved note.");
         } else {
@@ -535,68 +600,18 @@ pub async fn move_note(
                 current_rel_path
             );
         }
-    } else {
-        // Assume it's a folder move/rename, update paths of notes within it
-        let old_prefix = if current_rel_path.is_empty() {
-            // Moving the root? (Shouldn't happen with current UI, but defensive)
-            String::new()
-        } else {
-            format!("{}/", current_rel_path)
-        };
-
-        let new_prefix = if new_rel_path.is_empty() {
-            // Moving to root?
-            String::new()
-        } else {
-            format!("{}/", new_rel_path)
-        };
-
-        for note in notes.iter_mut() {
-            if note.rel_path.starts_with(&old_prefix) {
-                let suffix = note.rel_path.trim_start_matches(&old_prefix);
-                note.rel_path = format!("{}{}", new_prefix, suffix);
-                updated_metadata = true;
-            } else if note.rel_path == current_rel_path && !current_rel_path.is_empty() {
-                // Handle the edge case where the current_rel_path itself IS a note path
-                note.rel_path = new_rel_path.to_string();
-                updated_metadata = true;
-            }
-        }
-        if updated_metadata {
-            #[cfg(debug_assertions)]
-            eprintln!("Updated metadata for notes within the moved/renamed folder.");
-        } else {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "No relevant metadata found or updated for '{}', skipping metadata save.",
-                current_rel_path
-            );
-        }
+    } else if updated_metadata {
+        #[cfg(debug_assertions)]
+        eprintln!("Updated metadata for notes within the moved/renamed folder.");
     }
 
-    // Save the updated metadata file ONLY IF any metadata was updated
-    if updated_metadata {
-        if let Err(e) = save_metadata(notebook_path, notes) {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Critical Error: Failed to save metadata after moving/renaming: {}",
-                e
-            );
-            // File system action succeeded, but metadata save failed. Leaves inconsistent state.
-            return Err(format!(
-                "Failed to save metadata after moving/renaming: {}",
-                e
-            ));
-        }
-        #[cfg(debug_assertions)]
-        eprintln!("Metadata saved successfully after moving/renaming.");
-    } else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "No relevant metadata found or updated for '{}', skipping metadata save.",
-            current_rel_path
-        );
-    }
+    persist_metadata_if_changed(
+        notebook_path,
+        notes,
+        updated_metadata,
+        "moving/renaming",
+        current_rel_path,
+    )?;
 
     #[cfg(debug_assertions)]
     eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
