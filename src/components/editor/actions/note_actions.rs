@@ -12,6 +12,70 @@ use crate::components::visualizer::Visualizer;
 use crate::components::visualizer;
 use crate::notebook::{self, NoteMetadata};
 
+fn handle_note_selection_internal(
+    note_explorer: &mut NoteExplorer,
+    undo_manager: &mut UndoManager,
+    state: &mut EditorState,
+    note_path: String,
+    hide_visualizer: bool,
+) -> Task<Message> {
+    state.set_selected_note_path(Some(note_path.clone()));
+    state.clear_new_label_text();
+    state.hide_move_note_dialog();
+    if hide_visualizer {
+        state.set_show_visualizer(false);
+    }
+    state.set_show_new_note_input(false);
+    state.set_show_about_info(false);
+
+    undo_manager.initialize_history(&note_path);
+
+    if let Some(note) = note_explorer
+        .notes
+        .iter()
+        .find(|n| n.rel_path == note_path)
+    {
+        state.set_selected_note_labels(note.labels.clone());
+    } else {
+        state.set_selected_note_labels(Vec::new());
+    }
+
+    let mut commands = vec![
+        note_explorer
+            .update(note_explorer::Message::CollapseAllAndExpandToNote(
+                note_path.clone(),
+            ))
+            .map(|msg| Message::NoteExplorerMessage(msg)),
+    ];
+
+    if !state.show_visualizer() && !state.notebook_path().is_empty() {
+        state.set_loading_note(true);
+
+        #[cfg(debug_assertions)]
+        eprintln!("Setting loading_note flag to true for note '{}'", note_path);
+
+        let notebook_path = state.notebook_path().to_string();
+        let selected_note_path = note_path;
+
+        commands.push(Task::perform(
+            async move {
+                let full_note_path = format!("{}/{}/note.md", notebook_path, selected_note_path);
+                match std::fs::read_to_string(full_note_path) {
+                    Ok(content) => content,
+                    Err(_err) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to read note file for editor: {}", _err);
+                        String::new()
+                    }
+                }
+            },
+            Message::ContentChanged,
+        ));
+    }
+
+    Task::batch(commands)
+}
+
 // Handle note explorer messages
 pub fn handle_note_explorer_message(
     note_explorer: &mut NoteExplorer,
@@ -96,69 +160,8 @@ pub fn handle_note_selected(
         "Editor: NoteSelected message received for path: {}",
         note_path
     );
-    
-    state.set_selected_note_path(Some(note_path.clone()));
-    state.clear_new_label_text();
-    state.hide_move_note_dialog();
-    
-    // Don't directly access private fields
-    state.set_show_about_info(false);
-    state.set_show_new_note_input(false);
-    
-    // Initialize history for this note
-    undo_manager.initialize_history(&note_path);
 
-    if let Some(note) = note_explorer
-        .notes
-        .iter()
-        .find(|n| n.rel_path == note_path)
-    {
-        state.set_selected_note_labels(note.labels.clone());
-    } else {
-        state.set_selected_note_labels(Vec::new());
-    }
-
-    let mut commands = Vec::new();
-
-    // Send the message to collapse all and then expand to the selected note
-    commands.push(
-        note_explorer
-            .update(note_explorer::Message::CollapseAllAndExpandToNote(
-                note_path.clone(),
-            ))
-            .map(|msg| Message::NoteExplorerMessage(msg)),
-    );
-
-    if !state.show_visualizer() && !state.notebook_path().is_empty() {
-        // Set loading flag before requesting content for the new note
-        state.set_loading_note(true);
-        
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Setting loading_note flag to true for note '{}'",
-            note_path
-        );
-        
-        let notebook_path = state.notebook_path().to_string();
-        let note_path_clone = note_path;
-
-        commands.push(Task::perform(
-            async move {
-                let full_note_path = format!("{}/{}/note.md", notebook_path, note_path_clone);
-                match std::fs::read_to_string(full_note_path) {
-                    Ok(content) => content,
-                    Err(_err) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to read note file for editor: {}", _err);
-                        String::new()
-                    }
-                }
-            },
-            Message::ContentChanged,
-        ));
-    }
-
-    Task::batch(commands)
+    handle_note_selection_internal(note_explorer, undo_manager, state, note_path, false)
 }
 
 // Handle visualizer messages
@@ -194,70 +197,13 @@ pub fn handle_visualizer_message(
                 note_path
             );
             
-            // Trigger the logic to select the note in the editor
-            state.set_selected_note_path(Some(note_path.clone()));
-            state.clear_new_label_text();
-            state.hide_move_note_dialog();
-            state.set_show_visualizer(false); // Use setter instead of direct field access
-            state.set_show_new_note_input(false);
-            state.set_show_about_info(false);
-
-            // Initialize history for this note
-            undo_manager.initialize_history(&note_path);
-
-            if let Some(note) = note_explorer
-                .notes
-                .iter()
-                .find(|n| n.rel_path == note_path)
-            {
-                state.set_selected_note_labels(note.labels.clone());
-            } else {
-                state.set_selected_note_labels(Vec::new());
-            }
-
-            // Commands to update the note explorer and load content
-            commands_to_return.push(
-                note_explorer
-                    .update(note_explorer::Message::CollapseAllAndExpandToNote(
-                        note_path.clone(),
-                    ))
-                    .map(|msg| Message::NoteExplorerMessage(msg)),
-            );
-
-            if !state.show_visualizer() && !state.notebook_path().is_empty() {
-                // Set loading flag before requesting content for the new note
-                state.set_loading_note(true);
-                
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Setting loading_note flag to true for note '{}' from visualizer",
-                    note_path
-                );
-                
-                let notebook_path_clone = state.notebook_path().to_string();
-                let note_path_clone = note_path.clone();
-
-                commands_to_return.push(Task::perform(
-                    async move {
-                        let full_note_path = format!(
-                            "{}/{}/note.md",
-                            notebook_path_clone, note_path_clone
-                        );
-                        match std::fs::read_to_string(full_note_path) {
-                            Ok(content) => content,
-                            Err(_err) => {
-                                #[cfg(debug_assertions)]
-                                eprintln!(
-                                    "Failed to read note file for editor: {}",
-                                    _err
-                                );
-                                String::new()
-                            }
-                        }
-                    },
-                    Message::ContentChanged,
-                ));
-            }
+            commands_to_return.push(handle_note_selection_internal(
+                note_explorer,
+                undo_manager,
+                state,
+                note_path,
+                true,
+            ));
         }
     }
     
