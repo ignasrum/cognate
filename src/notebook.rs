@@ -3,7 +3,8 @@ use serde_json;
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +153,23 @@ fn persist_metadata_if_changed(
     }
 
     Ok(())
+}
+
+fn build_transaction_staging_path(
+    notebook_path: &Path,
+    rel_path: &str,
+    operation: &str,
+) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let sanitized_rel_path = rel_path.replace('/', "__");
+
+    notebook_path.join(format!(
+        ".cognate_txn_{}_{}_{}",
+        operation, sanitized_rel_path, timestamp
+    ))
 }
 
 // The save_metadata function also lives here
@@ -329,6 +347,8 @@ pub async fn create_new_note(
         labels: Vec::new(),
     };
 
+    let previous_notes = notes.clone();
+
     // Add the new note metadata to the in-memory notes vector
     notes.push(new_note_metadata.clone());
 
@@ -339,8 +359,15 @@ pub async fn create_new_note(
             "Critical Error: Failed to save metadata after creating note: {}",
             e
         );
-        // Attempt to clean up the filesystem changes to avoid inconsistency
-        let _ = fs::remove_dir_all(&note_dir_path);
+        // Roll back in-memory metadata and filesystem changes to avoid inconsistency.
+        *notes = previous_notes;
+        let cleanup_result = fs::remove_dir_all(&note_dir_path);
+        if let Err(cleanup_error) = cleanup_result {
+            return Err(format!(
+                "Failed to save metadata after creating note: {}. Rollback cleanup failed: {}",
+                e, cleanup_error
+            ));
+        }
         return Err(format!(
             "Failed to save metadata after creating note: {}",
             e
@@ -402,6 +429,7 @@ pub async fn delete_note(
         );
     }
 
+    let previous_notes = notes.clone();
     let metadata_changed = remove_note_from_metadata(notes, rel_path);
 
     if !metadata_changed {
@@ -413,20 +441,30 @@ pub async fn delete_note(
         // If not found in metadata, we still attempt to delete the directory on disk
     }
 
-    // Attempt to delete the note directory recursively
+    let mut staged_delete_path: Option<PathBuf> = None;
+
+    // Stage deletion by renaming first so we can roll back if metadata persistence fails.
     if note_dir_path.exists() {
-        if let Err(e) = fs::remove_dir_all(&note_dir_path) {
+        let transaction_path =
+            build_transaction_staging_path(full_notebook_path, rel_path, "delete");
+
+        if let Err(e) = fs::rename(&note_dir_path, &transaction_path) {
             #[cfg(debug_assertions)]
             eprintln!(
-                "Error deleting directory {}: {}",
+                "Error staging directory {} for deletion: {}",
                 note_dir_path.display(),
                 e
             );
-            return Err(format!("Failed to delete item on filesystem: {}", e));
+            return Err(format!(
+                "Failed to stage item for deletion on filesystem: {}",
+                e
+            ));
         }
+
+        staged_delete_path = Some(transaction_path);
         #[cfg(debug_assertions)]
         eprintln!(
-            "Item deleted successfully from filesystem: {}",
+            "Item staged successfully for deletion on filesystem: {}",
             note_dir_path.display()
         );
     } else {
@@ -437,13 +475,37 @@ pub async fn delete_note(
         );
     }
 
-    persist_metadata_if_changed(
+    if let Err(metadata_error) = persist_metadata_if_changed(
         notebook_path,
         notes,
         metadata_changed,
         "deleting item",
         rel_path,
-    )?;
+    ) {
+        *notes = previous_notes;
+
+        if let Some(staged_path) = staged_delete_path {
+            if let Err(rollback_error) = fs::rename(&staged_path, &note_dir_path) {
+                return Err(format!(
+                    "{} Rollback failed while restoring filesystem state: {}",
+                    metadata_error, rollback_error
+                ));
+            }
+        }
+
+        return Err(metadata_error);
+    }
+
+    if let Some(staged_path) = staged_delete_path {
+        if let Err(e) = fs::remove_dir_all(&staged_path) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Metadata commit succeeded, but failed to finalize staged deletion '{}': {}",
+                staged_path.display(),
+                e
+            );
+        }
+    }
 
     #[cfg(debug_assertions)]
     eprintln!("Deletion process completed for: {}", rel_path);
@@ -559,6 +621,8 @@ pub async fn move_note(
     }
 
     // Perform the actual move/rename
+    let previous_notes = notes.clone();
+
     #[cfg(debug_assertions)]
     eprintln!(
         "Attempting filesystem rename from '{}' to '{}'",
@@ -605,13 +669,22 @@ pub async fn move_note(
         eprintln!("Updated metadata for notes within the moved/renamed folder.");
     }
 
-    persist_metadata_if_changed(
+    if let Err(metadata_error) = persist_metadata_if_changed(
         notebook_path,
         notes,
         updated_metadata,
         "moving/renaming",
         current_rel_path,
-    )?;
+    ) {
+        *notes = previous_notes;
+        if let Err(rollback_error) = fs::rename(&new_fs_path, &current_fs_path) {
+            return Err(format!(
+                "{} Rollback failed while restoring filesystem state: {}",
+                metadata_error, rollback_error
+            ));
+        }
+        return Err(metadata_error);
+    }
 
     #[cfg(debug_assertions)]
     eprintln!("Move/Rename process completed. New path: {}", new_rel_path);

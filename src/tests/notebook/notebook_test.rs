@@ -250,6 +250,85 @@ mod tests {
     }
 
     #[test]
+    fn create_new_note_rolls_back_when_metadata_save_fails() {
+        let notebook_dir = TestNotebookDir::new("create_rollback_metadata_failure");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to create metadata.json directory trap");
+
+        let result = block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "rollback/create",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert!(notes.is_empty(), "In-memory metadata should be rolled back");
+        assert_note_md_not_exists(&notebook_dir, "rollback/create");
+        assert!(
+            !Path::new(notebook_dir.as_str()).join("rollback/create").exists(),
+            "Created note directory should be rolled back on metadata failure"
+        );
+    }
+
+    #[test]
+    fn delete_note_rolls_back_when_metadata_save_fails() {
+        let notebook_dir = TestNotebookDir::new("delete_rollback_metadata_failure");
+        let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
+            rel_path: "rollback/delete".to_string(),
+            labels: Vec::new(),
+        }];
+
+        let note_dir = Path::new(notebook_dir.as_str()).join("rollback/delete");
+        fs::create_dir_all(&note_dir).expect("Failed to create note directory");
+        fs::write(note_dir.join("note.md"), "rollback")
+            .expect("Failed to create note file");
+        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to create metadata.json directory trap");
+
+        let result = block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "rollback/delete",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert_eq!(notes.len(), 1, "Metadata should be restored on rollback");
+        assert_eq!(notes[0].rel_path, "rollback/delete");
+        assert_note_md_exists(&notebook_dir, "rollback/delete");
+    }
+
+    #[test]
+    fn move_note_rolls_back_when_metadata_save_fails() {
+        let notebook_dir = TestNotebookDir::new("move_rollback_metadata_failure");
+        let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
+            rel_path: "rollback/source".to_string(),
+            labels: Vec::new(),
+        }];
+
+        let source_dir = Path::new(notebook_dir.as_str()).join("rollback/source");
+        fs::create_dir_all(&source_dir).expect("Failed to create source note directory");
+        fs::write(source_dir.join("note.md"), "rollback")
+            .expect("Failed to create source note file");
+        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to create metadata.json directory trap");
+
+        let result = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "rollback/source",
+            "rollback/destination",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert_eq!(notes.len(), 1, "Metadata should be restored on rollback");
+        assert_eq!(notes[0].rel_path, "rollback/source");
+        assert_note_md_exists(&notebook_dir, "rollback/source");
+        assert_note_md_not_exists(&notebook_dir, "rollback/destination");
+    }
+
+    #[test]
     fn save_note_content_creates_parent_directories_and_persists_text() {
         let notebook_dir = TestNotebookDir::new("save_content");
 
