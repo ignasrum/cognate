@@ -188,6 +188,27 @@ mod tests {
     }
 
     #[test]
+    fn delete_note_rejects_invalid_relative_path() {
+        let notebook_dir = TestNotebookDir::new("delete_invalid_path");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let result = block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "../outside",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("expected error")
+                .contains("Invalid relative path"),
+            "Expected invalid-path validation error",
+        );
+    }
+
+    #[test]
     fn move_note_moves_files_and_updates_metadata() {
         let notebook_dir = TestNotebookDir::new("move_note");
         let mut notes: Vec<NoteMetadata> = Vec::new();
@@ -247,6 +268,28 @@ mod tests {
         assert!(result.is_err());
         assert_note_md_exists(&notebook_dir, "source/note");
         assert_note_md_exists(&notebook_dir, "target/note");
+    }
+
+    #[test]
+    fn move_note_rejects_invalid_current_relative_path() {
+        let notebook_dir = TestNotebookDir::new("move_invalid_current_path");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let result = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "../outside",
+            "target/note",
+            &mut notes,
+        ));
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("expected error")
+                .contains("Invalid current relative path"),
+            "Expected invalid current-path validation error",
+        );
     }
 
     #[test]

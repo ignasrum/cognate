@@ -387,6 +387,9 @@ pub async fn delete_note(
 ) -> Result<(), String> {
     #[cfg(debug_assertions)]
     eprintln!("Attempting to delete note with rel_path: {}", rel_path);
+
+    validate_notebook_relative_path(rel_path, "relative path")?;
+
     let note_dir_path = Path::new(notebook_path).join(rel_path);
     let full_notebook_path = Path::new(notebook_path);
 
@@ -531,6 +534,10 @@ pub async fn move_note(
 
     // --- Validation ---
 
+    validate_notebook_relative_path(
+        current_rel_path,
+        "current relative path",
+    )?;
     validate_notebook_relative_path(new_rel_path, "new relative path")?;
 
     // Ensure the current path exists on the filesystem
