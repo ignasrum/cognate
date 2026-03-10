@@ -77,6 +77,13 @@ mod tests {
         );
     }
 
+    fn now_nanos() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System clock error")
+            .as_nanos()
+    }
+
     #[test]
     fn create_new_note_creates_file_and_metadata() {
         let notebook_dir = TestNotebookDir::new("create_note");
@@ -404,6 +411,45 @@ mod tests {
         let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
 
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_notes_metadata_cleans_up_stale_staged_delete_entries() {
+        let notebook_dir = TestNotebookDir::new("cleanup_stale_staged_delete");
+        let stale_stage = Path::new(notebook_dir.as_str()).join(
+            ".cognate_txn_delete_rollback__note_1",
+        );
+        fs::create_dir_all(stale_stage.join("nested"))
+            .expect("Failed to create stale staged delete directory");
+        fs::write(stale_stage.join("nested").join("note.md"), "stale")
+            .expect("Failed to populate stale staged delete directory");
+
+        let _ = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+
+        assert!(
+            !stale_stage.exists(),
+            "Expected stale staged delete directory to be cleaned up"
+        );
+    }
+
+    #[test]
+    fn load_notes_metadata_keeps_recent_staged_delete_entries() {
+        let notebook_dir = TestNotebookDir::new("keep_recent_staged_delete");
+        let recent_stage = Path::new(notebook_dir.as_str()).join(format!(
+            ".cognate_txn_delete_rollback__note_{}",
+            now_nanos()
+        ));
+        fs::create_dir_all(recent_stage.join("nested"))
+            .expect("Failed to create recent staged delete directory");
+        fs::write(recent_stage.join("nested").join("note.md"), "recent")
+            .expect("Failed to populate recent staged delete directory");
+
+        let _ = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+
+        assert!(
+            recent_stage.exists(),
+            "Expected recent staged delete directory to remain for in-flight safety"
+        );
     }
 
     #[test]

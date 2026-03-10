@@ -6,6 +6,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
+const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
+
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteMetadata {
@@ -172,6 +175,88 @@ fn build_transaction_staging_path(
     ))
 }
 
+fn cleanup_stale_staged_delete_entries(
+    notebook_path: &Path,
+) {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+
+    let read_dir = match fs::read_dir(notebook_path) {
+        Ok(entries) => entries,
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Failed to scan notebook directory '{}' for stale staged deletes: {}",
+                notebook_path.display(),
+                e
+            );
+            return;
+        }
+    };
+
+    for entry_result in read_dir {
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Warning: Failed to read notebook directory entry: {}", e);
+                continue;
+            }
+        };
+
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+
+        if !file_name.starts_with(STAGED_DELETE_PREFIX) {
+            continue;
+        }
+
+        let timestamp_nanos = match file_name.rsplit('_').next() {
+            Some(ts) => match ts.parse::<u128>() {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: Could not parse staged-delete timestamp from '{}'; skipping cleanup for this entry.",
+                        file_name
+                    );
+                    continue;
+                }
+            },
+            None => continue,
+        };
+
+        let age_nanos = now_nanos.saturating_sub(timestamp_nanos);
+        if age_nanos < STAGED_DELETE_CLEANUP_GRACE_NANOS {
+            continue;
+        }
+
+        let staged_path = entry.path();
+        let removal_result = if staged_path.is_dir() {
+            fs::remove_dir_all(&staged_path)
+        } else {
+            fs::remove_file(&staged_path)
+        };
+
+        if let Err(e) = removal_result {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Failed to remove stale staged delete '{}': {}",
+                staged_path.display(),
+                e
+            );
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Cleaned up stale staged delete '{}'.",
+                staged_path.display()
+            );
+        }
+    }
+}
+
 // The save_metadata function also lives here
 pub fn save_metadata(
     notebook_path: &str,
@@ -211,6 +296,7 @@ pub fn save_metadata(
 // to keep metadata logic together. I'll move it and adjust note_explorer.rs accordingly.
 pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
     let file_path = Path::new(&notebook_path).join("metadata.json");
+    cleanup_stale_staged_delete_entries(Path::new(&notebook_path));
     #[cfg(debug_assertions)]
     eprintln!(
         "load_notes_metadata: Attempting to read file: {}",
