@@ -10,7 +10,7 @@ mod tests;
 use std::env;
 use std::process::exit;
 use components::editor::Editor;
-use iced::Theme;
+use configuration::theme::convert_str_to_theme;
 
 pub fn main() -> iced::Result {
     let config_path_env_var = "COGNATE_CONFIG_PATH";
@@ -40,16 +40,15 @@ pub fn main() -> iced::Result {
         }
     };
 
+    // Resolve the configured theme once and use it consistently across app startup.
+    let app_theme = convert_str_to_theme(&config.theme);
+
     // Create the editor directly using the create function
-    let (editor, initial_task) = Editor::create(config.clone());
+    let (editor, initial_task) = Editor::create(config);
 
     // Setup the application using the simplified approach
     let app = iced::application("Cognate", Editor::update, Editor::view)
-        .theme(move |_| match config.theme.as_str() {
-            "dark" => Theme::Dark,
-            "light" => Theme::Light,
-            _ => Theme::Dark,
-        })
+        .theme(move |_| app_theme.clone())
         .subscription(Editor::subscription);
         
     // Use a simple function that returns the editor and initial_task

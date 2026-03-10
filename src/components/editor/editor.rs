@@ -1,6 +1,6 @@
 use iced::event::Event;
 use iced::keyboard::Key;
-use iced::{Element, Subscription, Theme};
+use iced::{Element, Subscription};
 use iced::task::Task;
 
 // Import required types and modules
@@ -18,7 +18,6 @@ use crate::components::note_explorer::NoteExplorer;
 use crate::components::note_explorer;
 use crate::components::visualizer::Visualizer;
 use crate::components::visualizer;
-use crate::configuration::theme;
 
 // Define the Message enum in this module
 #[derive(Debug, Clone)]
@@ -82,8 +81,6 @@ pub struct Editor {
     undo_manager: UndoManager,
     
     // UI components and state
-    #[allow(dead_code)] // Explicitly allow this field as it's used during initialization
-    theme: Theme,
     note_explorer: NoteExplorer,
     visualizer: Visualizer,
 }
@@ -99,7 +96,6 @@ impl Editor {
             markdown_text: String::new(),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
-            theme: theme::convert_str_to_theme(flags.theme.clone()),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
             visualizer: visualizer::Visualizer::new(),
         };
@@ -427,7 +423,6 @@ impl Default for Editor {
             markdown_text: String::new(),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
-            theme: Theme::Dark, // Default theme
             note_explorer: note_explorer::NoteExplorer::new(String::new()),
             visualizer: visualizer::Visualizer::new(),
         }
