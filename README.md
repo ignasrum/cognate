@@ -29,6 +29,7 @@ You can build and run the application using the provided `Makefile`. Here are th
 - `make run`: Runs the application.
 - `make install`: Builds and installs the application to `~/.local/bin`.
 - `make clean`: Cleans the build artifacts.
+- `make test`: Runs the test suite.
 - `make help`: Displays usage information for the make targets.
 
 You can also specify `debug=1` to build in debug mode, for example: `make build debug=1`.

@@ -68,6 +68,7 @@ mod tests {
 
         let _ = note_actions::handle_note_deleted(
             Ok(()),
+            "a".to_string(),
             &mut state,
             &mut content,
             &mut markdown,
@@ -79,6 +80,7 @@ mod tests {
 
         let _ = note_actions::handle_note_deleted(
             Err("delete failed".to_string()),
+            "a".to_string(),
             &mut state,
             &mut content,
             &mut markdown,
@@ -105,7 +107,7 @@ mod tests {
 
         state.set_selected_note_path(Some("a".to_string()));
         let _ = note_actions::handle_confirm_delete_note(true, &mut state, current_notes.clone());
-        assert_eq!(state.selected_note_path(), None);
+        assert_eq!(state.selected_note_path(), Some(&"a".to_string()));
 
         let _ = note_actions::handle_confirm_delete_note(true, &mut state, current_notes);
     }
@@ -134,11 +136,18 @@ mod tests {
         undo.initialize_history("a");
         undo.add_to_history("a", "v1".to_string());
         state.show_move_note_dialog("a".to_string());
-        let _ = note_actions::handle_note_moved(Ok("c".to_string()), &mut state, &mut undo, &mut explorer);
+        let _ = note_actions::handle_note_moved(
+            Ok("c".to_string()),
+            "a".to_string(),
+            &mut state,
+            &mut undo,
+            &mut explorer,
+        );
         assert!(undo.get_previous_content("c").is_some());
 
         let _ = note_actions::handle_note_moved(
             Err("move failed".to_string()),
+            "a".to_string(),
             &mut state,
             &mut undo,
             &mut explorer,
@@ -197,7 +206,7 @@ mod tests {
     #[test]
     fn editor_message_variants_for_note_actions_paths_are_constructible() {
         let _ = EditorMessage::NoteCreated(Ok(note("n", &[])));
-        let _ = EditorMessage::NoteDeleted(Ok(()));
-        let _ = EditorMessage::NoteMoved(Ok("x".to_string()));
+        let _ = EditorMessage::NoteDeleted(Ok(()), "n".to_string());
+        let _ = EditorMessage::NoteMoved(Ok("x".to_string()), "n".to_string());
     }
 }

@@ -396,9 +396,10 @@ pub fn handle_confirm_delete_note(
     current_notes: Vec<NoteMetadata>,
 ) -> Task<Message> {
     if confirmed {
-        if let Some(selected_path) = state.take_selected_note_path() {
+        if let Some(selected_path) = state.selected_note_path().cloned() {
             let notebook_path = state.notebook_path().to_string();
             let mut notes = current_notes;
+            let deleted_path = selected_path.clone();
 
             Task::perform(
                 async move {
@@ -409,7 +410,7 @@ pub fn handle_confirm_delete_note(
                     )
                     .await
                 },
-                Message::NoteDeleted,
+                move |result| Message::NoteDeleted(result, deleted_path.clone()),
             )
         } else {
             #[cfg(debug_assertions)]
@@ -426,6 +427,7 @@ pub fn handle_confirm_delete_note(
 // Handle note deleted
 pub fn handle_note_deleted(
     result: Result<(), String>,
+    deleted_path: String,
     state: &mut EditorState,
     content: &mut Content,
     markdown_text: &mut String,
@@ -438,9 +440,7 @@ pub fn handle_note_deleted(
             eprintln!("Note deleted successfully.");
             
             // Clean up history for the deleted note
-            if let Some(path) = state.selected_note_path() {
-                undo_manager.remove_history(path);
-            }
+            undo_manager.remove_history(&deleted_path);
             
             state.set_selected_note_path(None);
             state.set_selected_note_labels(Vec::new());
@@ -479,7 +479,7 @@ pub fn handle_confirm_move_note(
     current_notes: Vec<NoteMetadata>,
 ) -> Task<Message> {
     if state.show_move_note_input() {
-        if let Some(current_path) = state.take_move_note_current_path() {
+        if let Some(current_path) = state.move_note_current_path().cloned() {
             let new_path = state.move_note_new_path_input().trim().to_string();
             state.hide_move_note_dialog();
 
@@ -509,6 +509,7 @@ pub fn handle_confirm_move_note(
 
             let notebook_path = state.notebook_path().to_string();
             let mut notes = current_notes;
+            let old_path = current_path.clone();
 
             Task::perform(
                 async move {
@@ -520,7 +521,7 @@ pub fn handle_confirm_move_note(
                     )
                     .await
                 },
-                Message::NoteMoved,
+                move |result| Message::NoteMoved(result, old_path.clone()),
             )
         } else {
             #[cfg(debug_assertions)]
@@ -538,7 +539,8 @@ pub fn handle_confirm_move_note(
 // Handle note moved
 pub fn handle_note_moved(
     result: Result<String, String>,
-    state: &mut EditorState,
+    old_path: String,
+    _state: &mut EditorState,
     undo_manager: &mut UndoManager,
     note_explorer: &mut NoteExplorer,
 ) -> Task<Message> {
@@ -548,9 +550,7 @@ pub fn handle_note_moved(
             eprintln!("Item moved/renamed successfully to: {}", new_rel_path);
             
             // If we're moving a note that had an undo history, update the key
-            if let Some(old_path) = state.move_note_current_path() {
-                undo_manager.handle_path_change(old_path, &new_rel_path);
-            }
+            undo_manager.handle_path_change(&old_path, &new_rel_path);
             
             note_explorer
                 .update(note_explorer::Message::LoadNotes)

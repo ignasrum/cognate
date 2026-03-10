@@ -46,8 +46,8 @@ mod tests {
             EditorMessage::MoveNoteInputChanged("moved/path".to_string()),
             EditorMessage::ConfirmMoveNote,
             EditorMessage::CancelMoveNote,
-            EditorMessage::NoteMoved(Err("move failed".to_string())),
-            EditorMessage::NoteDeleted(Err("delete failed".to_string())),
+            EditorMessage::NoteMoved(Err("move failed".to_string()), "old/path".to_string()),
+            EditorMessage::NoteDeleted(Err("delete failed".to_string()), "to/delete".to_string()),
             EditorMessage::MetadataSaved(Ok(())),
             EditorMessage::MetadataSaved(Err("meta failed".to_string())),
             EditorMessage::NoteContentSaved(Ok(())),
@@ -60,8 +60,8 @@ mod tests {
             )),
             EditorMessage::InitiateFolderRename("folder".to_string()),
             EditorMessage::NoteCreated(Err("create failed".to_string())),
-            EditorMessage::NoteMoved(Ok("new/path".to_string())),
-            EditorMessage::NoteDeleted(Ok(())),
+            EditorMessage::NoteMoved(Ok("new/path".to_string()), "old/path".to_string()),
+            EditorMessage::NoteDeleted(Ok(()), "to/delete".to_string()),
         ];
 
         for message in messages {

@@ -57,12 +57,12 @@ pub enum Message {
     CancelNewNote,
     DeleteNote,
     ConfirmDeleteNote(bool),
-    NoteDeleted(Result<(), String>),
+    NoteDeleted(Result<(), String>, String),
     MoveNote,
     MoveNoteInputChanged(String),
     ConfirmMoveNote,
     CancelMoveNote,
-    NoteMoved(Result<String, String>),
+    NoteMoved(Result<String, String>, String),
     
     // Folder operations
     InitiateFolderRename(String),
@@ -289,9 +289,10 @@ impl Editor {
                     state.note_explorer.notes.clone()
                 );
             },
-            Message::NoteDeleted(result) => {
+            Message::NoteDeleted(result, deleted_path) => {
                 return note_actions::handle_note_deleted(
                     result,
+                    deleted_path,
                     &mut state.state,
                     &mut state.content,
                     &mut state.markdown_text,
@@ -323,9 +324,10 @@ impl Editor {
                 );
                 command
             },
-            Message::NoteMoved(result) => {
+            Message::NoteMoved(result, old_path) => {
                 return note_actions::handle_note_moved(
                     result,
+                    old_path,
                     &mut state.state,
                     &mut state.undo_manager,
                     &mut state.note_explorer
