@@ -52,6 +52,7 @@ mod tests {
             EditorMessage::MetadataSaved(Err("meta failed".to_string())),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err("save failed".to_string())),
+            EditorMessage::LoadedNoteContent("folder/note".to_string(), "body".to_string()),
             EditorMessage::NoteExplorerMessage(note_explorer::Message::ToggleFolder(
                 "folder".to_string(),
             )),

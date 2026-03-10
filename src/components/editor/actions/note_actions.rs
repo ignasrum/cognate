@@ -60,16 +60,17 @@ fn handle_note_selection_internal(
         commands.push(Task::perform(
             async move {
                 let full_note_path = format!("{}/{}/note.md", notebook_path, selected_note_path);
-                match std::fs::read_to_string(full_note_path) {
+                let loaded_content = match std::fs::read_to_string(full_note_path) {
                     Ok(content) => content,
                     Err(_err) => {
                         #[cfg(debug_assertions)]
                         eprintln!("Failed to read note file for editor: {}", _err);
                         String::new()
                     }
-                }
+                };
+                (selected_note_path, loaded_content)
             },
-            Message::ContentChanged,
+            |(note_path, content)| Message::LoadedNoteContent(note_path, content),
         ));
     }
 

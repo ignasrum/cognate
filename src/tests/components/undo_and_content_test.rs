@@ -69,25 +69,65 @@ mod tests {
         assert!(undo.get_previous_content("note/a").is_some());
 
         state.set_loading_note(true);
-        let _ = content_handler::handle_content_changed(
+        let _ = content_handler::handle_loaded_note_content(
             &mut content,
             &mut markdown,
             &mut undo,
             &mut state,
+            "note/a".to_string(),
             "loaded".to_string(),
         );
         assert!(!state.is_loading_note());
         assert_eq!(markdown, "loaded");
 
-        let _ = content_handler::handle_content_changed(
+        let _ = content_handler::handle_editor_action(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            Action::Edit(Edit::Insert('!')),
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+        assert_ne!(markdown, "loaded");
+        assert!(undo.get_previous_content("note/a").is_some());
+    }
+
+    #[test]
+    fn loaded_note_content_ignores_stale_results_and_applies_current_selection() {
+        let mut state = EditorState::new();
+        state.set_notebook_path("dummy".to_string());
+        state.set_selected_note_path(Some("note/b".to_string()));
+        state.set_loading_note(true);
+
+        let mut content = Content::with_text("existing");
+        let mut markdown = "existing".to_string();
+        let mut undo = UndoManager::new();
+        undo.initialize_history("note/b");
+
+        let _ = content_handler::handle_loaded_note_content(
             &mut content,
             &mut markdown,
             &mut undo,
             &mut state,
-            "changed".to_string(),
+            "note/a".to_string(),
+            "stale".to_string(),
         );
-        assert_eq!(markdown, "changed");
-        assert!(undo.get_previous_content("note/a").is_some());
+
+        assert_eq!(markdown, "existing");
+        assert!(state.is_loading_note());
+
+        let _ = content_handler::handle_loaded_note_content(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            &mut state,
+            "note/b".to_string(),
+            "fresh".to_string(),
+        );
+
+        assert_eq!(markdown, "fresh");
+        assert!(!state.is_loading_note());
     }
 
     #[test]

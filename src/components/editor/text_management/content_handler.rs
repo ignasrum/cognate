@@ -120,12 +120,12 @@ pub fn handle_editor_action(
     Task::none()
 }
 
-// Handler for content changed
-pub fn handle_content_changed(
+pub fn handle_loaded_note_content(
     content: &mut Content,
     markdown_text: &mut String,
     undo_manager: &mut UndoManager,
     state: &mut EditorState,
+    loaded_note_path: String,
     new_content: String,
 ) -> Task<Message> {
     if !state.show_visualizer()
@@ -133,20 +133,24 @@ pub fn handle_content_changed(
         && !state.show_new_note_input()
         && !state.show_about_info()
     {
-        if let Some(note_path) = state.selected_note_path() {
-            // Check if we're loading a note (switching between notes)
-            if state.is_loading_note() {
-                undo_manager.handle_initial_content(note_path, &new_content);
-                // Reset the loading flag
-                state.set_loading_note(false);
-            } else if !markdown_text.is_empty() && *markdown_text != new_content {
-                // This is a regular content change, not a note switch
-                undo_manager.add_to_history(note_path, markdown_text.clone());
-            }
+        if state.selected_note_path() != Some(&loaded_note_path) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Ignoring stale loaded content for '{}'; current selection is '{:?}'.",
+                loaded_note_path,
+                state.selected_note_path()
+            );
+            return Task::none();
+        }
+
+        if state.is_loading_note() {
+            undo_manager.handle_initial_content(&loaded_note_path, &new_content);
+            state.set_loading_note(false);
         }
 
         *content = Content::with_text(&new_content);
         *markdown_text = new_content;
     }
+
     Task::none()
 }

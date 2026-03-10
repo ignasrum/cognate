@@ -24,7 +24,7 @@ use crate::components::visualizer;
 pub enum Message {
     // Text editing operations
     EditorAction(iced::widget::text_editor::Action),
-    ContentChanged(String),
+    LoadedNoteContent(String, String),
     HandleTabKey,
     SelectAll,
     Undo,
@@ -122,7 +122,7 @@ impl Editor {
             | Message::SelectAll
             | Message::Undo
             | Message::EditorAction(_)
-            | Message::ContentChanged(_) => Self::handle_text_messages(state, message),
+            | Message::LoadedNoteContent(_, _) => Self::handle_text_messages(state, message),
 
             Message::NoteExplorerMessage(_) | Message::NoteSelected(_) => {
                 Self::handle_selection_messages(state, message)
@@ -187,13 +187,16 @@ impl Editor {
                 state.state.notebook_path(),
                 &state.state,
             ),
-            Message::ContentChanged(new_content) => content_handler::handle_content_changed(
-                &mut state.content,
-                &mut state.markdown_text,
-                &mut state.undo_manager,
-                &mut state.state,
-                new_content,
-            ),
+            Message::LoadedNoteContent(note_path, new_content) => {
+                content_handler::handle_loaded_note_content(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    &mut state.undo_manager,
+                    &mut state.state,
+                    note_path,
+                    new_content,
+                )
+            }
             _ => unreachable!("text handler received non-text message"),
         }
     }
