@@ -82,33 +82,35 @@ pub fn handle_editor_action(
         && !state.show_new_note_input()
         && !state.show_about_info()
     {
-        // Save the current state to history before performing the action
-        // Only save if this is a modifying action (Edit)
-        if matches!(action, Action::Edit(_)) {
-            undo_manager.add_to_history(selected_path, markdown_text.clone());
-        }
-
         #[cfg(debug_assertions)]
         eprintln!("Editor: Performing EditorAction: {:?}", action);
+
+        if matches!(action, Action::Edit(_)) {
+            // Save the current state to history before applying an actual text edit.
+            undo_manager.add_to_history(selected_path, markdown_text.clone());
+            content.perform(action);
+            *markdown_text = content.text();
+
+            let notebook_path_clone = notebook_path.to_string();
+            let note_path_clone = selected_path.clone();
+            let content_text = markdown_text.clone();
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Editor: Performing EditorAction: Saving content for note: {}",
+                note_path_clone
+            );
+            return Task::perform(
+                async move {
+                    notebook::save_note_content(notebook_path_clone, note_path_clone, content_text)
+                        .await
+                },
+                Message::NoteContentSaved,
+            );
+        }
+
+        // Non-edit text editor actions (cursor movement, selection, focus) should not
+        // persist content or update timestamps.
         content.perform(action);
-
-        *markdown_text = content.text();
-
-        let notebook_path_clone = notebook_path.to_string();
-        let note_path_clone = selected_path.clone();
-        let content_text = markdown_text.clone();
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Editor: Performing EditorAction: Saving content for note: {}",
-            note_path_clone
-        );
-        return Task::perform(
-            async move {
-                notebook::save_note_content(notebook_path_clone, note_path_clone, content_text)
-                    .await
-            },
-            Message::NoteContentSaved,
-        );
     }
     Task::none()
 }

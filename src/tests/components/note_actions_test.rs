@@ -15,6 +15,7 @@ mod tests {
         NoteMetadata {
             rel_path: path.to_string(),
             labels: labels.iter().map(|s| s.to_string()).collect(),
+            last_updated: None,
         }
     }
 

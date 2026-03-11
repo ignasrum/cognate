@@ -1,4 +1,4 @@
-use iced::widget::{Column, Container, Row, Text, text_editor, button};
+use iced::widget::{Column, Container, Row, Text, button, text_editor};
 use iced::{Element, Length};
 use std::collections::HashSet;
 use std::path::Path;
@@ -163,8 +163,39 @@ pub fn generate_layout<'a>(
             editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
+        let selected_note_last_updated = state.selected_note_path()
+            .and_then(|selected_path| {
+                note_explorer_component
+                    .notes
+                    .iter()
+                    .find(|note| &note.rel_path == selected_path)
+            })
+            .and_then(|note| note.last_updated.as_deref());
+
+        let selected_note_info = state.selected_note_path().map(|_| {
+            let updated_text = selected_note_last_updated
+                .map_or_else(|| "Last updated: unknown".to_string(), |value| {
+                    format!("Last updated: {}", value)
+                });
+
+            Row::new()
+                .push(
+                    Container::new(Text::new(updated_text).size(14))
+                        .width(Length::Fill)
+                        .align_x(iced::Alignment::End),
+                )
+        });
+
         // Create a column with the editor and a bottom spacer
-        let editor_with_bottom_spacer = Column::new()
+        let mut editor_with_bottom_spacer = Column::new()
+            .spacing(5)
+            .width(Length::Fill);
+
+        if let Some(note_info_row) = selected_note_info {
+            editor_with_bottom_spacer = editor_with_bottom_spacer.push(note_info_row);
+        }
+
+        editor_with_bottom_spacer = editor_with_bottom_spacer
             .push(editor_widget)
             .push(Container::new(Text::new("")) // Empty container as spacer
                   .height(Length::Fixed(5.0))

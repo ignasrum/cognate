@@ -16,6 +16,7 @@ mod tests {
         explorer.notes = vec![NoteMetadata {
             rel_path: "note/a".to_string(),
             labels: vec![],
+            last_updated: None,
         }];
 
         let visualizer = Visualizer::new();

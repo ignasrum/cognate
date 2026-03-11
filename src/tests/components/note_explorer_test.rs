@@ -8,14 +8,17 @@ mod tests {
             NoteMetadata {
                 rel_path: "b/note2".to_string(),
                 labels: vec![],
+                last_updated: None,
             },
             NoteMetadata {
                 rel_path: "a/note1".to_string(),
                 labels: vec![],
+                last_updated: None,
             },
             NoteMetadata {
                 rel_path: "a/sub/note3".to_string(),
                 labels: vec![],
+                last_updated: None,
             },
         ]
     }

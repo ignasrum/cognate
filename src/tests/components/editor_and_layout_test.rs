@@ -75,6 +75,7 @@ mod tests {
                 NoteMetadata {
                     rel_path: "folder/note".to_string(),
                     labels: vec!["tag".to_string()],
+                    last_updated: None,
                 },
             ])),
         );
@@ -90,10 +91,12 @@ mod tests {
             NoteMetadata {
                 rel_path: "folder/note".to_string(),
                 labels: vec!["tag".to_string()],
+                last_updated: None,
             },
             NoteMetadata {
                 rel_path: "single".to_string(),
                 labels: vec![],
+                last_updated: None,
             },
         ];
         let visualizer = visualizer::Visualizer::new();

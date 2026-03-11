@@ -32,8 +32,6 @@ enum NodeOwned {
     },
     NoteDir {
         name: String,
-        #[allow(dead_code)]
-        metadata: NoteMetadata,
         path: String,
     },
     Placeholder,
@@ -191,7 +189,6 @@ impl NoteExplorer {
                 if is_last_component {
                     let note_dir_node = NodeOwned::NoteDir {
                         name: component_name.clone(),
-                        metadata: note.clone(),
                         path: note.rel_path.clone(),
                     };
                     current_nodes_list.push(note_dir_node);
@@ -279,6 +276,7 @@ impl NoteExplorer {
 
         for note in &self.notes {
             note.rel_path.hash(&mut hasher);
+            note.last_updated.hash(&mut hasher);
         }
 
         let mut expanded_entries: Vec<(&String, &bool)> = self.expanded_folders.iter().collect();
@@ -354,7 +352,6 @@ impl NoteExplorer {
                 NodeOwned::NoteDir {
                     name,
                     path: note_path,
-                    // Corrected the pattern here
                     ..
                 } => {
                     let is_selected = selected_note_path

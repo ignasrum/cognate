@@ -8,14 +8,17 @@ mod tests {
             NoteMetadata {
                 rel_path: "x/n1".to_string(),
                 labels: vec!["urgent".to_string(), "work".to_string()],
+                last_updated: None,
             },
             NoteMetadata {
                 rel_path: "x/n2".to_string(),
                 labels: vec!["work".to_string()],
+                last_updated: None,
             },
             NoteMetadata {
                 rel_path: "y/n3".to_string(),
                 labels: vec![],
+                last_updated: None,
             },
         ]
     }

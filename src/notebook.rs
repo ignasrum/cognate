@@ -4,6 +4,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
 const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
@@ -14,11 +16,38 @@ pub struct NoteMetadata {
     pub rel_path: String,
     #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotebookMetadata {
     pub notes: Vec<NoteMetadata>,
+}
+
+fn current_timestamp_rfc3339() -> String {
+    OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
+        .ok()
+        .and_then(|timestamp| timestamp.format(&Rfc3339).ok())
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn format_system_time_rfc3339(timestamp: SystemTime) -> Option<String> {
+    OffsetDateTime::from_unix_timestamp(OffsetDateTime::from(timestamp).unix_timestamp())
+        .ok()
+        .and_then(|dt| dt.format(&Rfc3339).ok())
+}
+
+fn normalize_rfc3339_to_seconds(timestamp: &str) -> String {
+    if let Some(dot_index) = timestamp.find('.') {
+        let base = &timestamp[..dot_index];
+        let remainder = &timestamp[dot_index + 1..];
+        if let Some(tz_index) = remainder.find(['Z', '+', '-']) {
+            return format!("{}{}", base, &remainder[tz_index..]);
+        }
+        return base.to_string();
+    }
+    timestamp.to_string()
 }
 
 fn validate_notebook_relative_path(rel_path: &str, path_kind: &str) -> Result<(), String> {
@@ -339,7 +368,40 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
         }
     };
 
-    metadata.notes
+    let mut notes = metadata.notes;
+    let mut metadata_changed = false;
+
+    for note in &mut notes {
+        if let Some(existing_timestamp) = note.last_updated.clone() {
+            let normalized = normalize_rfc3339_to_seconds(&existing_timestamp);
+            if normalized != existing_timestamp {
+                note.last_updated = Some(normalized);
+                metadata_changed = true;
+            }
+        } else {
+            let note_file_path = Path::new(&notebook_path)
+                .join(&note.rel_path)
+                .join("note.md");
+
+            if let Ok(file_metadata) = fs::metadata(note_file_path)
+                && let Ok(modified_time) = file_metadata.modified()
+                && let Some(formatted_time) = format_system_time_rfc3339(modified_time)
+            {
+                note.last_updated = Some(formatted_time);
+                metadata_changed = true;
+            }
+        }
+    }
+
+    if metadata_changed && let Err(error) = save_metadata(&notebook_path, &notes) {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Warning: failed to persist backfilled last_updated metadata: {}",
+            error
+        );
+    }
+
+    notes
 }
 
 // Function to save note content
@@ -361,7 +423,40 @@ pub async fn save_note_content(
         return Err(format!("Failed to create directory for note: {}", e));
     }
 
-    fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))
+    let existing_content = match fs::read_to_string(&full_note_path) {
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "Failed to read existing note before save: {}",
+                error
+            ));
+        }
+    };
+
+    if existing_content.as_deref() == Some(content.as_str()) {
+        return Ok(());
+    }
+
+    fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))?;
+
+    let mut notes = load_notes_metadata(notebook_path.clone()).await;
+    let mut metadata_changed = false;
+    let updated_at = current_timestamp_rfc3339();
+
+    if let Some(note) = notes.iter_mut().find(|n| n.rel_path == rel_note_path)
+        && note.last_updated.as_deref() != Some(updated_at.as_str())
+    {
+        note.last_updated = Some(updated_at);
+        metadata_changed = true;
+    }
+
+    if metadata_changed {
+        save_metadata(&notebook_path, &notes)
+            .map_err(|e| format!("Failed to save metadata after content update: {}", e))?;
+    }
+
+    Ok(())
 }
 
 // Function to create a new note
@@ -422,6 +517,7 @@ pub async fn create_new_note(
     let new_note_metadata = NoteMetadata {
         rel_path: rel_path.to_string(),
         labels: Vec::new(),
+        last_updated: Some(current_timestamp_rfc3339()),
     };
 
     let previous_notes = notes.clone();

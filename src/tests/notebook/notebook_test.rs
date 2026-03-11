@@ -97,12 +97,19 @@ mod tests {
         .expect("create_new_note should succeed");
 
         assert_eq!(created.rel_path, "work/todo");
+        assert!(created.last_updated.is_some());
+        assert!(
+            !created.last_updated.as_deref().unwrap_or("").contains('.'),
+            "last_updated should not include subsecond precision"
+        );
         assert_eq!(notes.len(), 1);
+        assert!(notes[0].last_updated.is_some());
         assert_note_md_exists(&notebook_dir, "work/todo");
 
         let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "work/todo");
+        assert!(loaded[0].last_updated.is_some());
     }
 
     #[test]
@@ -326,6 +333,7 @@ mod tests {
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/delete".to_string(),
             labels: Vec::new(),
+            last_updated: None,
         }];
 
         let note_dir = Path::new(notebook_dir.as_str()).join("rollback/delete");
@@ -353,6 +361,7 @@ mod tests {
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/source".to_string(),
             labels: Vec::new(),
+            last_updated: None,
         }];
 
         let source_dir = Path::new(notebook_dir.as_str()).join("rollback/source");
@@ -379,6 +388,18 @@ mod tests {
     #[test]
     fn save_note_content_creates_parent_directories_and_persists_text() {
         let notebook_dir = TestNotebookDir::new("save_content");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "new/note",
+            &mut notes,
+        ))
+        .expect("create_new_note should succeed");
+
+        notes[0].last_updated = Some("2000-01-01T00:00:00Z".to_string());
+        notebook::save_metadata(notebook_dir.as_str(), &notes)
+            .expect("save_metadata should succeed");
 
         block_on(notebook::save_note_content(
             notebook_dir.as_str().to_string(),
@@ -395,6 +416,57 @@ mod tests {
         .expect("Failed to read saved note content");
 
         assert_eq!(content, "hello from test");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        assert_eq!(loaded.len(), 1);
+        assert_ne!(
+            loaded[0].last_updated.as_deref(),
+            Some("2000-01-01T00:00:00Z"),
+            "save_note_content should refresh last_updated metadata"
+        );
+        assert!(
+            !loaded[0].last_updated.as_deref().unwrap_or("").contains('.'),
+            "last_updated should not include subsecond precision"
+        );
+    }
+
+    #[test]
+    fn save_note_content_does_not_update_last_updated_when_content_is_unchanged() {
+        let notebook_dir = TestNotebookDir::new("save_content_no_change");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "same/note",
+            &mut notes,
+        ))
+        .expect("create_new_note should succeed");
+
+        fs::write(
+            Path::new(notebook_dir.as_str())
+                .join("same/note")
+                .join("note.md"),
+            "same content",
+        )
+        .expect("Failed to seed note content");
+
+        notes[0].last_updated = Some("2000-01-01T00:00:00Z".to_string());
+        notebook::save_metadata(notebook_dir.as_str(), &notes)
+            .expect("save_metadata should succeed");
+
+        block_on(notebook::save_note_content(
+            notebook_dir.as_str().to_string(),
+            "same/note".to_string(),
+            "same content".to_string(),
+        ))
+        .expect("save_note_content should succeed");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        assert_eq!(
+            loaded[0].last_updated.as_deref(),
+            Some("2000-01-01T00:00:00Z"),
+            "last_updated should not change when content is unchanged"
+        );
     }
 
     #[test]
@@ -409,6 +481,42 @@ mod tests {
         let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
 
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_notes_metadata_backfills_missing_last_updated() {
+        let notebook_dir = TestNotebookDir::new("backfill_last_updated");
+        let note_dir = Path::new(notebook_dir.as_str()).join("legacy/note");
+
+        fs::create_dir_all(&note_dir).expect("Failed to create legacy note directory");
+        fs::write(note_dir.join("note.md"), "legacy")
+            .expect("Failed to create legacy note file");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json"),
+            r#"{
+  "notes": [
+    {
+      "rel_path": "legacy/note",
+      "labels": ["legacy"]
+    }
+  ]
+}"#,
+        )
+        .expect("Failed to write legacy metadata");
+
+        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].rel_path, "legacy/note");
+        assert!(loaded[0].last_updated.is_some());
+        assert!(
+            !loaded[0].last_updated.as_deref().unwrap_or("").contains('.'),
+            "backfilled last_updated should not include subsecond precision"
+        );
+
+        let persisted = fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to read metadata after backfill");
+        assert!(persisted.contains("last_updated"));
     }
 
     #[test]
