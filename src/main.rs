@@ -1,16 +1,16 @@
-mod configuration;
 mod components;
+mod configuration;
 
-mod notebook;
 mod json;
+mod notebook;
 
 #[cfg(test)]
 mod tests;
 
-use std::env;
-use std::process::exit;
 use components::editor::Editor;
 use configuration::theme::convert_str_to_theme;
+use std::env;
+use std::process::exit;
 
 pub fn main() -> iced::Result {
     let config_path_env_var = "COGNATE_CONFIG_PATH";
@@ -43,15 +43,17 @@ pub fn main() -> iced::Result {
     // Resolve the configured theme once and use it consistently across app startup.
     let app_theme = convert_str_to_theme(&config.theme);
 
-    // Create the editor directly using the create function
-    let (editor, initial_task) = Editor::create(config);
+    let config_for_boot = config.clone();
 
-    // Setup the application using the simplified approach
-    let app = iced::application("Cognate", Editor::update, Editor::view)
-        .theme(move |_| app_theme.clone())
-        .subscription(Editor::subscription);
-        
-    // Use a simple function that returns the editor and initial_task
-    // instead of trying to implement a non-existent Initializer trait
-    app.run_with(|| (editor, initial_task))
+    // Setup the application with an explicit boot closure
+    let app = iced::application(
+        move || Editor::create(config_for_boot.clone()),
+        Editor::update,
+        Editor::view,
+    )
+    .title("Cognate")
+    .theme(app_theme.clone())
+    .subscription(Editor::subscription);
+
+    app.run()
 }

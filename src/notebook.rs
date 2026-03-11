@@ -21,10 +21,7 @@ pub struct NotebookMetadata {
     pub notes: Vec<NoteMetadata>,
 }
 
-fn validate_notebook_relative_path(
-    rel_path: &str,
-    path_kind: &str,
-) -> Result<(), String> {
+fn validate_notebook_relative_path(rel_path: &str, path_kind: &str) -> Result<(), String> {
     if rel_path.is_empty()
         || rel_path == "."
         || rel_path == ".."
@@ -66,10 +63,7 @@ fn ensure_path_within_notebook_if_canonicalizable(
     Ok(())
 }
 
-fn remove_note_from_metadata(
-    notes: &mut Vec<NoteMetadata>,
-    rel_path: &str,
-) -> bool {
+fn remove_note_from_metadata(notes: &mut Vec<NoteMetadata>, rel_path: &str) -> bool {
     if let Some(index) = notes.iter().position(|note| note.rel_path == rel_path) {
         notes.remove(index);
         true
@@ -174,9 +168,7 @@ fn build_transaction_staging_path(
     ))
 }
 
-fn cleanup_stale_staged_delete_entries(
-    notebook_path: &Path,
-) {
+fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -270,12 +262,12 @@ pub fn save_metadata(
     let metadata_path = Path::new(notebook_path).join("metadata.json");
 
     // Ensure the notebook directory exists before saving metadata
-    if let Some(parent) = metadata_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            #[cfg(debug_assertions)]
-            eprintln!("Failed to create parent directory for metadata file: {}", e);
-            return Err(Box::new(e));
-        }
+    if let Some(parent) = metadata_path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        #[cfg(debug_assertions)]
+        eprintln!("Failed to create parent directory for metadata file: {}", e);
+        return Err(Box::new(e));
     }
 
     let notebook_metadata = NotebookMetadata {
@@ -363,10 +355,10 @@ pub async fn save_note_content(
     eprintln!("Attempting to save note to: {}", full_note_path.display());
 
     // Ensure the directory exists before writing the file
-    if let Some(parent) = full_note_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            return Err(format!("Failed to create directory for note: {}", e));
-        }
+    if let Some(parent) = full_note_path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        return Err(format!("Failed to create directory for note: {}", e));
     }
 
     fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))
@@ -572,27 +564,27 @@ pub async fn delete_note(
     ) {
         *notes = previous_notes;
 
-        if let Some(staged_path) = staged_delete_path {
-            if let Err(rollback_error) = fs::rename(&staged_path, &note_dir_path) {
-                return Err(format!(
-                    "{} Rollback failed while restoring filesystem state: {}",
-                    metadata_error, rollback_error
-                ));
-            }
+        if let Some(staged_path) = staged_delete_path
+            && let Err(rollback_error) = fs::rename(&staged_path, &note_dir_path)
+        {
+            return Err(format!(
+                "{} Rollback failed while restoring filesystem state: {}",
+                metadata_error, rollback_error
+            ));
         }
 
         return Err(metadata_error);
     }
 
-    if let Some(staged_path) = staged_delete_path {
-        if let Err(e) = fs::remove_dir_all(&staged_path) {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Metadata commit succeeded, but failed to finalize staged deletion '{}': {}",
-                staged_path.display(),
-                e
-            );
-        }
+    if let Some(staged_path) = staged_delete_path
+        && let Err(e) = fs::remove_dir_all(&staged_path)
+    {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Warning: Metadata commit succeeded, but failed to finalize staged deletion '{}': {}",
+            staged_path.display(),
+            e
+        );
     }
 
     #[cfg(debug_assertions)]
@@ -619,10 +611,7 @@ pub async fn move_note(
 
     // --- Validation ---
 
-    validate_notebook_relative_path(
-        current_rel_path,
-        "current relative path",
-    )?;
+    validate_notebook_relative_path(current_rel_path, "current relative path")?;
     validate_notebook_relative_path(new_rel_path, "new relative path")?;
 
     // Ensure the current path exists on the filesystem
@@ -671,13 +660,13 @@ pub async fn move_note(
     if new_fs_path.exists() {
         // Re-check canonicalization safety if exists() is true
         if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
-            if let Ok(canonical_new_fs_path) = new_fs_path.canonicalize() {
-                if canonical_new_fs_path.starts_with(&canonical_notebook_path) {
-                    return Err(format!(
-                        "An item already exists at the target path '{}'.",
-                        new_rel_path
-                    ));
-                }
+            if let Ok(canonical_new_fs_path) = new_fs_path.canonicalize()
+                && canonical_new_fs_path.starts_with(&canonical_notebook_path)
+            {
+                return Err(format!(
+                    "An item already exists at the target path '{}'.",
+                    new_rel_path
+                ));
             }
         } else {
             // If canonicalize fails for notebook path, just rely on exists()
@@ -738,12 +727,8 @@ pub async fn move_note(
         .join("note.md")
         .exists();
 
-    let updated_metadata = update_metadata_paths_for_move(
-        notes,
-        current_rel_path,
-        new_rel_path,
-        is_moving_note_dir,
-    );
+    let updated_metadata =
+        update_metadata_paths_for_move(notes, current_rel_path, new_rel_path, is_moving_note_dir);
 
     if is_moving_note_dir {
         if updated_metadata {

@@ -1,23 +1,23 @@
 use iced::event::Event;
 use iced::keyboard::Key;
-use iced::{Element, Subscription};
 use iced::task::Task;
+use iced::{Element, Subscription};
 
 // Import required types and modules
-use crate::configuration::Configuration;
-use crate::notebook::NoteMetadata;
+use crate::components::editor::actions::{label_actions, note_actions};
 use crate::components::editor::state::editor_state::EditorState;
-use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::text_management::content_handler;
 use crate::components::editor::text_management::undo_manager;
-use crate::components::editor::actions::{label_actions, note_actions};
+use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::ui::layout;
+use crate::configuration::Configuration;
+use crate::notebook::NoteMetadata;
 
 // Import re-exported components
-use crate::components::note_explorer::NoteExplorer;
 use crate::components::note_explorer;
-use crate::components::visualizer::Visualizer;
+use crate::components::note_explorer::NoteExplorer;
 use crate::components::visualizer;
+use crate::components::visualizer::Visualizer;
 
 // Define the Message enum in this module
 #[derive(Debug, Clone)]
@@ -28,24 +28,24 @@ pub enum Message {
     HandleTabKey,
     SelectAll,
     Undo,
-    
+
     // Note explorer interaction
     NoteExplorerMsg(note_explorer::Message),
     NoteSelected(String),
-    
+
     // Label management
     NewLabelInputChanged(String),
     AddLabel,
     RemoveLabel(String),
     MetadataSaved(Result<(), String>),
-    
+
     // Content management
     NoteContentSaved(Result<(), String>),
-    
+
     // Visualizer
     ToggleVisualizer,
     VisualizerMsg(visualizer::Message),
-    
+
     // Note operations
     NewNote,
     NewNoteInputChanged(String),
@@ -60,10 +60,10 @@ pub enum Message {
     ConfirmMoveNote,
     CancelMoveNote,
     NoteMoved(Result<String, String>, String),
-    
+
     // Folder operations
     InitiateFolderRename(String),
-    
+
     // UI interactions
     AboutButtonClicked,
 }
@@ -72,14 +72,14 @@ pub enum Message {
 pub struct Editor {
     // Core state management
     state: EditorState,
-    
+
     // Text management
     content: iced::widget::text_editor::Content,
     markdown_text: String,
-    
+
     // Undo/redo management
     undo_manager: UndoManager,
-    
+
     // UI components and state
     note_explorer: NoteExplorer,
     visualizer: Visualizer,
@@ -90,7 +90,7 @@ impl Editor {
     // Keep create method for internal use
     pub fn create(flags: Configuration) -> (Self, Task<Message>) {
         let notebook_path_clone = flags.notebook_path.clone();
-        
+
         let mut editor_instance = Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
@@ -99,7 +99,7 @@ impl Editor {
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
             visualizer: visualizer::Visualizer::new(),
         };
-        
+
         editor_instance.state.set_notebook_path(notebook_path_clone);
         editor_instance.state.set_app_version(flags.version);
 
@@ -169,7 +169,9 @@ impl Editor {
                 state.state.notebook_path(),
                 &state.state,
             ),
-            Message::SelectAll => content_handler::handle_select_all(&mut state.content, &state.state),
+            Message::SelectAll => {
+                content_handler::handle_select_all(&mut state.content, &state.state)
+            }
             Message::Undo => undo_manager::handle_undo(
                 &mut state.undo_manager,
                 &mut state.content,
@@ -276,9 +278,9 @@ impl Editor {
                 state.state.toggle_visualizer();
 
                 if state.state.show_visualizer() && !state.state.notebook_path().is_empty() {
-                    let _ = state
-                        .visualizer
-                        .update(visualizer::Message::UpdateNotes(state.note_explorer.notes.clone()));
+                    let _ = state.visualizer.update(visualizer::Message::UpdateNotes(
+                        state.note_explorer.notes.clone(),
+                    ));
                 }
 
                 Task::none()
@@ -304,9 +306,10 @@ impl Editor {
                 state.state.update_new_note_path(text);
                 Task::none()
             }
-            Message::CreateNote => {
-                note_actions::handle_create_note(&mut state.state, state.note_explorer.notes.clone())
-            }
+            Message::CreateNote => note_actions::handle_create_note(
+                &mut state.state,
+                state.note_explorer.notes.clone(),
+            ),
             Message::CancelNewNote => {
                 state.state.hide_new_note_dialog();
                 Task::none()
@@ -339,9 +342,10 @@ impl Editor {
                 state.state.update_move_note_path(text);
                 Task::none()
             }
-            Message::ConfirmMoveNote => {
-                note_actions::handle_confirm_move_note(&mut state.state, state.note_explorer.notes.clone())
-            }
+            Message::ConfirmMoveNote => note_actions::handle_confirm_move_note(
+                &mut state.state,
+                state.note_explorer.notes.clone(),
+            ),
             Message::CancelMoveNote => {
                 state.state.hide_move_note_dialog();
                 note_actions::get_select_note_command(
@@ -375,7 +379,7 @@ impl Editor {
     }
 
     // Keep view method as is, but fix the state reference
-    pub fn view(state: &Self) -> Element<Message> {
+    pub fn view(state: &Self) -> Element<'_, Message> {
         layout::generate_layout(
             &state.state,
             &state.content,
@@ -390,14 +394,14 @@ impl Editor {
             match event {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     // Handle Ctrl+A for Select All
-                    if modifiers.control() {
-                        if let Key::Character(c) = &key {
-                            if c == "a" || c == "A" {
-                                return Some(Message::SelectAll);
-                            }
-                            if c == "z" || c == "Z" {
-                                return Some(Message::Undo);
-                            }
+                    if modifiers.control()
+                        && let Key::Character(c) = &key
+                    {
+                        if c == "a" || c == "A" {
+                            return Some(Message::SelectAll);
+                        }
+                        if c == "z" || c == "Z" {
+                            return Some(Message::Undo);
                         }
                     }
 

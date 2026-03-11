@@ -1,7 +1,7 @@
 use crate::notebook::NoteMetadata;
 use iced::{
-    task::Task,
     Element, Length, Theme,
+    task::Task,
     widget::{Button, Column, Container, Row, Scrollable, Text},
 };
 
@@ -128,10 +128,7 @@ impl Visualizer {
                 // Update expanded_labels to include new labels, keeping existing state.
                 let mut new_expanded_labels = HashMap::new();
                 for group in &self.grouped_notes_cache.borrow().labels {
-                    let is_expanded = *self
-                        .expanded_labels
-                        .get(&group.label)
-                        .unwrap_or(&false);
+                    let is_expanded = *self.expanded_labels.get(&group.label).unwrap_or(&false);
                     new_expanded_labels.insert(group.label.clone(), is_expanded);
                 }
                 self.expanded_labels = new_expanded_labels;
@@ -168,13 +165,12 @@ impl Visualizer {
 
             if !grouped_cache.notes_without_labels.is_empty() {
                 let mut no_label_column = Column::new().spacing(5);
-                no_label_column = no_label_column.push(
-                    Text::new("No Labels:")
-                        .size(18)
-                        .style(|_: &_| iced::widget::text::Style {
+                no_label_column =
+                    no_label_column.push(Text::new("No Labels:").size(18).style(|_: &_| {
+                        iced::widget::text::Style {
                             color: Some(iced::Color::from_rgb(0.7, 0.7, 0.7)),
-                        }),
-                );
+                        }
+                    }));
 
                 for note_path in &grouped_cache.notes_without_labels {
                     let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
@@ -194,6 +190,7 @@ impl Visualizer {
                                 color: theme.palette().primary,
                             },
                             shadow: iced::Shadow::default(),
+                            snap: false,
                         })
                         .padding(5)
                         .width(Length::Fill),
@@ -224,9 +221,10 @@ impl Visualizer {
 
                 if is_expanded {
                     for note_path in &group.note_paths {
-                        let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
-                            .on_press(Message::NoteSelectedInVisualizer(note_path.clone()))
-                            .style(button::text);
+                        let note_button =
+                            Button::new(Text::new(format!("- {}", note_path)).size(16))
+                                .on_press(Message::NoteSelectedInVisualizer(note_path.clone()))
+                                .style(button::text);
 
                         label_column = label_column.push(note_button);
                     }
@@ -243,6 +241,7 @@ impl Visualizer {
                                 color: theme.palette().primary,
                             },
                             shadow: iced::Shadow::default(),
+                            snap: false,
                         })
                         .padding(5)
                         .width(Length::Fill),

@@ -1,5 +1,5 @@
-use iced::widget::text_editor::{Action, Content, Edit, Motion};
-use iced::task::Task; // Use Task instead of Command
+use iced::task::Task;
+use iced::widget::text_editor::{Action, Content, Edit, Motion}; // Use Task instead of Command
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
@@ -39,9 +39,7 @@ pub fn handle_tab_key(
                 note_path
             );
             return Task::perform(
-                async move {
-                    notebook::save_note_content(notebook_path, note_path, content_text).await
-                },
+                async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
                 Message::NoteContentSaved,
             );
         }
@@ -50,10 +48,7 @@ pub fn handle_tab_key(
 }
 
 // Handler for select all action
-pub fn handle_select_all(
-    content: &mut Content,
-    state: &EditorState,
-) -> Task<Message> {
+pub fn handle_select_all(content: &mut Content, state: &EditorState) -> Task<Message> {
     if state.selected_note_path().is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
@@ -62,7 +57,7 @@ pub fn handle_select_all(
     {
         #[cfg(debug_assertions)]
         eprintln!("Editor: Handling SelectAll message.");
-        
+
         // Perform the SelectAll action
         // First move cursor to start, then select to end
         content.perform(Action::Move(Motion::DocumentStart));
@@ -81,7 +76,7 @@ pub fn handle_editor_action(
     notebook_path: &str,
     state: &EditorState,
 ) -> Task<Message> {
-    if selected_note_path.is_some()
+    if let Some(selected_path) = selected_note_path
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
@@ -89,33 +84,31 @@ pub fn handle_editor_action(
     {
         // Save the current state to history before performing the action
         // Only save if this is a modifying action (Edit)
-        if matches!(action, Action::Edit(_)) && selected_note_path.is_some() {
-            let note_path = selected_note_path.unwrap().clone();
-            undo_manager.add_to_history(&note_path, markdown_text.clone());
+        if matches!(action, Action::Edit(_)) {
+            undo_manager.add_to_history(selected_path, markdown_text.clone());
         }
-        
+
         #[cfg(debug_assertions)]
         eprintln!("Editor: Performing EditorAction: {:?}", action);
         content.perform(action);
 
         *markdown_text = content.text();
 
-        if let Some(selected_path) = selected_note_path {
-            let notebook_path_clone = notebook_path.to_string();
-            let note_path_clone = selected_path.clone();
-            let content_text = markdown_text.clone();
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Editor: Performing EditorAction: Saving content for note: {}",
-                note_path_clone
-            );
-            return Task::perform(
-                async move {
-                    notebook::save_note_content(notebook_path_clone, note_path_clone, content_text).await
-                },
-                Message::NoteContentSaved,
-            );
-        }
+        let notebook_path_clone = notebook_path.to_string();
+        let note_path_clone = selected_path.clone();
+        let content_text = markdown_text.clone();
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Editor: Performing EditorAction: Saving content for note: {}",
+            note_path_clone
+        );
+        return Task::perform(
+            async move {
+                notebook::save_note_content(notebook_path_clone, note_path_clone, content_text)
+                    .await
+            },
+            Message::NoteContentSaved,
+        );
     }
     Task::none()
 }
