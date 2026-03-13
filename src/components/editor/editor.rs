@@ -11,7 +11,7 @@ use crate::components::editor::text_management::undo_manager;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::ui::layout;
 use crate::configuration::Configuration;
-use crate::notebook::NoteMetadata;
+use crate::notebook::{self, NoteMetadata};
 
 // Import re-exported components
 use crate::components::note_explorer;
@@ -162,13 +162,22 @@ impl Editor {
 
     fn handle_text_messages(state: &mut Self, message: Message) -> Task<Message> {
         match message {
-            Message::HandleTabKey => content_handler::handle_tab_key(
-                &mut state.content,
-                &mut state.markdown_text,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            ),
+            Message::HandleTabKey => {
+                let previous_markdown = state.markdown_text.clone();
+                let save_task = content_handler::handle_tab_key(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+
+                if state.markdown_text != previous_markdown {
+                    state.touch_selected_note_last_updated();
+                }
+
+                save_task
+            }
             Message::SelectAll => {
                 content_handler::handle_select_all(&mut state.content, &state.state)
             }
@@ -180,15 +189,24 @@ impl Editor {
                 state.state.notebook_path(),
                 &state.state,
             ),
-            Message::EditorAction(action) => content_handler::handle_editor_action(
-                &mut state.content,
-                &mut state.markdown_text,
-                &mut state.undo_manager,
-                action,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            ),
+            Message::EditorAction(action) => {
+                let previous_markdown = state.markdown_text.clone();
+                let save_task = content_handler::handle_editor_action(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    &mut state.undo_manager,
+                    action,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+
+                if state.markdown_text != previous_markdown {
+                    state.touch_selected_note_last_updated();
+                }
+
+                save_task
+            }
             Message::LoadedNoteContent(note_path, new_content) => {
                 content_handler::handle_loaded_note_content(
                     &mut state.content,
@@ -378,6 +396,18 @@ impl Editor {
         }
     }
 
+    fn touch_selected_note_last_updated(&mut self) {
+        if let Some(selected_path) = self.state.selected_note_path().cloned()
+            && let Some(note) = self
+                .note_explorer
+                .notes
+                .iter_mut()
+                .find(|note| note.rel_path == selected_path)
+        {
+            note.last_updated = Some(notebook::current_timestamp_rfc3339());
+        }
+    }
+
     // Keep view method as is, but fix the state reference
     pub fn view(state: &Self) -> Element<'_, Message> {
         layout::generate_layout(
@@ -415,6 +445,15 @@ impl Editor {
                 _ => None,
             }
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_last_updated_for(&self, rel_path: &str) -> Option<String> {
+        self.note_explorer
+            .notes
+            .iter()
+            .find(|note| note.rel_path == rel_path)
+            .and_then(|note| note.last_updated.clone())
     }
 }
 

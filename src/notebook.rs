@@ -25,7 +25,7 @@ pub struct NotebookMetadata {
     pub notes: Vec<NoteMetadata>,
 }
 
-fn current_timestamp_rfc3339() -> String {
+pub fn current_timestamp_rfc3339() -> String {
     OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
         .ok()
         .and_then(|timestamp| timestamp.format(&Rfc3339).ok())

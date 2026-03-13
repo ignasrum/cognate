@@ -326,7 +326,7 @@ impl NoteExplorer {
 
                     if !folder_path.is_empty() {
                         folder_row = folder_row.push(
-                            Button::new(Text::new("Rename").size(14))
+                            Button::new(Text::new("Move").size(14))
                                 .on_press(Message::InitiateFolderRename(folder_path.clone()))
                                 .style(button::secondary) // Use button styling function
                                 .padding(3)

@@ -83,6 +83,37 @@ mod tests {
     }
 
     #[test]
+    fn editor_typing_updates_last_updated_in_memory() {
+        let mut editor = Editor::default();
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(vec![
+                NoteMetadata {
+                    rel_path: "folder/note".to_string(),
+                    labels: vec![],
+                    last_updated: None,
+                },
+            ])),
+        );
+        let _ = Editor::update(&mut editor, EditorMessage::NoteSelected("folder/note".to_string()));
+
+        assert_eq!(editor.debug_last_updated_for("folder/note"), None);
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::EditorAction(iced::widget::text_editor::Action::Edit(
+                iced::widget::text_editor::Edit::Insert('x'),
+            )),
+        );
+
+        assert!(
+            editor.debug_last_updated_for("folder/note").is_some(),
+            "typing should update last_updated in memory so the UI refreshes immediately"
+        );
+    }
+
+    #[test]
     fn layout_and_dialog_builders_cover_main_variants() {
         let mut state = EditorState::new();
         let content = Content::with_text("hello");
