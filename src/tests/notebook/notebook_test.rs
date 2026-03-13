@@ -202,6 +202,32 @@ mod tests {
     }
 
     #[test]
+    fn delete_note_removes_empty_parent_folders_after_note_delete() {
+        let notebook_dir = TestNotebookDir::new("delete_removes_empty_parents");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "only_folder/only_note",
+            &mut notes,
+        ))
+        .expect("Failed to create only_folder/only_note");
+
+        block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "only_folder/only_note",
+            &mut notes,
+        ))
+        .expect("delete_note should succeed");
+
+        assert!(notes.is_empty(), "Metadata entry should be removed");
+        assert!(
+            !Path::new(notebook_dir.as_str()).join("only_folder").exists(),
+            "Parent folder should be removed when it becomes empty"
+        );
+    }
+
+    #[test]
     fn delete_note_rejects_invalid_relative_path() {
         let notebook_dir = TestNotebookDir::new("delete_invalid_path");
         let mut notes: Vec<NoteMetadata> = Vec::new();

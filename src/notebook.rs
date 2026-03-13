@@ -277,6 +277,57 @@ fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     }
 }
 
+fn remove_empty_parent_directories(notebook_path: &Path, deleted_note_dir_path: &Path) {
+    let canonical_notebook_path = notebook_path.canonicalize().ok();
+    let mut current_parent = deleted_note_dir_path.parent().map(Path::to_path_buf);
+
+    while let Some(parent_path) = current_parent {
+        if parent_path == notebook_path {
+            break;
+        }
+
+        if let Some(canonical_root) = canonical_notebook_path.as_ref() {
+            if let Ok(canonical_parent) = parent_path.canonicalize() {
+                if canonical_parent == *canonical_root
+                    || !canonical_parent.starts_with(canonical_root)
+                {
+                    break;
+                }
+            } else {
+                break;
+            }
+        } else if parent_path == notebook_path || !parent_path.starts_with(notebook_path) {
+            break;
+        }
+
+        match fs::remove_dir(&parent_path) {
+            Ok(()) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Removed empty parent directory after delete: {}",
+                    parent_path.display()
+                );
+                current_parent = parent_path.parent().map(Path::to_path_buf);
+            }
+            Err(_e) if _e.kind() == ErrorKind::NotFound => {
+                current_parent = parent_path.parent().map(Path::to_path_buf);
+            }
+            Err(_e) if _e.kind() == ErrorKind::DirectoryNotEmpty => {
+                break;
+            }
+            Err(_e) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: Failed to remove parent directory '{}' after delete: {}",
+                    parent_path.display(),
+                    _e
+                );
+                break;
+            }
+        }
+    }
+}
+
 // The save_metadata function also lives here
 pub fn save_metadata(
     notebook_path: &str,
@@ -682,6 +733,8 @@ pub async fn delete_note(
             _e
         );
     }
+
+    remove_empty_parent_directories(full_notebook_path, &note_dir_path);
 
     #[cfg(debug_assertions)]
     eprintln!("Deletion process completed for: {}", rel_path);
