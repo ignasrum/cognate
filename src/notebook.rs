@@ -70,7 +70,7 @@ fn ensure_path_within_notebook_if_canonicalizable(
     target_path: &Path,
     rel_path: &str,
     outside_error_prefix: &str,
-    target_canonicalize_warning: &str,
+    _target_canonicalize_warning: &str,
 ) -> Result<(), String> {
     if let Ok(canonical_notebook_path) = notebook_path.canonicalize() {
         if let Ok(canonical_target_path) = target_path.canonicalize() {
@@ -79,7 +79,7 @@ fn ensure_path_within_notebook_if_canonicalizable(
             }
         } else {
             #[cfg(debug_assertions)]
-            eprintln!("{}", target_canonicalize_warning);
+            eprintln!("{}", _target_canonicalize_warning);
         }
     } else {
         #[cfg(debug_assertions)]
@@ -150,7 +150,7 @@ fn persist_metadata_if_changed(
     notes: &[NoteMetadata],
     metadata_changed: bool,
     operation_description: &str,
-    rel_path: &str,
+    _rel_path: &str,
 ) -> Result<(), String> {
     if metadata_changed {
         if let Err(e) = save_metadata(notebook_path, notes) {
@@ -173,7 +173,7 @@ fn persist_metadata_if_changed(
         #[cfg(debug_assertions)]
         eprintln!(
             "No relevant metadata found or updated for '{}', skipping metadata save.",
-            rel_path
+            _rel_path
         );
     }
 
@@ -205,12 +205,12 @@ fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
 
     let read_dir = match fs::read_dir(notebook_path) {
         Ok(entries) => entries,
-        Err(e) => {
+        Err(_e) => {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Failed to scan notebook directory '{}' for stale staged deletes: {}",
                 notebook_path.display(),
-                e
+                _e
             );
             return;
         }
@@ -219,9 +219,9 @@ fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     for entry_result in read_dir {
         let entry = match entry_result {
             Ok(entry) => entry,
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
-                eprintln!("Warning: Failed to read notebook directory entry: {}", e);
+                eprintln!("Warning: Failed to read notebook directory entry: {}", _e);
                 continue;
             }
         };
@@ -260,12 +260,12 @@ fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
             fs::remove_file(&staged_path)
         };
 
-        if let Err(e) = removal_result {
+        if let Err(_e) = removal_result {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Failed to remove stale staged delete '{}': {}",
                 staged_path.display(),
-                e
+                _e
             );
         } else {
             #[cfg(debug_assertions)]
@@ -393,11 +393,11 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
         }
     }
 
-    if metadata_changed && let Err(error) = save_metadata(&notebook_path, &notes) {
+    if metadata_changed && let Err(_error) = save_metadata(&notebook_path, &notes) {
         #[cfg(debug_assertions)]
         eprintln!(
             "Warning: failed to persist backfilled last_updated metadata: {}",
-            error
+            _error
         );
     }
 
@@ -673,13 +673,13 @@ pub async fn delete_note(
     }
 
     if let Some(staged_path) = staged_delete_path
-        && let Err(e) = fs::remove_dir_all(&staged_path)
+        && let Err(_e) = fs::remove_dir_all(&staged_path)
     {
         #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Metadata commit succeeded, but failed to finalize staged deletion '{}': {}",
             staged_path.display(),
-            e
+            _e
         );
     }
 
