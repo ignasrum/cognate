@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::notebook::NoteSearchResult;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UiMode {
     Editor,
@@ -22,6 +24,8 @@ pub struct EditorState {
     
     // Text input states
     new_label_text: String,
+    search_query: String,
+    search_results: Vec<NoteSearchResult>,
     
     // UI mode and dialog-specific state
     ui_mode: UiMode,
@@ -41,6 +45,8 @@ impl EditorState {
             selected_note_path: None,
             selected_note_labels: Vec::new(),
             new_label_text: String::new(),
+            search_query: String::new(),
+            search_results: Vec::new(),
             ui_mode: UiMode::Editor,
             new_note_path_input: String::new(),
             move_note_current_path: None,
@@ -68,6 +74,14 @@ impl EditorState {
     
     pub fn new_label_text(&self) -> &str {
         &self.new_label_text
+    }
+
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    pub fn search_results(&self) -> &[NoteSearchResult] {
+        &self.search_results
     }
     
     pub fn show_visualizer(&self) -> bool {
@@ -133,6 +147,19 @@ impl EditorState {
     
     pub fn clear_new_label_text(&mut self) {
         self.new_label_text = String::new();
+    }
+
+    pub fn set_search_query(&mut self, query: String) {
+        self.search_query = query;
+    }
+
+    pub fn set_search_results(&mut self, results: Vec<NoteSearchResult>) {
+        self.search_results = results;
+    }
+
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+        self.search_results.clear();
     }
     
     pub fn set_loading_note(&mut self, loading: bool) {

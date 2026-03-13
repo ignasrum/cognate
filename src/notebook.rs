@@ -25,6 +25,12 @@ pub struct NotebookMetadata {
     pub notes: Vec<NoteMetadata>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSearchResult {
+    pub rel_path: String,
+    pub snippet: String,
+}
+
 pub fn current_timestamp_rfc3339() -> String {
     OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
         .ok()
@@ -48,6 +54,80 @@ fn normalize_rfc3339_to_seconds(timestamp: &str) -> String {
         return base.to_string();
     }
     timestamp.to_string()
+}
+
+fn truncate_search_snippet(input: &str, max_chars: usize) -> String {
+    let char_count = input.chars().count();
+    if char_count <= max_chars {
+        input.to_string()
+    } else {
+        let mut truncated: String = input.chars().take(max_chars).collect();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
+fn find_matching_content_snippet(content: &str, normalized_query: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.to_lowercase().contains(normalized_query) {
+            return Some(truncate_search_snippet(trimmed, 120));
+        }
+    }
+
+    None
+}
+
+pub async fn search_notes(
+    notebook_path: String,
+    notes: Vec<NoteMetadata>,
+    query: String,
+) -> Vec<NoteSearchResult> {
+    let normalized_query = query.trim().to_lowercase();
+    if normalized_query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+
+    for note in notes {
+        let rel_path_match = note.rel_path.to_lowercase().contains(&normalized_query);
+        let label_match = note
+            .labels
+            .iter()
+            .find(|label| label.to_lowercase().contains(&normalized_query))
+            .cloned();
+
+        let note_file_path = Path::new(&notebook_path).join(&note.rel_path).join("note.md");
+        let content_match = fs::read_to_string(note_file_path)
+            .ok()
+            .and_then(|content| find_matching_content_snippet(&content, &normalized_query));
+
+        if rel_path_match || label_match.is_some() || content_match.is_some() {
+            let snippet = if let Some(content_snippet) = content_match {
+                content_snippet
+            } else if let Some(matching_label) = label_match {
+                format!(
+                    "Label match: {}",
+                    truncate_search_snippet(matching_label.as_str(), 100)
+                )
+            } else {
+                "Path match".to_string()
+            };
+
+            results.push(NoteSearchResult {
+                rel_path: note.rel_path,
+                snippet,
+            });
+        }
+    }
+
+    results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    results
 }
 
 fn validate_notebook_relative_path(rel_path: &str, path_kind: &str) -> Result<(), String> {

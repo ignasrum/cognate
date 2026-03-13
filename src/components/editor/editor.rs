@@ -39,6 +39,12 @@ pub enum Message {
     RemoveLabel(String),
     MetadataSaved(Result<(), String>),
 
+    // Search
+    SearchQueryChanged(String),
+    RunSearch,
+    SearchCompleted(Vec<notebook::NoteSearchResult>),
+    ClearSearch,
+
     // Content management
     NoteContentSaved(Result<(), String>),
 
@@ -131,6 +137,11 @@ impl Editor {
             Message::NewLabelInputChanged(_) | Message::AddLabel | Message::RemoveLabel(_) => {
                 Self::handle_label_messages(state, message)
             }
+
+            Message::SearchQueryChanged(_)
+            | Message::RunSearch
+            | Message::SearchCompleted(_)
+            | Message::ClearSearch => Self::handle_search_messages(state, message),
 
             Message::MetadataSaved(_) | Message::NoteContentSaved(_) => {
                 Self::handle_save_feedback_messages(message)
@@ -261,6 +272,48 @@ impl Editor {
                 label,
             ),
             _ => unreachable!("label handler received invalid message"),
+        }
+    }
+
+    fn handle_search_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
+            Message::SearchQueryChanged(query) => {
+                state.state.set_search_query(query.clone());
+                if query.trim().is_empty() {
+                    state.state.set_search_results(Vec::new());
+                    return Task::none();
+                }
+
+                let notebook_path = state.state.notebook_path().to_string();
+                let notes = state.note_explorer.notes.clone();
+                Task::perform(
+                    async move { notebook::search_notes(notebook_path, notes, query).await },
+                    Message::SearchCompleted,
+                )
+            }
+            Message::RunSearch => {
+                let query = state.state.search_query().trim().to_string();
+                if query.is_empty() || state.state.notebook_path().is_empty() {
+                    state.state.set_search_results(Vec::new());
+                    return Task::none();
+                }
+
+                let notebook_path = state.state.notebook_path().to_string();
+                let notes = state.note_explorer.notes.clone();
+                Task::perform(
+                    async move { notebook::search_notes(notebook_path, notes, query).await },
+                    Message::SearchCompleted,
+                )
+            }
+            Message::SearchCompleted(results) => {
+                state.state.set_search_results(results);
+                Task::none()
+            }
+            Message::ClearSearch => {
+                state.state.clear_search();
+                Task::none()
+            }
+            _ => unreachable!("search handler received invalid message"),
         }
     }
 

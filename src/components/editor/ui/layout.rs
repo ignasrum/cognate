@@ -1,14 +1,15 @@
-use iced::widget::{Column, Container, Row, Text, button, text_editor};
+use iced::widget::{Column, Container, Row, Text, TextInput as IcedTextInput, button, text_editor};
 use iced::{Element, Length};
 use std::collections::HashSet;
 use std::path::Path;
 
 use crate::components::editor::Message;
-use crate::components::note_explorer;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::ui::dialogs;
 use crate::components::editor::ui::input_fields;
+use crate::components::note_explorer;
 use crate::components::visualizer;
+use crate::notebook::NoteSearchResult;
 
 pub fn generate_layout<'a>(
     state: &'a EditorState,
@@ -71,6 +72,15 @@ pub fn generate_layout<'a>(
                 );
                 top_bar = top_bar.push(button("Move Note").padding(5).on_press(Message::MoveNote));
             }
+
+            top_bar = top_bar.push(
+                IcedTextInput::new("Search notes...", state.search_query())
+                    .on_input(Message::SearchQueryChanged)
+                    .on_submit(Message::RunSearch)
+                    .padding(5)
+                    .width(Length::Fixed(240.0)),
+            );
+            top_bar = top_bar.push(button("Clear").padding(5).on_press(Message::ClearSearch));
         } else if state.show_new_note_input() {
             top_bar = top_bar.push(Text::new("Creating New Note..."));
         } else if state.show_move_note_input() {
@@ -139,7 +149,14 @@ pub fn generate_layout<'a>(
          .into()
     } else {
         // Main editor view with note explorer and text editor
-        let note_explorer_view: Element<'_, Message> = Container::new(
+        let mut explorer_column = Column::new().spacing(8).width(Length::Fill);
+
+        if !state.search_query().trim().is_empty() {
+            explorer_column =
+                explorer_column.push(render_search_results(state.search_query(), state.search_results()));
+        }
+
+        explorer_column = explorer_column.push(
             note_explorer_component
                 .view(state.selected_note_path())
                 .map(|note_explorer_message| match note_explorer_message {
@@ -152,9 +169,11 @@ pub fn generate_layout<'a>(
                     }
                     other_msg => Message::NoteExplorerMsg(other_msg),
                 }),
-        )
-        .width(Length::FillPortion(2))
-        .into();
+        );
+
+        let note_explorer_view: Element<'_, Message> = Container::new(explorer_column)
+            .width(Length::FillPortion(2))
+            .into();
 
         // Remove the height constraint from the editor widget
         let mut editor_widget = text_editor(content);
@@ -244,5 +263,47 @@ pub fn generate_layout<'a>(
     Container::new(Column::new().push(top_bar).push(main_content))
         .width(Length::Fill)
         .height(Length::Fill)
+        .into()
+}
+
+fn render_search_results(search_query: &str, results: &[NoteSearchResult]) -> Element<'static, Message> {
+    let mut results_column = Column::new()
+        .spacing(4)
+        .push(
+            Text::new(format!(
+                "Search results for '{}': {}",
+                search_query,
+                results.len()
+            ))
+            .size(14),
+        );
+
+    if results.is_empty() {
+        results_column = results_column.push(Text::new("No matches found.").size(13));
+    } else {
+        let max_results_to_render = 8;
+        for result in results.iter().take(max_results_to_render) {
+            results_column = results_column.push(
+                button(Text::new(result.rel_path.clone()).size(14))
+                    .on_press(Message::NoteSelected(result.rel_path.clone()))
+                    .padding(3),
+            );
+            results_column = results_column.push(Text::new(result.snippet.clone()).size(12));
+        }
+
+        if results.len() > max_results_to_render {
+            results_column = results_column.push(
+                Text::new(format!(
+                    "... and {} more matches",
+                    results.len() - max_results_to_render
+                ))
+                .size(12),
+            );
+        }
+    }
+
+    Container::new(results_column)
+        .padding(6)
+        .width(Length::Fill)
         .into()
 }

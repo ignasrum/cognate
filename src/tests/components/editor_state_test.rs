@@ -63,16 +63,26 @@ mod tests {
         state.set_selected_note_path(Some("x/y".to_string()));
         state.set_selected_note_labels(vec!["a".to_string(), "b".to_string()]);
         state.set_new_label_text("new".to_string());
+        state.set_search_query("query".to_string());
+        state.set_search_results(vec![crate::notebook::NoteSearchResult {
+            rel_path: "x/y".to_string(),
+            snippet: "Path match".to_string(),
+        }]);
         state.set_loading_note(true);
 
         assert_eq!(state.app_version(), "1.2.3");
         assert_eq!(state.selected_note_path(), Some(&"x/y".to_string()));
         assert_eq!(state.selected_note_labels(), &["a".to_string(), "b".to_string()]);
         assert_eq!(state.new_label_text(), "new");
+        assert_eq!(state.search_query(), "query");
+        assert_eq!(state.search_results().len(), 1);
         assert!(state.is_loading_note());
 
         state.clear_new_label_text();
         assert_eq!(state.new_label_text(), "");
+        state.clear_search();
+        assert_eq!(state.search_query(), "");
+        assert!(state.search_results().is_empty());
         state.set_selected_note_path(None);
         assert_eq!(state.selected_note_path(), None);
     }

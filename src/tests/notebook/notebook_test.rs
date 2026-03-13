@@ -585,6 +585,73 @@ mod tests {
     }
 
     #[test]
+    fn search_notes_finds_matches_in_path_label_and_content() {
+        let notebook_dir = TestNotebookDir::new("search_notes");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "work/todo",
+            &mut notes,
+        ))
+        .expect("Failed to create work/todo");
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "ideas/brainstorm",
+            &mut notes,
+        ))
+        .expect("Failed to create ideas/brainstorm");
+
+        if let Some(first_note) = notes.iter_mut().find(|note| note.rel_path == "work/todo") {
+            first_note.labels.push("urgent".to_string());
+        }
+
+        fs::write(
+            Path::new(notebook_dir.as_str())
+                .join("ideas/brainstorm")
+                .join("note.md"),
+            "Need to build an indexing strategy for search results.",
+        )
+        .expect("Failed to write brainstorm note content");
+
+        let path_results = block_on(notebook::search_notes(
+            notebook_dir.as_str().to_string(),
+            notes.clone(),
+            "work".to_string(),
+        ));
+        assert_eq!(path_results.len(), 1);
+        assert_eq!(path_results[0].rel_path, "work/todo");
+        assert_eq!(path_results[0].snippet, "Path match");
+
+        let label_results = block_on(notebook::search_notes(
+            notebook_dir.as_str().to_string(),
+            notes.clone(),
+            "urgent".to_string(),
+        ));
+        assert_eq!(label_results.len(), 1);
+        assert_eq!(label_results[0].rel_path, "work/todo");
+        assert!(
+            label_results[0].snippet.contains("Label match"),
+            "Expected snippet to indicate label match"
+        );
+
+        let content_results = block_on(notebook::search_notes(
+            notebook_dir.as_str().to_string(),
+            notes.clone(),
+            "indexing".to_string(),
+        ));
+        assert_eq!(content_results.len(), 1);
+        assert_eq!(content_results[0].rel_path, "ideas/brainstorm");
+        assert!(
+            content_results[0]
+                .snippet
+                .to_lowercase()
+                .contains("indexing"),
+            "Expected snippet to include matching content"
+        );
+    }
+
+    #[test]
     fn move_folder_updates_nested_note_paths() {
         let notebook_dir = TestNotebookDir::new("move_folder");
         let mut notes: Vec<NoteMetadata> = Vec::new();
