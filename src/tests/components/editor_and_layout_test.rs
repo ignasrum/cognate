@@ -35,6 +35,7 @@ mod tests {
 
         let messages = vec![
             EditorMessage::AboutButtonClicked,
+            EditorMessage::MarkdownLinkClicked("https://example.com".to_string()),
             EditorMessage::ToggleVisualizer,
             EditorMessage::NewNote,
             EditorMessage::NewNoteInputChanged("new/path".to_string()),
@@ -58,9 +59,7 @@ mod tests {
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(
                 "folder".to_string(),
             )),
-            EditorMessage::VisualizerMsg(visualizer::Message::ToggleLabel(
-                "label".to_string(),
-            )),
+            EditorMessage::VisualizerMsg(visualizer::Message::ToggleLabel("label".to_string())),
             EditorMessage::InitiateFolderRename("folder".to_string()),
             EditorMessage::NoteCreated(Err("create failed".to_string())),
             EditorMessage::NoteMoved(Ok("new/path".to_string()), "old/path".to_string()),
@@ -81,7 +80,10 @@ mod tests {
                 },
             ])),
         );
-        let _ = Editor::update(&mut editor, EditorMessage::NoteSelected("folder/note".to_string()));
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteSelected("folder/note".to_string()),
+        );
     }
 
     #[test]
@@ -98,7 +100,10 @@ mod tests {
                 },
             ])),
         );
-        let _ = Editor::update(&mut editor, EditorMessage::NoteSelected("folder/note".to_string()));
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteSelected("folder/note".to_string()),
+        );
 
         assert_eq!(editor.debug_last_updated_for("folder/note"), None);
 
@@ -119,6 +124,7 @@ mod tests {
     fn layout_and_dialog_builders_cover_main_variants() {
         let mut state = EditorState::new();
         let content = Content::with_text("hello");
+        let markdown_content = iced::widget::markdown::Content::parse("hello");
         let mut explorer = note_explorer::NoteExplorer::new("dummy".to_string());
         explorer.notes = vec![
             NoteMetadata {
@@ -134,27 +140,33 @@ mod tests {
         ];
         let visualizer = visualizer::Visualizer::new();
 
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
 
         state.set_notebook_path("dummy".to_string());
         state.set_selected_note_path(Some("folder/note".to_string()));
         state.set_selected_note_labels(vec!["tag".to_string()]);
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
 
         state.set_show_about_info(true);
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
         state.set_show_about_info(false);
 
         state.set_show_visualizer(true);
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
         state.set_show_visualizer(false);
 
         state.show_new_note_dialog();
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
         state.hide_new_note_dialog();
 
         state.show_move_note_dialog("folder".to_string());
-        let _ = layout::generate_layout(&state, &content, &explorer, &visualizer);
+        let _ =
+            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
 
         let _ = dialogs::about_dialog("0.2.0");
         let _ = dialogs::new_note_dialog("new/path");

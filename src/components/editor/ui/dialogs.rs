@@ -46,17 +46,18 @@ pub fn new_note_dialog<'a>(new_note_path_input: &str) -> Element<'a, Message> {
 }
 
 // Move note dialog
-pub fn move_note_dialog<'a>(current_path: &str, new_path_input: &str, is_folder: bool) -> Element<'a, Message> {
+pub fn move_note_dialog<'a>(
+    current_path: &str,
+    new_path_input: &str,
+    is_folder: bool,
+) -> Element<'a, Message> {
     let prompt_text = if is_folder {
         format!(
             "Enter new relative path/name for folder '{}':",
             current_path
         )
     } else {
-        format!(
-            "Enter new relative path/name for note '{}':",
-            current_path
-        )
+        format!("Enter new relative path/name for note '{}':", current_path)
     };
 
     Column::new()

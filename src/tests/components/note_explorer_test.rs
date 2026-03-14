@@ -53,7 +53,9 @@ mod tests {
         let _ = explorer.update(Message::ToggleFolder("a".to_string()));
         assert_eq!(explorer.expanded_folders.get("a"), Some(&true));
 
-        let _ = explorer.update(Message::CollapseAllAndExpandToNote("a/sub/note3".to_string()));
+        let _ = explorer.update(Message::CollapseAllAndExpandToNote(
+            "a/sub/note3".to_string(),
+        ));
         assert_eq!(explorer.expanded_folders.get("a"), Some(&true));
         assert_eq!(explorer.expanded_folders.get("a/sub"), Some(&true));
         assert_eq!(explorer.expanded_folders.get("b"), Some(&false));
@@ -68,7 +70,9 @@ mod tests {
         }
 
         let _ = explorer.update(Message::NotesLoaded(sample_notes()));
-        let _ = explorer.update(Message::CollapseAllAndExpandToNote("a/sub/note3".to_string()));
+        let _ = explorer.update(Message::CollapseAllAndExpandToNote(
+            "a/sub/note3".to_string(),
+        ));
         let selected = "a/sub/note3".to_string();
         {
             let _populated_view = explorer.view(Some(&selected));

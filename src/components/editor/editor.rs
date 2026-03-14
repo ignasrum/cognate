@@ -73,6 +73,7 @@ pub enum Message {
 
     // UI interactions
     AboutButtonClicked,
+    MarkdownLinkClicked(String),
 }
 
 // Define the Editor struct
@@ -83,6 +84,7 @@ pub struct Editor {
     // Text management
     content: iced::widget::text_editor::Content,
     markdown_text: String,
+    markdown_preview: iced::widget::markdown::Content,
 
     // Undo/redo management
     undo_manager: UndoManager,
@@ -101,6 +103,7 @@ impl Editor {
         let mut editor_instance = Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
+            markdown_preview: iced::widget::markdown::Content::parse(""),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
@@ -167,9 +170,9 @@ impl Editor {
             | Message::CancelMoveNote
             | Message::NoteMoved(_, _) => Self::handle_note_lifecycle_messages(state, message),
 
-            Message::InitiateFolderRename(_) | Message::AboutButtonClicked => {
-                Self::handle_ui_messages(state, message)
-            }
+            Message::InitiateFolderRename(_)
+            | Message::AboutButtonClicked
+            | Message::MarkdownLinkClicked(_) => Self::handle_ui_messages(state, message),
         }
     }
 
@@ -187,6 +190,7 @@ impl Editor {
 
                 if state.markdown_text != previous_markdown {
                     state.touch_selected_note_last_updated();
+                    state.sync_markdown_preview();
                 }
 
                 save_task
@@ -194,22 +198,36 @@ impl Editor {
             Message::SelectAll => {
                 content_handler::handle_select_all(&mut state.content, &state.state)
             }
-            Message::Undo => undo_manager::handle_undo(
-                &mut state.undo_manager,
-                &mut state.content,
-                &mut state.markdown_text,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            ),
-            Message::Redo => undo_manager::handle_redo(
-                &mut state.undo_manager,
-                &mut state.content,
-                &mut state.markdown_text,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            ),
+            Message::Undo => {
+                let previous_markdown = state.markdown_text.clone();
+                let task = undo_manager::handle_undo(
+                    &mut state.undo_manager,
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+                if state.markdown_text != previous_markdown {
+                    state.sync_markdown_preview();
+                }
+                task
+            }
+            Message::Redo => {
+                let previous_markdown = state.markdown_text.clone();
+                let task = undo_manager::handle_redo(
+                    &mut state.undo_manager,
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+                if state.markdown_text != previous_markdown {
+                    state.sync_markdown_preview();
+                }
+                task
+            }
             Message::EditorAction(action) => {
                 let previous_markdown = state.markdown_text.clone();
                 let save_task = content_handler::handle_editor_action(
@@ -224,26 +242,33 @@ impl Editor {
 
                 if state.markdown_text != previous_markdown {
                     state.touch_selected_note_last_updated();
+                    state.sync_markdown_preview();
                 }
 
                 save_task
             }
             Message::LoadedNoteContent(note_path, new_content) => {
-                content_handler::handle_loaded_note_content(
+                let previous_markdown = state.markdown_text.clone();
+                let task = content_handler::handle_loaded_note_content(
                     &mut state.content,
                     &mut state.markdown_text,
                     &mut state.undo_manager,
                     &mut state.state,
                     note_path,
                     new_content,
-                )
+                );
+                if state.markdown_text != previous_markdown {
+                    state.sync_markdown_preview();
+                }
+                task
             }
             _ => unreachable!("text handler received non-text message"),
         }
     }
 
     fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
-        match message {
+        let previous_markdown = state.markdown_text.clone();
+        let task = match message {
             Message::NoteExplorerMsg(note_explorer_message) => {
                 note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,
@@ -261,7 +286,13 @@ impl Editor {
                 note_path,
             ),
             _ => unreachable!("selection handler received invalid message"),
+        };
+
+        if state.markdown_text != previous_markdown {
+            state.sync_markdown_preview();
         }
+
+        task
     }
 
     fn handle_label_messages(state: &mut Self, message: Message) -> Task<Message> {
@@ -378,7 +409,8 @@ impl Editor {
     }
 
     fn handle_note_lifecycle_messages(state: &mut Self, message: Message) -> Task<Message> {
-        match message {
+        let previous_markdown = state.markdown_text.clone();
+        let task = match message {
             Message::NewNote => {
                 state.state.show_new_note_dialog();
                 Task::none()
@@ -442,7 +474,13 @@ impl Editor {
                 &mut state.note_explorer,
             ),
             _ => unreachable!("note-lifecycle handler received invalid message"),
+        };
+
+        if state.markdown_text != previous_markdown {
+            state.sync_markdown_preview();
         }
+
+        task
     }
 
     fn handle_ui_messages(state: &mut Self, message: Message) -> Task<Message> {
@@ -455,8 +493,17 @@ impl Editor {
                 state.state.toggle_about_info();
                 Task::none()
             }
+            Message::MarkdownLinkClicked(_uri) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Markdown link clicked: {}", _uri);
+                Task::none()
+            }
             _ => unreachable!("ui handler received invalid message"),
         }
+    }
+
+    fn sync_markdown_preview(&mut self) {
+        self.markdown_preview = iced::widget::markdown::Content::parse(&self.markdown_text);
     }
 
     fn touch_selected_note_last_updated(&mut self) {
@@ -476,6 +523,7 @@ impl Editor {
         layout::generate_layout(
             &state.state,
             &state.content,
+            &state.markdown_preview,
             &state.note_explorer,
             &state.visualizer,
         )
@@ -529,6 +577,7 @@ impl Default for Editor {
         Self {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
+            markdown_preview: iced::widget::markdown::Content::parse(""),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(String::new()),

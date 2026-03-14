@@ -235,7 +235,10 @@ impl UndoManager {
 
     fn advance_undo_index_for_redo(&mut self, note_path: &str) {
         let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
-        let max_index = self.undo_histories.get(note_path).map_or(0, |history| history.len());
+        let max_index = self
+            .undo_histories
+            .get(note_path)
+            .map_or(0, |history| history.len());
         let new_index = (current_index + 1).min(max_index);
 
         self.undo_indices.insert(note_path.to_string(), new_index);

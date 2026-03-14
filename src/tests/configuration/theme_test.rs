@@ -12,9 +12,18 @@ mod tests {
 
     #[test]
     fn convert_str_to_theme_supports_display_name_spacing_variants() {
-        assert_eq!(convert_str_to_theme("Catppuccin-Macchiato"), Theme::CatppuccinMacchiato);
-        assert_eq!(convert_str_to_theme("Catppuccin Macchiato"), Theme::CatppuccinMacchiato);
-        assert_eq!(convert_str_to_theme("catppuccinmacchiato"), Theme::CatppuccinMacchiato);
+        assert_eq!(
+            convert_str_to_theme("Catppuccin-Macchiato"),
+            Theme::CatppuccinMacchiato
+        );
+        assert_eq!(
+            convert_str_to_theme("Catppuccin Macchiato"),
+            Theme::CatppuccinMacchiato
+        );
+        assert_eq!(
+            convert_str_to_theme("catppuccinmacchiato"),
+            Theme::CatppuccinMacchiato
+        );
     }
 
     #[test]

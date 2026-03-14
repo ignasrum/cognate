@@ -102,7 +102,9 @@ pub async fn search_notes(
             .find(|label| label.to_lowercase().contains(&normalized_query))
             .cloned();
 
-        let note_file_path = Path::new(&notebook_path).join(&note.rel_path).join("note.md");
+        let note_file_path = Path::new(&notebook_path)
+            .join(&note.rel_path)
+            .join("note.md");
         let content_match = fs::read_to_string(note_file_path)
             .ok()
             .and_then(|content| find_matching_content_snippet(&content, &normalized_query));

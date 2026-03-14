@@ -1,4 +1,6 @@
-use iced::widget::{Column, Container, Row, Text, TextInput as IcedTextInput, button, text_editor};
+use iced::widget::{
+    Column, Container, Row, Text, TextInput as IcedTextInput, button, markdown, text_editor,
+};
 use iced::{Element, Length};
 use std::collections::HashSet;
 use std::path::Path;
@@ -14,6 +16,7 @@ use crate::notebook::NoteSearchResult;
 pub fn generate_layout<'a>(
     state: &'a EditorState,
     content: &'a iced::widget::text_editor::Content,
+    markdown_content: &'a iced::widget::markdown::Content,
     note_explorer_component: &'a note_explorer::NoteExplorer,
     visualizer_component: &'a visualizer::Visualizer,
 ) -> Element<'a, Message> {
@@ -23,7 +26,11 @@ pub fn generate_layout<'a>(
 
     // Add the about/back button when appropriate
     if !is_dialog_open && !state.show_visualizer() {
-        let about_button_text = if state.show_about_info() { "Back" } else { "About" };
+        let about_button_text = if state.show_about_info() {
+            "Back"
+        } else {
+            "About"
+        };
         top_bar = top_bar.push(
             button(about_button_text)
                 .padding(5)
@@ -94,7 +101,8 @@ pub fn generate_layout<'a>(
                 }
             }
 
-            let is_renaming_folder = state.move_note_current_path()
+            let is_renaming_folder = state
+                .move_note_current_path()
                 .is_some_and(|p| all_folders_in_notes.contains(p));
 
             let operation_text = if is_renaming_folder {
@@ -125,35 +133,40 @@ pub fn generate_layout<'a>(
     } else if state.show_new_note_input() {
         dialogs::new_note_dialog(state.new_note_path_input())
     } else if state.show_move_note_input() {
-        let is_folder = state.move_note_current_path()
+        let is_folder = state
+            .move_note_current_path()
             .map(|p| state.is_folder_path(p, &note_explorer_component.notes))
             .unwrap_or(false);
-            
+
         dialogs::move_note_dialog(
             state.move_note_current_path().unwrap_or(&String::new()),
             state.move_note_new_path_input(),
-            is_folder
+            is_folder,
         )
     } else if state.notebook_path().is_empty() {
         Container::new(
-            Text::new("Please configure the 'notebook_path' in your config.json file to open a notebook.")
-                .size(20)
-                .style(|_: &_| iced::widget::text::Style {
-                    color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
-                })
+            Text::new(
+                "Please configure the 'notebook_path' in your config.json file to open a notebook.",
+            )
+            .size(20)
+            .style(|_: &_| iced::widget::text::Style {
+                color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
+            }),
         )
-         .center_x(Length::Fill)
-         .center_y(Length::Fill)
-         .width(Length::Fill)
-         .height(Length::Fill)
-         .into()
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     } else {
         // Main editor view with note explorer and text editor
         let mut explorer_column = Column::new().spacing(8).width(Length::Fill);
 
         if !state.search_query().trim().is_empty() {
-            explorer_column =
-                explorer_column.push(render_search_results(state.search_query(), state.search_results()));
+            explorer_column = explorer_column.push(render_search_results(
+                state.search_query(),
+                state.search_results(),
+            ));
         }
 
         explorer_column = explorer_column.push(
@@ -182,7 +195,8 @@ pub fn generate_layout<'a>(
             editor_widget = editor_widget.on_action(Message::EditorAction);
         }
 
-        let selected_note_last_updated = state.selected_note_path()
+        let selected_note_last_updated = state
+            .selected_note_path()
             .and_then(|selected_path| {
                 note_explorer_component
                     .notes
@@ -192,23 +206,20 @@ pub fn generate_layout<'a>(
             .and_then(|note| note.last_updated.as_deref());
 
         let selected_note_info = state.selected_note_path().map(|_| {
-            let updated_text = selected_note_last_updated
-                .map_or_else(|| "Last updated: unknown".to_string(), |value| {
-                    format!("Last updated: {}", value)
-                });
+            let updated_text = selected_note_last_updated.map_or_else(
+                || "Last updated: unknown".to_string(),
+                |value| format!("Last updated: {}", value),
+            );
 
-            Row::new()
-                .push(
-                    Container::new(Text::new(updated_text).size(14))
-                        .width(Length::Fill)
-                        .align_x(iced::Alignment::End),
-                )
+            Row::new().push(
+                Container::new(Text::new(updated_text).size(14))
+                    .width(Length::Fill)
+                    .align_x(iced::Alignment::End),
+            )
         });
 
         // Create a column with the editor and a bottom spacer
-        let mut editor_with_bottom_spacer = Column::new()
-            .spacing(5)
-            .width(Length::Fill);
+        let mut editor_with_bottom_spacer = Column::new().spacing(5).width(Length::Fill);
 
         if let Some(note_info_row) = selected_note_info {
             editor_with_bottom_spacer = editor_with_bottom_spacer.push(note_info_row);
@@ -216,9 +227,11 @@ pub fn generate_layout<'a>(
 
         editor_with_bottom_spacer = editor_with_bottom_spacer
             .push(editor_widget)
-            .push(Container::new(Text::new("")) // Empty container as spacer
-                  .height(Length::Fixed(5.0))
-                  .width(Length::Fill))
+            .push(
+                Container::new(Text::new("")) // Empty container as spacer
+                    .height(Length::Fixed(5.0))
+                    .width(Length::Fill),
+            )
             .width(Length::Fill);
 
         // Create a row with the editor column and a right-side spacer
@@ -231,15 +244,46 @@ pub fn generate_layout<'a>(
         let editor_scrollable = iced::widget::scrollable(editor_with_padding)
             .width(Length::Fill)
             .height(Length::Fill);
-            
+
         // Create the editor container with the scrollable editor
         let editor_container = Container::new(editor_scrollable)
-            .width(Length::FillPortion(8))
+            .width(Length::FillPortion(4))
             .height(Length::Fill);
+
+        let markdown_preview_body: Element<'_, Message> = if state.selected_note_path().is_some() {
+            markdown::view(markdown_content.items(), iced::Theme::Dark)
+                .map(Message::MarkdownLinkClicked)
+        } else {
+            Container::new(Text::new("Select a note to see markdown preview."))
+                .width(Length::Fill)
+                .padding(10)
+                .into()
+        };
+
+        let markdown_preview_scrollable = iced::widget::scrollable(markdown_preview_body)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        let markdown_preview_container = Container::new(markdown_preview_scrollable)
+            .width(Length::FillPortion(4))
+            .height(Length::Fill)
+            .padding(8)
+            .style(|theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(theme.palette().background)),
+                text_color: None,
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: theme.palette().primary,
+                },
+                shadow: iced::Shadow::default(),
+                snap: false,
+            });
 
         let content_row = Row::new()
             .push(note_explorer_view)
             .push(editor_container)
+            .push(markdown_preview_container)
             .spacing(10)
             .padding(10)
             .width(Length::Fill)
@@ -266,17 +310,18 @@ pub fn generate_layout<'a>(
         .into()
 }
 
-fn render_search_results(search_query: &str, results: &[NoteSearchResult]) -> Element<'static, Message> {
-    let mut results_column = Column::new()
-        .spacing(4)
-        .push(
-            Text::new(format!(
-                "Search results for '{}': {}",
-                search_query,
-                results.len()
-            ))
-            .size(14),
-        );
+fn render_search_results(
+    search_query: &str,
+    results: &[NoteSearchResult],
+) -> Element<'static, Message> {
+    let mut results_column = Column::new().spacing(4).push(
+        Text::new(format!(
+            "Search results for '{}': {}",
+            search_query,
+            results.len()
+        ))
+        .size(14),
+    );
 
     if results.is_empty() {
         results_column = results_column.push(Text::new("No matches found.").size(13));

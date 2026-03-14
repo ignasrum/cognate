@@ -72,7 +72,10 @@ mod tests {
 
         assert_eq!(state.app_version(), "1.2.3");
         assert_eq!(state.selected_note_path(), Some(&"x/y".to_string()));
-        assert_eq!(state.selected_note_labels(), &["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            state.selected_note_labels(),
+            &["a".to_string(), "b".to_string()]
+        );
         assert_eq!(state.new_label_text(), "new");
         assert_eq!(state.search_query(), "query");
         assert_eq!(state.search_results().len(), 1);

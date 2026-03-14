@@ -5,7 +5,7 @@ Cognate is a simple note taking application built with the Iced GUI library for 
 
 ## Features
 
-- **Markdown Editor:** Edit your notes using a built-in Markdown editor.
+- **Markdown Editor + Live Preview:** Edit your notes in a Markdown editor with a split-view rendered preview.
 - **Note Organization:** Notes are stored in a directory structure within a designated notebook path.
 - **Note Management:**
     - Create new notes (with support for nested directories).

@@ -48,7 +48,8 @@ mod tests {
             }"#,
         );
 
-        let config = read_configuration(config_file.as_str()).expect("Expected valid configuration");
+        let config =
+            read_configuration(config_file.as_str()).expect("Expected valid configuration");
 
         assert_eq!(config.theme, "CatppuccinMacchiato");
         assert_eq!(config.notebook_path, "/tmp/my_notebook");

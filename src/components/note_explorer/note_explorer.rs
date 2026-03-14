@@ -1,8 +1,8 @@
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
-use iced::{task::Task, Element, Length};
+use iced::{Element, Length, task::Task};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
@@ -354,8 +354,8 @@ impl NoteExplorer {
                     path: note_path,
                     ..
                 } => {
-                    let is_selected = selected_note_path
-                        .is_some_and(|selected_path| note_path == selected_path);
+                    let is_selected =
+                        selected_note_path.is_some_and(|selected_path| note_path == selected_path);
                     let button_style = if is_selected {
                         button::primary // Use button styling function
                     } else {
@@ -406,7 +406,7 @@ impl NoteExplorer {
         Scrollable::new(
             Container::new(column)
                 .padding([0.0, 15.0])
-                .width(Length::Fill)
+                .width(Length::Fill),
         )
         .into()
     }

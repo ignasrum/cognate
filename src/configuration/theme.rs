@@ -16,9 +16,7 @@ pub fn convert_str_to_theme(theme_str: &str) -> Theme {
     let normalized_input = normalize_theme_name(theme_str);
 
     if normalized_input.is_empty() {
-        eprintln!(
-            "Warning: Theme value is empty. Defaulting to Dark."
-        );
+        eprintln!("Warning: Theme value is empty. Defaulting to Dark.");
         return Theme::Dark;
     }
 

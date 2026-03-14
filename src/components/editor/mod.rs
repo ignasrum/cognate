@@ -1,8 +1,8 @@
 // Make submodules public
+pub mod actions;
 pub mod state;
 pub mod text_management;
 pub mod ui;
-pub mod actions;
 
 #[path = "editor.rs"]
 mod core;

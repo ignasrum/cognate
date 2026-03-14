@@ -1,2 +1,2 @@
-pub mod note_actions;
 pub mod label_actions;
+pub mod note_actions;

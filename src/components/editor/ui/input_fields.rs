@@ -1,5 +1,5 @@
-use iced::widget::{Button, Row, Text, text_input, button};
 use iced::Length;
+use iced::widget::{Button, Row, Text, button, text_input};
 
 use crate::components::editor::Message;
 
@@ -18,8 +18,7 @@ pub fn create_labels_section<'a>(
         } else {
             for label in selected_labels {
                 labels_row = labels_row.push(
-                    button(Text::new(label.clone()))
-                        .on_press(Message::RemoveLabel(label.clone())),
+                    button(Text::new(label.clone())).on_press(Message::RemoveLabel(label.clone())),
                 );
             }
         }
@@ -31,7 +30,11 @@ pub fn create_labels_section<'a>(
                     .on_submit(Message::AddLabel)
                     .width(Length::Fixed(150.0)),
             )
-            .push(Button::new(Text::new("Add Label")).padding(5).on_press(Message::AddLabel));
+            .push(
+                Button::new(Text::new("Add Label"))
+                    .padding(5)
+                    .on_press(Message::AddLabel),
+            );
     } else {
         labels_row = labels_row.push(Text::new("Select a note to manage labels."));
     }

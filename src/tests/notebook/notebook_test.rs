@@ -49,7 +49,9 @@ mod tests {
         }
 
         fn as_str(&self) -> &str {
-            self.path.to_str().expect("Temporary path must be valid UTF-8")
+            self.path
+                .to_str()
+                .expect("Temporary path must be valid UTF-8")
         }
     }
 
@@ -106,7 +108,9 @@ mod tests {
         assert!(notes[0].last_updated.is_some());
         assert_note_md_exists(&notebook_dir, "work/todo");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "work/todo");
         assert!(loaded[0].last_updated.is_some());
@@ -167,15 +171,21 @@ mod tests {
         ))
         .expect("Failed to create beta");
 
-        block_on(notebook::delete_note(notebook_dir.as_str(), "alpha", &mut notes))
-            .expect("delete_note should succeed");
+        block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "alpha",
+            &mut notes,
+        ))
+        .expect("delete_note should succeed");
 
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].rel_path, "beta");
         assert_note_md_not_exists(&notebook_dir, "alpha");
         assert_note_md_exists(&notebook_dir, "beta");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "beta");
     }
@@ -222,7 +232,9 @@ mod tests {
 
         assert!(notes.is_empty(), "Metadata entry should be removed");
         assert!(
-            !Path::new(notebook_dir.as_str()).join("only_folder").exists(),
+            !Path::new(notebook_dir.as_str())
+                .join("only_folder")
+                .exists(),
             "Parent folder should be removed when it becomes empty"
         );
     }
@@ -274,7 +286,9 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].rel_path, "new/path");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "new/path");
     }
@@ -348,7 +362,9 @@ mod tests {
         assert!(notes.is_empty(), "In-memory metadata should be rolled back");
         assert_note_md_not_exists(&notebook_dir, "rollback/create");
         assert!(
-            !Path::new(notebook_dir.as_str()).join("rollback/create").exists(),
+            !Path::new(notebook_dir.as_str())
+                .join("rollback/create")
+                .exists(),
             "Created note directory should be rolled back on metadata failure"
         );
     }
@@ -364,8 +380,7 @@ mod tests {
 
         let note_dir = Path::new(notebook_dir.as_str()).join("rollback/delete");
         fs::create_dir_all(&note_dir).expect("Failed to create note directory");
-        fs::write(note_dir.join("note.md"), "rollback")
-            .expect("Failed to create note file");
+        fs::write(note_dir.join("note.md"), "rollback").expect("Failed to create note file");
         fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
             .expect("Failed to create metadata.json directory trap");
 
@@ -443,7 +458,9 @@ mod tests {
 
         assert_eq!(content, "hello from test");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
         assert_eq!(loaded.len(), 1);
         assert_ne!(
             loaded[0].last_updated.as_deref(),
@@ -451,7 +468,11 @@ mod tests {
             "save_note_content should refresh last_updated metadata"
         );
         assert!(
-            !loaded[0].last_updated.as_deref().unwrap_or("").contains('.'),
+            !loaded[0]
+                .last_updated
+                .as_deref()
+                .unwrap_or("")
+                .contains('.'),
             "last_updated should not include subsecond precision"
         );
     }
@@ -487,7 +508,9 @@ mod tests {
         ))
         .expect("save_note_content should succeed");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
         assert_eq!(
             loaded[0].last_updated.as_deref(),
             Some("2000-01-01T00:00:00Z"),
@@ -504,7 +527,9 @@ mod tests {
         )
         .expect("Failed to write invalid metadata");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
 
         assert!(loaded.is_empty());
     }
@@ -515,8 +540,7 @@ mod tests {
         let note_dir = Path::new(notebook_dir.as_str()).join("legacy/note");
 
         fs::create_dir_all(&note_dir).expect("Failed to create legacy note directory");
-        fs::write(note_dir.join("note.md"), "legacy")
-            .expect("Failed to create legacy note file");
+        fs::write(note_dir.join("note.md"), "legacy").expect("Failed to create legacy note file");
         fs::write(
             Path::new(notebook_dir.as_str()).join("metadata.json"),
             r#"{
@@ -530,13 +554,19 @@ mod tests {
         )
         .expect("Failed to write legacy metadata");
 
-        let loaded = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let loaded = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "legacy/note");
         assert!(loaded[0].last_updated.is_some());
         assert!(
-            !loaded[0].last_updated.as_deref().unwrap_or("").contains('.'),
+            !loaded[0]
+                .last_updated
+                .as_deref()
+                .unwrap_or("")
+                .contains('.'),
             "backfilled last_updated should not include subsecond precision"
         );
 
@@ -548,15 +578,16 @@ mod tests {
     #[test]
     fn load_notes_metadata_cleans_up_stale_staged_delete_entries() {
         let notebook_dir = TestNotebookDir::new("cleanup_stale_staged_delete");
-        let stale_stage = Path::new(notebook_dir.as_str()).join(
-            ".cognate_txn_delete_rollback__note_1",
-        );
+        let stale_stage =
+            Path::new(notebook_dir.as_str()).join(".cognate_txn_delete_rollback__note_1");
         fs::create_dir_all(stale_stage.join("nested"))
             .expect("Failed to create stale staged delete directory");
         fs::write(stale_stage.join("nested").join("note.md"), "stale")
             .expect("Failed to populate stale staged delete directory");
 
-        let _ = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let _ = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
 
         assert!(
             !stale_stage.exists(),
@@ -576,7 +607,9 @@ mod tests {
         fs::write(recent_stage.join("nested").join("note.md"), "recent")
             .expect("Failed to populate recent staged delete directory");
 
-        let _ = block_on(notebook::load_notes_metadata(notebook_dir.as_str().to_string()));
+        let _ = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
 
         assert!(
             recent_stage.exists(),
