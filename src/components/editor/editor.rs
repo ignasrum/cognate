@@ -28,6 +28,7 @@ pub enum Message {
     HandleTabKey,
     SelectAll,
     Undo,
+    Redo,
 
     // Note explorer interaction
     NoteExplorerMsg(note_explorer::Message),
@@ -127,6 +128,7 @@ impl Editor {
             Message::HandleTabKey
             | Message::SelectAll
             | Message::Undo
+            | Message::Redo
             | Message::EditorAction(_)
             | Message::LoadedNoteContent(_, _) => Self::handle_text_messages(state, message),
 
@@ -193,6 +195,14 @@ impl Editor {
                 content_handler::handle_select_all(&mut state.content, &state.state)
             }
             Message::Undo => undo_manager::handle_undo(
+                &mut state.undo_manager,
+                &mut state.content,
+                &mut state.markdown_text,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            ),
+            Message::Redo => undo_manager::handle_redo(
                 &mut state.undo_manager,
                 &mut state.content,
                 &mut state.markdown_text,
@@ -484,6 +494,9 @@ impl Editor {
                             return Some(Message::SelectAll);
                         }
                         if c == "z" || c == "Z" {
+                            if modifiers.shift() {
+                                return Some(Message::Redo);
+                            }
                             return Some(Message::Undo);
                         }
                     }

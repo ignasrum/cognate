@@ -53,6 +53,8 @@ mod tests {
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err("save failed".to_string())),
             EditorMessage::LoadedNoteContent("folder/note".to_string(), "body".to_string()),
+            EditorMessage::Undo,
+            EditorMessage::Redo,
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(
                 "folder".to_string(),
             )),

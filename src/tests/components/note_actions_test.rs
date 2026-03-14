@@ -1,15 +1,15 @@
 #[cfg(test)]
 mod tests {
+    use crate::components::editor::Message as EditorMessage;
     use crate::components::editor::actions::note_actions;
     use crate::components::editor::state::editor_state::EditorState;
     use crate::components::editor::text_management::undo_manager::UndoManager;
-    use crate::components::editor::Message as EditorMessage;
     use crate::components::note_explorer;
     use crate::components::note_explorer::NoteExplorer;
     use crate::components::visualizer;
     use crate::components::visualizer::Visualizer;
     use crate::notebook::NoteMetadata;
-    use iced::widget::text_editor::Content;
+    use iced::widget::text_editor::{Content, Cursor, Position};
 
     fn note(path: &str, labels: &[&str]) -> NoteMetadata {
         NoteMetadata {
@@ -23,6 +23,13 @@ mod tests {
         let mut state = EditorState::new();
         state.set_notebook_path("dummy_notebook".to_string());
         state
+    }
+
+    fn cursor(line: usize, column: usize) -> Cursor {
+        Cursor {
+            position: Position { line, column },
+            selection: None,
+        }
     }
 
     #[test]
@@ -65,7 +72,7 @@ mod tests {
 
         state.set_selected_note_path(Some("a".to_string()));
         undo.initialize_history("a");
-        undo.add_to_history("a", "snapshot".to_string());
+        undo.add_to_history("a", "snapshot".to_string(), cursor(0, 0));
 
         let _ = note_actions::handle_note_deleted(
             Ok(()),
@@ -135,7 +142,7 @@ mod tests {
         let _ = note_actions::handle_confirm_move_note(&mut state, notes.clone());
 
         undo.initialize_history("a");
-        undo.add_to_history("a", "v1".to_string());
+        undo.add_to_history("a", "v1".to_string(), cursor(0, 0));
         state.show_move_note_dialog("a".to_string());
         let _ = note_actions::handle_note_moved(
             Ok("c".to_string()),

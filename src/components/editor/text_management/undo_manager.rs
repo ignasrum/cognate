@@ -1,4 +1,7 @@
-use iced::{task::Task, widget::text_editor::Content};
+use iced::{
+    task::Task,
+    widget::text_editor::{Content, Cursor, Position},
+};
 use std::collections::HashMap; // Use Task instead of Command
 
 use crate::components::editor::Message;
@@ -6,8 +9,52 @@ use crate::components::editor::state::editor_state::EditorState;
 use crate::notebook;
 
 pub struct UndoManager {
-    undo_histories: HashMap<String, Vec<String>>, // Store previous states for undo per note
-    undo_indices: HashMap<String, usize>,         // Track position in undo history per note
+    undo_histories: HashMap<String, Vec<UndoSnapshot>>, // Store previous states for undo per note
+    undo_indices: HashMap<String, usize>,               // Track position in undo history per note
+    redo_histories: HashMap<String, Vec<UndoSnapshot>>, // Store redo states per note
+}
+
+#[derive(Clone)]
+struct UndoSnapshot {
+    content: String,
+    cursor: Cursor,
+}
+
+fn clamp_position_to_content(content: &Content, position: Position) -> Position {
+    let line_count = content.line_count();
+    if line_count == 0 {
+        return Position { line: 0, column: 0 };
+    }
+
+    let line = position.line.min(line_count.saturating_sub(1));
+    let max_column = content.line(line).map_or(0, |line| line.text.len());
+
+    Position {
+        line,
+        column: position.column.min(max_column),
+    }
+}
+
+fn clamp_cursor_to_content(content: &Content, cursor: Cursor) -> Cursor {
+    Cursor {
+        position: clamp_position_to_content(content, cursor.position),
+        selection: cursor
+            .selection
+            .map(|selection| clamp_position_to_content(content, selection)),
+    }
+}
+
+fn cursor_at_end(content: &str) -> Cursor {
+    let (line, column) = content
+        .split('\n')
+        .enumerate()
+        .last()
+        .map_or((0, 0), |(line, text)| (line, text.len()));
+
+    Cursor {
+        position: Position { line, column },
+        selection: None,
+    }
 }
 
 impl UndoManager {
@@ -15,6 +62,7 @@ impl UndoManager {
         Self {
             undo_histories: HashMap::new(),
             undo_indices: HashMap::new(),
+            redo_histories: HashMap::new(),
         }
     }
 
@@ -39,7 +87,7 @@ impl UndoManager {
         );
     }
 
-    pub fn add_to_history(&mut self, note_path: &str, content: String) {
+    pub fn add_to_history(&mut self, note_path: &str, content: String, cursor: Cursor) {
         let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
 
         let history = self
@@ -47,13 +95,27 @@ impl UndoManager {
             .entry(note_path.to_string())
             .or_default();
 
+        // A new edit invalidates redo states.
+        self.redo_histories.remove(note_path);
+
         // Remove any future redo states if we're in the middle of the history
         if current_index < history.len() {
             history.truncate(current_index);
         }
 
+        // Avoid creating no-op undo steps when the text did not change.
+        // This keeps undo aligned with text edits instead of cursor-only jumps.
+        if let Some(last_snapshot) = history.last_mut()
+            && last_snapshot.content == content
+        {
+            last_snapshot.cursor = cursor;
+            self.undo_indices
+                .insert(note_path.to_string(), history.len());
+            return;
+        }
+
         // Add current state to history
-        history.push(content);
+        history.push(UndoSnapshot { content, cursor });
         let new_index = history.len();
 
         // Update the index for this note
@@ -95,8 +157,12 @@ impl UndoManager {
             // Add the initial content as the first history entry
             if !content.is_empty() {
                 // Add initial content to history
-                history.push(content.to_string());
+                history.push(UndoSnapshot {
+                    content: content.to_string(),
+                    cursor: cursor_at_end(content),
+                });
                 self.undo_indices.insert(note_path.to_string(), 1);
+                self.redo_histories.remove(note_path);
 
                 #[cfg(debug_assertions)]
                 eprintln!(
@@ -117,7 +183,7 @@ impl UndoManager {
             // This handles potential external file changes
             if current_index > 0
                 && current_index <= history.len()
-                && history[current_index - 1] != content
+                && history[current_index - 1].content != content
             {
                 #[cfg(debug_assertions)]
                 eprintln!(
@@ -126,28 +192,58 @@ impl UndoManager {
                 );
 
                 // Content has changed, add it to history
-                history.push(content.to_string());
+                history.push(UndoSnapshot {
+                    content: content.to_string(),
+                    cursor: cursor_at_end(content),
+                });
                 self.undo_indices
                     .insert(note_path.to_string(), history.len());
+                self.redo_histories.remove(note_path);
             }
         }
     }
 
-    pub fn get_previous_content(&mut self, note_path: &str) -> Option<String> {
+    fn get_previous_snapshot(&mut self, note_path: &str) -> Option<UndoSnapshot> {
         if let Some(current_index) = self.undo_indices.get(note_path).copied()
             && current_index > 0
             && let Some(history) = self.undo_histories.get(note_path)
             && !history.is_empty()
         {
             let new_index = current_index - 1;
-            let previous_content = history[new_index].clone();
+            let previous_snapshot = history[new_index].clone();
 
             // Update the index
             self.undo_indices.insert(note_path.to_string(), new_index);
 
-            return Some(previous_content);
+            return Some(previous_snapshot);
         }
         None
+    }
+
+    fn add_redo_snapshot(&mut self, note_path: &str, snapshot: UndoSnapshot) {
+        self.redo_histories
+            .entry(note_path.to_string())
+            .or_default()
+            .push(snapshot);
+    }
+
+    fn get_next_redo_snapshot(&mut self, note_path: &str) -> Option<UndoSnapshot> {
+        self.redo_histories
+            .get_mut(note_path)
+            .and_then(|history| history.pop())
+    }
+
+    fn advance_undo_index_for_redo(&mut self, note_path: &str) {
+        let current_index = self.undo_indices.get(note_path).copied().unwrap_or(0);
+        let max_index = self.undo_histories.get(note_path).map_or(0, |history| history.len());
+        let new_index = (current_index + 1).min(max_index);
+
+        self.undo_indices.insert(note_path.to_string(), new_index);
+    }
+
+    pub fn get_previous_content(&mut self, note_path: &str) -> Option<String> {
+        self.get_previous_snapshot(note_path)
+            .map(|snapshot| snapshot.content)
     }
 
     pub fn handle_path_change(&mut self, old_path: &str, new_path: &str) {
@@ -157,6 +253,16 @@ impl UndoManager {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Updated undo history key from '{}' to '{}'",
+                old_path, new_path
+            );
+        }
+
+        // Update redo history collection
+        if let Some(history) = self.redo_histories.remove(old_path) {
+            self.redo_histories.insert(new_path.to_string(), history);
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Updated redo history key from '{}' to '{}'",
                 old_path, new_path
             );
         }
@@ -175,6 +281,7 @@ impl UndoManager {
     pub fn remove_history(&mut self, note_path: &str) {
         self.undo_histories.remove(note_path);
         self.undo_indices.remove(note_path);
+        self.redo_histories.remove(note_path);
         #[cfg(debug_assertions)]
         eprintln!("Removed undo history and index for note '{}'", note_path);
     }
@@ -195,16 +302,25 @@ pub fn handle_undo(
             && !state.show_new_note_input()
             && !state.show_about_info()
         {
-            if let Some(previous_content) = undo_manager.get_previous_content(note_path) {
+            if let Some(previous_snapshot) = undo_manager.get_previous_snapshot(note_path) {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "Editor: Performing undo to previous state for note: {}",
                     note_path
                 );
 
+                undo_manager.add_redo_snapshot(
+                    note_path,
+                    UndoSnapshot {
+                        content: markdown_text.clone(),
+                        cursor: content.cursor(),
+                    },
+                );
+
                 // Update content with the previous state
-                *content = Content::with_text(&previous_content);
-                *markdown_text = previous_content.clone();
+                *content = Content::with_text(&previous_snapshot.content);
+                content.move_to(clamp_cursor_to_content(content, previous_snapshot.cursor));
+                *markdown_text = previous_snapshot.content.clone();
 
                 // Save the content after undo
                 let notebook_path_clone = notebook_path.to_string();
@@ -215,7 +331,7 @@ pub fn handle_undo(
                         notebook::save_note_content(
                             notebook_path_clone,
                             note_path_clone,
-                            previous_content,
+                            previous_snapshot.content,
                         )
                         .await
                     },
@@ -232,6 +348,63 @@ pub fn handle_undo(
     } else {
         #[cfg(debug_assertions)]
         eprintln!("Editor: Cannot undo - no note selected");
+    }
+
+    Task::none()
+}
+
+pub fn handle_redo(
+    undo_manager: &mut UndoManager,
+    content: &mut Content,
+    markdown_text: &mut String,
+    selected_note_path: Option<&String>,
+    notebook_path: &str,
+    state: &EditorState,
+) -> Task<Message> {
+    if let Some(note_path) = selected_note_path {
+        if !state.show_visualizer()
+            && !state.show_move_note_input()
+            && !state.show_new_note_input()
+            && !state.show_about_info()
+        {
+            if let Some(next_snapshot) = undo_manager.get_next_redo_snapshot(note_path) {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Editor: Performing redo to next state for note: {}",
+                    note_path
+                );
+
+                undo_manager.advance_undo_index_for_redo(note_path);
+
+                *content = Content::with_text(&next_snapshot.content);
+                content.move_to(clamp_cursor_to_content(content, next_snapshot.cursor));
+                *markdown_text = next_snapshot.content.clone();
+
+                let notebook_path_clone = notebook_path.to_string();
+                let note_path_clone = note_path.clone();
+
+                return Task::perform(
+                    async move {
+                        notebook::save_note_content(
+                            notebook_path_clone,
+                            note_path_clone,
+                            next_snapshot.content,
+                        )
+                        .await
+                    },
+                    Message::NoteContentSaved,
+                );
+            } else {
+                #[cfg(debug_assertions)]
+                eprintln!("Editor: Cannot redo - no next state available");
+            }
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("Editor: Cannot redo - note is in a state that doesn't allow redo");
+        }
+    } else {
+        #[cfg(debug_assertions)]
+        eprintln!("Editor: Cannot redo - no note selected");
     }
 
     Task::none()

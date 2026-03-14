@@ -87,7 +87,7 @@ pub fn handle_editor_action(
 
         if matches!(action, Action::Edit(_)) {
             // Save the current state to history before applying an actual text edit.
-            undo_manager.add_to_history(selected_path, markdown_text.clone());
+            undo_manager.add_to_history(selected_path, markdown_text.clone(), content.cursor());
             content.perform(action);
             *markdown_text = content.text();
 
