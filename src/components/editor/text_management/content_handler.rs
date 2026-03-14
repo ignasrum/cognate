@@ -18,6 +18,7 @@ pub fn handle_tab_key(
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         #[cfg(debug_assertions)]
@@ -53,6 +54,7 @@ pub fn handle_select_all(content: &mut Content, state: &EditorState) -> Task<Mes
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         #[cfg(debug_assertions)]
@@ -80,6 +82,7 @@ pub fn handle_editor_action(
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         #[cfg(debug_assertions)]
@@ -126,6 +129,7 @@ pub fn handle_loaded_note_content(
     if !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         if state.selected_note_path() != Some(&loaded_note_path) {

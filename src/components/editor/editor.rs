@@ -1,7 +1,7 @@
 use iced::event::Event;
 use iced::keyboard::Key;
 use iced::task::Task;
-use iced::widget::text_editor::{Action, Edit};
+use iced::widget::text_editor::{Action, Cursor as EditorCursor, Edit, Position as EditorPosition};
 use iced::{Element, Subscription};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -70,6 +70,7 @@ pub enum Message {
     CancelNewNote,
     DeleteNote,
     ConfirmDeleteNote(bool),
+    ConfirmDeleteEmbeddedImages(bool),
     NoteDeleted(Result<(), String>, String),
     MoveNote,
     MoveNoteInputChanged(String),
@@ -99,6 +100,9 @@ pub struct Editor {
     markdown_preview: iced::widget::markdown::Content,
     embedded_images: HashMap<String, String>,
     embedded_image_handles: HashMap<String, iced::widget::image::Handle>,
+    pending_embedded_image_deletion_ids: HashSet<String>,
+    pending_embedded_image_delete_action: Option<Action>,
+    embedded_image_prompt_note_path: Option<String>,
 
     // Undo/redo management
     undo_manager: UndoManager,
@@ -120,6 +124,9 @@ impl Editor {
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_images: HashMap::new(),
             embedded_image_handles: HashMap::new(),
+            pending_embedded_image_deletion_ids: HashSet::new(),
+            pending_embedded_image_delete_action: None,
+            embedded_image_prompt_note_path: None,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
@@ -183,6 +190,7 @@ impl Editor {
             | Message::NoteCreated(_)
             | Message::DeleteNote
             | Message::ConfirmDeleteNote(_)
+            | Message::ConfirmDeleteEmbeddedImages(_)
             | Message::NoteDeleted(_, _)
             | Message::MoveNote
             | Message::MoveNoteInputChanged(_)
@@ -262,6 +270,16 @@ impl Editor {
                     return Self::handle_paste_action(state, action);
                 }
 
+                let dereferenced_image_ids = state.dereferenced_embedded_images_for_action(&action);
+                if !dereferenced_image_ids.is_empty() {
+                    state.pending_embedded_image_deletion_ids = dereferenced_image_ids;
+                    state.pending_embedded_image_delete_action = Some(action);
+                    state.state.show_embedded_image_delete_dialog(
+                        state.pending_embedded_image_deletion_ids.len(),
+                    );
+                    return Task::none();
+                }
+
                 let previous_markdown = state.markdown_text.clone();
                 let save_task = content_handler::handle_editor_action(
                     &mut state.content,
@@ -311,6 +329,7 @@ impl Editor {
             || state.state.show_visualizer()
             || state.state.show_move_note_input()
             || state.state.show_new_note_input()
+            || state.state.show_embedded_image_delete_confirmation()
             || state.state.show_about_info()
         {
             return Task::none();
@@ -405,6 +424,7 @@ impl Editor {
             || state.state.show_visualizer()
             || state.state.show_move_note_input()
             || state.state.show_new_note_input()
+            || state.state.show_embedded_image_delete_confirmation()
             || state.state.show_about_info()
         {
             return content_handler::handle_editor_action(
@@ -690,6 +710,9 @@ impl Editor {
                 &mut state.state,
                 state.note_explorer.notes.clone(),
             ),
+            Message::ConfirmDeleteEmbeddedImages(confirmed) => {
+                state.handle_confirm_delete_embedded_images(confirmed)
+            }
             Message::NoteDeleted(result, deleted_path) => note_actions::handle_note_deleted(
                 result,
                 deleted_path,
@@ -733,6 +756,11 @@ impl Editor {
         if state.markdown_text != previous_markdown {
             if state.state.selected_note_path().is_none() {
                 state.embedded_images.clear();
+                state.embedded_image_handles.clear();
+                state.pending_embedded_image_deletion_ids.clear();
+                state.pending_embedded_image_delete_action = None;
+                state.embedded_image_prompt_note_path = None;
+                state.state.hide_embedded_image_delete_dialog();
             } else {
                 state.prune_embedded_images_for_current_markdown();
             }
@@ -780,9 +808,85 @@ impl Editor {
     }
 
     fn prune_embedded_images_for_current_markdown(&mut self) {
-        let referenced = extract_embedded_image_ids(&self.markdown_text);
-        self.embedded_images
-            .retain(|image_id, _| referenced.contains(image_id));
+        let current_note_path = self.state.selected_note_path().cloned();
+        if self.embedded_image_prompt_note_path != current_note_path {
+            self.pending_embedded_image_deletion_ids.clear();
+            self.pending_embedded_image_delete_action = None;
+            self.state.hide_embedded_image_delete_dialog();
+            self.embedded_image_prompt_note_path = current_note_path;
+        }
+    }
+
+    fn handle_confirm_delete_embedded_images(&mut self, confirmed: bool) -> Task<Message> {
+        if self.pending_embedded_image_deletion_ids.is_empty() {
+            self.pending_embedded_image_delete_action = None;
+            self.state.hide_embedded_image_delete_dialog();
+            return Task::none();
+        }
+
+        if confirmed {
+            let Some(action) = self.pending_embedded_image_delete_action.take() else {
+                self.pending_embedded_image_deletion_ids.clear();
+                self.state.hide_embedded_image_delete_dialog();
+                return Task::none();
+            };
+
+            self.state.hide_embedded_image_delete_dialog();
+
+            let previous_markdown = self.markdown_text.clone();
+            let save_task = content_handler::handle_editor_action(
+                &mut self.content,
+                &mut self.markdown_text,
+                &mut self.undo_manager,
+                action,
+                self.state.selected_note_path(),
+                self.state.notebook_path(),
+                &self.state,
+            );
+
+            if self.markdown_text != previous_markdown {
+                self.touch_selected_note_last_updated();
+            }
+
+            for image_id in std::mem::take(&mut self.pending_embedded_image_deletion_ids) {
+                self.embedded_images.remove(&image_id);
+                self.embedded_image_handles.remove(&image_id);
+            }
+
+            self.sync_markdown_preview();
+            return save_task;
+        }
+
+        self.pending_embedded_image_deletion_ids.clear();
+        self.pending_embedded_image_delete_action = None;
+        self.state.hide_embedded_image_delete_dialog();
+        Task::none()
+    }
+
+    fn dereferenced_embedded_images_for_action(&self, action: &Action) -> HashSet<String> {
+        if self.embedded_images.is_empty() {
+            return HashSet::new();
+        }
+
+        let Some(after_markdown) =
+            preview_markdown_after_action(&self.markdown_text, self.content.cursor(), action)
+        else {
+            return HashSet::new();
+        };
+
+        if after_markdown == self.markdown_text {
+            return HashSet::new();
+        }
+
+        let before = extract_embedded_image_ids(&self.markdown_text);
+        let after = extract_embedded_image_ids(&after_markdown);
+
+        before
+            .into_iter()
+            .filter(|image_id| {
+                self.embedded_images.contains_key(image_id) && !after.contains(image_id)
+            })
+            .collect()
     }
 
     fn persist_embedded_images_task(&self) -> Task<Message> {
@@ -912,6 +1016,9 @@ impl Default for Editor {
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_images: HashMap::new(),
             embedded_image_handles: HashMap::new(),
+            pending_embedded_image_deletion_ids: HashSet::new(),
+            pending_embedded_image_delete_action: None,
+            embedded_image_prompt_note_path: None,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(String::new()),
@@ -949,6 +1056,131 @@ fn extract_embedded_image_ids(markdown: &str) -> HashSet<String> {
     }
 
     referenced
+}
+
+fn preview_markdown_after_action(
+    markdown: &str,
+    cursor: EditorCursor,
+    action: &Action,
+) -> Option<String> {
+    match action {
+        Action::Edit(edit) => preview_markdown_after_edit(markdown, cursor, edit),
+        _ => None,
+    }
+}
+
+fn preview_markdown_after_edit(
+    markdown: &str,
+    cursor: EditorCursor,
+    edit: &Edit,
+) -> Option<String> {
+    let (selection_start, selection_end) =
+        selection_byte_range(markdown, cursor.position, cursor.selection)?;
+
+    let mut preview = markdown.to_string();
+    let has_selection = selection_start != selection_end;
+
+    match edit {
+        Edit::Insert(ch) => {
+            preview.replace_range(selection_start..selection_end, &ch.to_string());
+        }
+        Edit::Paste(text) => {
+            preview.replace_range(selection_start..selection_end, text.as_str());
+        }
+        Edit::Enter => {
+            preview.replace_range(selection_start..selection_end, "\n");
+        }
+        Edit::Backspace => {
+            if has_selection {
+                preview.replace_range(selection_start..selection_end, "");
+            } else {
+                let backspace_start = previous_char_boundary(markdown, selection_start)?;
+                preview.replace_range(backspace_start..selection_start, "");
+            }
+        }
+        Edit::Delete => {
+            if has_selection {
+                preview.replace_range(selection_start..selection_end, "");
+            } else {
+                let delete_end = next_char_boundary(markdown, selection_end)?;
+                preview.replace_range(selection_end..delete_end, "");
+            }
+        }
+        Edit::Indent | Edit::Unindent => return None,
+    }
+
+    Some(preview)
+}
+
+fn selection_byte_range(
+    markdown: &str,
+    position: EditorPosition,
+    selection: Option<EditorPosition>,
+) -> Option<(usize, usize)> {
+    let position_index = position_to_byte_index(markdown, position)?;
+
+    if let Some(selection_position) = selection {
+        let selection_index = position_to_byte_index(markdown, selection_position)?;
+        if position_index <= selection_index {
+            Some((position_index, selection_index))
+        } else {
+            Some((selection_index, position_index))
+        }
+    } else {
+        Some((position_index, position_index))
+    }
+}
+
+fn position_to_byte_index(markdown: &str, position: EditorPosition) -> Option<usize> {
+    let mut line_start = 0usize;
+    let mut current_line = 0usize;
+
+    while current_line < position.line {
+        let next_newline = markdown[line_start..].find('\n')?;
+        line_start += next_newline + 1;
+        current_line += 1;
+    }
+
+    let line_end = markdown[line_start..]
+        .find('\n')
+        .map(|offset| line_start + offset)
+        .unwrap_or(markdown.len());
+    let line_text = &markdown[line_start..line_end];
+    let column_offset = char_index_to_byte_offset(line_text, position.column)?;
+
+    Some(line_start + column_offset)
+}
+
+fn char_index_to_byte_offset(text: &str, char_index: usize) -> Option<usize> {
+    if char_index == 0 {
+        return Some(0);
+    }
+
+    match text.char_indices().nth(char_index) {
+        Some((offset, _)) => Some(offset),
+        None if char_index == text.chars().count() => Some(text.len()),
+        None => None,
+    }
+}
+
+fn previous_char_boundary(text: &str, index: usize) -> Option<usize> {
+    if index == 0 || index > text.len() {
+        return None;
+    }
+
+    text[..index]
+        .char_indices()
+        .next_back()
+        .map(|(offset, _)| offset)
+}
+
+fn next_char_boundary(text: &str, index: usize) -> Option<usize> {
+    if index >= text.len() {
+        return None;
+    }
+
+    let ch = text[index..].chars().next()?;
+    Some(index + ch.len_utf8())
 }
 
 fn build_markdown_preview_content(markdown: &str, images: &HashMap<String, String>) -> String {

@@ -47,6 +47,7 @@ mod tests {
             EditorMessage::CancelNewNote,
             EditorMessage::DeleteNote,
             EditorMessage::ConfirmDeleteNote(false),
+            EditorMessage::ConfirmDeleteEmbeddedImages(false),
             EditorMessage::MoveNote,
             EditorMessage::MoveNoteInputChanged("moved/path".to_string()),
             EditorMessage::ConfirmMoveNote,
@@ -212,11 +213,24 @@ mod tests {
             &explorer,
             &visualizer,
         );
+        state.hide_move_note_dialog();
+
+        state.show_embedded_image_delete_dialog(2);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
+        state.hide_embedded_image_delete_dialog();
 
         let _ = dialogs::about_dialog("0.2.0");
         let _ = dialogs::new_note_dialog("new/path");
         let _ = dialogs::move_note_dialog("folder/note", "other/note", false);
         let _ = dialogs::move_note_dialog("folder", "renamed", true);
+        let _ = dialogs::confirm_embedded_image_delete_dialog(2);
 
         let _ = input_fields::create_labels_section(
             Some(&"folder/note".to_string()),

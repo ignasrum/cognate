@@ -9,6 +9,7 @@ enum UiMode {
     Visualizer,
     NewNoteDialog,
     MoveNoteDialog,
+    EmbeddedImageDeleteDialog,
     About,
 }
 
@@ -34,6 +35,7 @@ pub struct EditorState {
     new_note_path_input: String,
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
+    pending_embedded_image_delete_count: usize,
 
     // Flag indicating if we're loading a new note
     loading_note: bool,
@@ -55,6 +57,7 @@ impl EditorState {
             new_note_path_input: String::new(),
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
+            pending_embedded_image_delete_count: 0,
             loading_note: false,
         }
     }
@@ -124,6 +127,14 @@ impl EditorState {
         self.ui_mode == UiMode::About
     }
 
+    pub fn show_embedded_image_delete_confirmation(&self) -> bool {
+        self.ui_mode == UiMode::EmbeddedImageDeleteDialog
+    }
+
+    pub fn pending_embedded_image_delete_count(&self) -> usize {
+        self.pending_embedded_image_delete_count
+    }
+
     pub fn is_loading_note(&self) -> bool {
         self.loading_note
     }
@@ -132,7 +143,10 @@ impl EditorState {
     pub fn is_any_dialog_open(&self) -> bool {
         matches!(
             self.ui_mode,
-            UiMode::NewNoteDialog | UiMode::MoveNoteDialog | UiMode::About
+            UiMode::NewNoteDialog
+                | UiMode::MoveNoteDialog
+                | UiMode::EmbeddedImageDeleteDialog
+                | UiMode::About
         )
     }
 
@@ -251,6 +265,18 @@ impl EditorState {
         if self.show_move_note_input() {
             self.move_note_new_path_input = path;
         }
+    }
+
+    pub fn show_embedded_image_delete_dialog(&mut self, count: usize) {
+        self.pending_embedded_image_delete_count = count;
+        self.ui_mode = UiMode::EmbeddedImageDeleteDialog;
+    }
+
+    pub fn hide_embedded_image_delete_dialog(&mut self) {
+        if self.ui_mode == UiMode::EmbeddedImageDeleteDialog {
+            self.ui_mode = UiMode::Editor;
+        }
+        self.pending_embedded_image_delete_count = 0;
     }
 
     // Note-related utilities

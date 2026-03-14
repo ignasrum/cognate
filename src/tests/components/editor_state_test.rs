@@ -54,6 +54,13 @@ mod tests {
         assert!(!state.show_new_note_input());
         assert!(!state.show_move_note_input());
         assert!(state.is_any_dialog_open());
+
+        state.show_embedded_image_delete_dialog(2);
+        assert!(state.show_embedded_image_delete_confirmation());
+        assert_eq!(state.pending_embedded_image_delete_count(), 2);
+        assert!(state.is_any_dialog_open());
+        state.hide_embedded_image_delete_dialog();
+        assert!(!state.show_embedded_image_delete_confirmation());
     }
 
     #[test]

@@ -276,6 +276,8 @@ pub fn generate_layout<'a>(
             state.move_note_new_path_input(),
             is_folder,
         )
+    } else if state.show_embedded_image_delete_confirmation() {
+        dialogs::confirm_embedded_image_delete_dialog(state.pending_embedded_image_delete_count())
     } else if state.notebook_path().is_empty() {
         Container::new(
             Text::new(

@@ -89,3 +89,33 @@ pub fn move_note_dialog<'a>(
         .align_x(iced::Alignment::Center)
         .into()
 }
+
+pub fn confirm_embedded_image_delete_dialog<'a>(count: usize) -> Element<'a, Message> {
+    let noun = if count == 1 { "image" } else { "images" };
+    let prompt = format!(
+        "Delete {count} embedded {noun} from this note?\nThis removes image data from embedded_images.json."
+    );
+
+    Column::new()
+        .push(Text::new(prompt))
+        .push(
+            Row::new()
+                .push(
+                    button("Delete")
+                        .padding(5)
+                        .on_press(Message::ConfirmDeleteEmbeddedImages(true)),
+                )
+                .push(
+                    button("Keep")
+                        .padding(5)
+                        .on_press(Message::ConfirmDeleteEmbeddedImages(false)),
+                )
+                .spacing(10),
+        )
+        .spacing(10)
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .into()
+}
