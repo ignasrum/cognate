@@ -4,6 +4,7 @@ use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
 use iced::{Element, Subscription};
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -315,6 +316,15 @@ impl Editor {
             return Task::none();
         }
 
+        let clipboard_text = match read_clipboard_text() {
+            Ok(value) => value,
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read text clipboard data: {}", _err);
+                None
+            }
+        };
+
         let image_base64 = match read_clipboard_image_as_base64_png() {
             Ok(value) => value,
             Err(_err) => {
@@ -322,7 +332,12 @@ impl Editor {
                 eprintln!("Failed to read image clipboard data: {}", _err);
                 None
             }
-        };
+        }
+        .or_else(|| {
+            clipboard_text
+                .as_deref()
+                .and_then(read_clipboard_image_file_as_base64_from_text)
+        });
 
         if let Some(image_base64) = image_base64 {
             let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
@@ -360,14 +375,8 @@ impl Editor {
             ]);
         }
 
-        let text_to_paste = match read_clipboard_text() {
-            Ok(Some(text)) => text,
-            Ok(None) => return Task::none(),
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read text clipboard data: {}", _err);
-                return Task::none();
-            }
+        let Some(text_to_paste) = clipboard_text else {
+            return Task::none();
         };
 
         let previous_markdown = state.markdown_text.clone();
@@ -409,31 +418,54 @@ impl Editor {
             );
         }
 
+        let clipboard_text = match read_clipboard_text() {
+            Ok(value) => value,
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read text clipboard data: {}", _err);
+                None
+            }
+        };
+
         let image_base64 = match read_clipboard_image_as_base64_png() {
             Ok(Some(base64_png)) => base64_png,
             Ok(None) => {
-                return content_handler::handle_editor_action(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    fallback_action,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
+                let Some(file_image_base64) = clipboard_text
+                    .as_deref()
+                    .and_then(read_clipboard_image_file_as_base64_from_text)
+                else {
+                    return content_handler::handle_editor_action(
+                        &mut state.content,
+                        &mut state.markdown_text,
+                        &mut state.undo_manager,
+                        fallback_action,
+                        state.state.selected_note_path(),
+                        state.state.notebook_path(),
+                        &state.state,
+                    );
+                };
+
+                file_image_base64
             }
             Err(_err) => {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to read image clipboard data: {}", _err);
-                return content_handler::handle_editor_action(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    fallback_action,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
+                let Some(file_image_base64) = clipboard_text
+                    .as_deref()
+                    .and_then(read_clipboard_image_file_as_base64_from_text)
+                else {
+                    return content_handler::handle_editor_action(
+                        &mut state.content,
+                        &mut state.markdown_text,
+                        &mut state.undo_manager,
+                        fallback_action,
+                        state.state.selected_note_path(),
+                        state.state.notebook_path(),
+                        &state.state,
+                    );
+                };
+
+                file_image_base64
             }
         };
 
@@ -1101,6 +1133,123 @@ fn read_clipboard_text() -> Result<Option<String>, String> {
     }
 }
 
+fn read_clipboard_image_file_as_base64_from_text(text: &str) -> Option<String> {
+    parse_clipboard_image_file_paths(text)
+        .into_iter()
+        .find_map(|path| read_image_file_as_base64(&path))
+}
+
+fn parse_clipboard_image_file_paths(text: &str) -> Vec<PathBuf> {
+    let mut lines: Vec<&str> = text.lines().collect();
+    if let Some(first) = lines.first().copied()
+        && matches!(first.trim().to_ascii_lowercase().as_str(), "copy" | "cut")
+    {
+        lines.remove(0);
+    }
+
+    lines
+        .into_iter()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(parse_clipboard_file_line)
+        .filter(|path| path.is_file() && is_probably_image_file(path))
+        .collect()
+}
+
+fn parse_clipboard_file_line(line: &str) -> Option<PathBuf> {
+    let trimmed = line.trim();
+    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    };
+
+    if unquoted.starts_with("file://") {
+        parse_file_uri_to_path(unquoted)
+    } else {
+        Some(PathBuf::from(unquoted))
+    }
+}
+
+fn parse_file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.trim().strip_prefix("file://")?;
+    let path_part = if rest.starts_with('/') {
+        rest.to_string()
+    } else {
+        let (host, path) = rest.split_once('/')?;
+        if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+            return None;
+        }
+        format!("/{}", path)
+    };
+
+    percent_decode(&path_part).map(PathBuf::from)
+}
+
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'%' {
+            if cursor + 2 >= bytes.len() {
+                return None;
+            }
+
+            let hi = (bytes[cursor + 1] as char).to_digit(16)?;
+            let lo = (bytes[cursor + 2] as char).to_digit(16)?;
+            decoded.push(((hi << 4) + lo) as u8);
+            cursor += 3;
+        } else {
+            decoded.push(bytes[cursor]);
+            cursor += 1;
+        }
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn is_probably_image_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "bmp"
+            | "webp"
+            | "tif"
+            | "tiff"
+            | "ico"
+            | "avif"
+            | "heic"
+            | "heif"
+    )
+}
+
+fn read_image_file_as_base64(path: &Path) -> Option<String> {
+    use base64::Engine;
+
+    if !is_probably_image_file(path) {
+        return None;
+    }
+
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() == 0 || metadata.len() > 50 * 1024 * 1024 {
+        return None;
+    }
+
+    let bytes = std::fs::read(path).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 fn round_scale_step(scale: f32) -> f32 {
     (scale * 100.0).round() / 100.0
 }
@@ -1108,10 +1257,15 @@ fn round_scale_step(scale: f32) -> f32 {
 #[cfg(test)]
 mod image_tag_tests {
     use super::{
-        build_markdown_preview_content, extract_embedded_image_ids, html_line_breaks_replacement,
-        normalize_html_line_break_tags, HTML_BR_SENTINEL,
+        HTML_BR_SENTINEL, build_markdown_preview_content, extract_embedded_image_ids,
+        html_line_breaks_replacement, is_probably_image_file, normalize_html_line_break_tags,
+        parse_clipboard_image_file_paths, parse_file_uri_to_path, percent_decode,
+        read_clipboard_image_file_as_base64_from_text, read_image_file_as_base64,
     };
+    use base64::Engine;
     use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn extract_embedded_image_ids_parses_all_tags() {
@@ -1189,5 +1343,65 @@ mod image_tag_tests {
 
         let expected = format!("line 1{}line 2", HTML_BR_SENTINEL);
         assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn percent_decode_decodes_percent_encoded_text() {
+        assert_eq!(
+            percent_decode("/tmp/a%20b.png"),
+            Some("/tmp/a b.png".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_file_uri_to_path_parses_localhost_uri() {
+        let parsed = parse_file_uri_to_path("file://localhost/tmp/image.png");
+        assert_eq!(parsed, Some(PathBuf::from("/tmp/image.png")));
+    }
+
+    #[test]
+    fn is_probably_image_file_matches_common_extensions() {
+        assert!(is_probably_image_file(Path::new("/tmp/img.PNG")));
+        assert!(!is_probably_image_file(Path::new("/tmp/file.txt")));
+    }
+
+    #[test]
+    fn parse_clipboard_image_file_paths_supports_gnome_copied_files_format() {
+        let path = write_temp_test_file("png", b"\x89PNG\r\n\x1a\n");
+        let escaped = path.to_string_lossy().replace(' ', "%20");
+        let clipboard_text = format!("copy\nfile://{escaped}");
+
+        let parsed = parse_clipboard_image_file_paths(&clipboard_text);
+        assert_eq!(parsed, vec![path.clone()]);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_clipboard_image_file_as_base64_from_text_reads_image_path() {
+        let path = write_temp_test_file("png", b"\x89PNG\r\n\x1a\npayload");
+        let expected = read_image_file_as_base64(&path).expect("image should be readable");
+        let clipboard_text = path.to_string_lossy().to_string();
+
+        let actual = read_clipboard_image_file_as_base64_from_text(&clipboard_text)
+            .expect("clipboard path should resolve to image bytes");
+        assert_eq!(actual, expected);
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(actual)
+            .expect("base64 should decode");
+        assert_eq!(decoded, b"\x89PNG\r\n\x1a\npayload");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn write_temp_test_file(ext: &str, bytes: &[u8]) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cognate_test_{nanos}.{ext}"));
+        std::fs::write(&path, bytes).expect("failed to write temp file");
+        path
     }
 }

@@ -50,7 +50,11 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
             .into()
     }
 
-    fn paragraph(&self, settings: markdown::Settings, text: &markdown::Text) -> Element<'a, Message> {
+    fn paragraph(
+        &self,
+        settings: markdown::Settings,
+        text: &markdown::Text,
+    ) -> Element<'a, Message> {
         let lines = split_markdown_spans_by_newline(text, settings.style);
 
         if lines.len() <= 1 {
@@ -232,10 +236,10 @@ pub fn generate_layout<'a>(
                     .center_x(Length::Fill)
                     .center_y(Length::Fill),
             )
-                .padding(0)
-                .width(Length::Fixed(30.0))
-                .height(Length::Fixed(30.0))
-                .on_press(Message::DecreaseScale),
+            .padding(0)
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .on_press(Message::DecreaseScale),
         )
         .push(
             button(
@@ -245,10 +249,10 @@ pub fn generate_layout<'a>(
                     .center_x(Length::Fill)
                     .center_y(Length::Fill),
             )
-                .padding(0)
-                .width(Length::Fixed(30.0))
-                .height(Length::Fixed(30.0))
-                .on_press(Message::IncreaseScale),
+            .padding(0)
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .on_press(Message::IncreaseScale),
         );
 
     // Main content area
