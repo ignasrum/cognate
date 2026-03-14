@@ -241,6 +241,7 @@ impl UndoManager {
         self.undo_indices.insert(note_path.to_string(), new_index);
     }
 
+    #[cfg(test)]
     pub fn get_previous_content(&mut self, note_path: &str) -> Option<String> {
         self.get_previous_snapshot(note_path)
             .map(|snapshot| snapshot.content)
