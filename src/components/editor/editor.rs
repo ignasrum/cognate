@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
+
 // Import required types and modules
 use crate::components::editor::actions::{label_actions, note_actions};
 use crate::components::editor::state::editor_state::EditorState;
@@ -951,7 +953,106 @@ fn build_markdown_preview_content(markdown: &str, images: &HashMap<String, Strin
         rendered.push_str(&markdown[cursor..]);
     }
 
-    rendered
+    normalize_html_line_break_tags(&rendered)
+}
+
+fn normalize_html_line_break_tags(markdown: &str) -> String {
+    let options = pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | pulldown_cmark::Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
+        | pulldown_cmark::Options::ENABLE_TABLES
+        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
+        | pulldown_cmark::Options::ENABLE_TASKLISTS;
+
+    let mut normalized = String::with_capacity(markdown.len());
+    let mut cursor = 0usize;
+
+    for (event, range) in pulldown_cmark::Parser::new_ext(markdown, options).into_offset_iter() {
+        if let pulldown_cmark::Event::Html(html) | pulldown_cmark::Event::InlineHtml(html) = event
+            && let Some(line_breaks) = html_line_breaks_replacement(html.as_ref())
+        {
+            normalized.push_str(&markdown[cursor..range.start]);
+            normalized.push_str(&line_breaks);
+            let mut next_cursor = range.end;
+
+            if markdown[next_cursor..].starts_with("\r\n") {
+                next_cursor += 2;
+            } else if markdown[next_cursor..].starts_with('\n') {
+                next_cursor += 1;
+            }
+
+            cursor = next_cursor;
+        }
+    }
+
+    if cursor == 0 {
+        return markdown.to_string();
+    }
+
+    if cursor < markdown.len() {
+        normalized.push_str(&markdown[cursor..]);
+    }
+
+    normalized
+}
+
+fn html_line_breaks_replacement(html: &str) -> Option<String> {
+    let mut cursor = 0usize;
+    let mut count = 0usize;
+
+    while cursor < html.len() {
+        let remaining = &html[cursor..];
+        let leading_ws = remaining.len() - remaining.trim_start().len();
+        cursor += leading_ws;
+
+        if cursor >= html.len() {
+            break;
+        }
+
+        if !html[cursor..].starts_with('<') {
+            return None;
+        }
+
+        let Some(tag_end) = html[cursor..].find('>') else {
+            return None;
+        };
+
+        let tag = &html[cursor..cursor + tag_end + 1];
+        if !is_html_line_break_tag(tag) {
+            return None;
+        }
+
+        count += 1;
+        cursor += tag_end + 1;
+    }
+
+    if count == 0 {
+        None
+    } else {
+        Some(HTML_BR_SENTINEL.repeat(count))
+    }
+}
+
+fn is_html_line_break_tag(html: &str) -> bool {
+    let trimmed = html.trim();
+    if !(trimmed.starts_with('<') && trimmed.ends_with('>')) {
+        return false;
+    }
+
+    let mut inner = trimmed[1..trimmed.len() - 1].trim();
+    if inner.starts_with('/') {
+        return false;
+    }
+
+    if let Some(without_self_close) = inner.strip_suffix('/') {
+        inner = without_self_close.trim();
+    }
+
+    let mut parts = inner.split_whitespace();
+    let Some(tag_name) = parts.next() else {
+        return false;
+    };
+
+    tag_name.eq_ignore_ascii_case("br")
 }
 
 fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
@@ -1006,7 +1107,10 @@ fn round_scale_step(scale: f32) -> f32 {
 
 #[cfg(test)]
 mod image_tag_tests {
-    use super::{build_markdown_preview_content, extract_embedded_image_ids};
+    use super::{
+        build_markdown_preview_content, extract_embedded_image_ids, html_line_breaks_replacement,
+        normalize_html_line_break_tags, HTML_BR_SENTINEL,
+    };
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -1029,5 +1133,61 @@ mod image_tag_tests {
         let rendered = build_markdown_preview_content(markdown, &images);
         assert!(rendered.contains("cognate-image://img_one"));
         assert!(rendered.contains("![image:missing]"));
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_converts_br_variants() {
+        let markdown = "one<br>two<br/>three<BR />four";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        let expected = format!("one{0}two{0}three{0}four", HTML_BR_SENTINEL);
+        assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_keeps_non_break_html() {
+        let markdown = "before <span>inline</span> after";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        assert_eq!(normalized, markdown);
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_does_not_touch_code_blocks() {
+        let markdown = "```html\n<br>\n```";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        assert_eq!(normalized, markdown);
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_converts_multiple_breaks_in_one_html_fragment() {
+        let markdown = "one<br><br>two";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        let expected = format!("one{0}{0}two", HTML_BR_SENTINEL);
+        assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn html_line_breaks_replacement_rejects_mixed_html() {
+        assert_eq!(html_line_breaks_replacement("<br><span>"), None);
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_keeps_multiple_break_events_with_spaces_between_tags() {
+        let markdown = "line 1<br> <br> <br> <br>line 2";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        assert_eq!(normalized.matches(HTML_BR_SENTINEL).count(), 4);
+    }
+
+    #[test]
+    fn normalize_html_line_break_tags_consumes_newline_immediately_after_break_tag() {
+        let markdown = "line 1<br>\nline 2";
+        let normalized = normalize_html_line_break_tags(markdown);
+
+        let expected = format!("line 1{}line 2", HTML_BR_SENTINEL);
+        assert_eq!(normalized, expected);
     }
 }

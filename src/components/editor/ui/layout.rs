@@ -1,12 +1,13 @@
 use iced::widget::{
     Column, Container, Row, Space, Text, TextInput as IcedTextInput, button, image, markdown,
-    text_editor,
+    rich_text, text_editor,
 };
 use iced::{Element, Length};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::components::editor::Message;
+use crate::components::editor::core::HTML_BR_SENTINEL;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::ui::dialogs;
 use crate::components::editor::ui::input_fields;
@@ -48,6 +49,66 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
             .padding(settings.spacing.0 / 2.0)
             .into()
     }
+
+    fn paragraph(&self, settings: markdown::Settings, text: &markdown::Text) -> Element<'a, Message> {
+        let lines = split_markdown_spans_by_newline(text, settings.style);
+
+        if lines.len() <= 1 {
+            return markdown::paragraph(settings, text, Self::on_link_click);
+        }
+
+        let mut paragraph_lines = Column::new().spacing(0);
+
+        for line in lines {
+            let line_widget = if line.is_empty() {
+                rich_text(vec![iced::widget::text::Span::<markdown::Uri>::new(" ")])
+            } else {
+                rich_text(line).on_link_click(Self::on_link_click)
+            };
+
+            paragraph_lines = paragraph_lines.push(line_widget.size(settings.text_size));
+        }
+
+        paragraph_lines.into()
+    }
+}
+
+fn split_markdown_spans_by_newline(
+    text: &markdown::Text,
+    style: markdown::Style,
+) -> Vec<Vec<iced::widget::text::Span<'static, markdown::Uri>>> {
+    let spans = text.spans(style);
+    let mut lines: Vec<Vec<iced::widget::text::Span<'static, markdown::Uri>>> = vec![Vec::new()];
+
+    for span in spans.iter() {
+        let content = span.text.as_ref().replace(HTML_BR_SENTINEL, "\n");
+        let mut start = 0usize;
+
+        for (index, _) in content.match_indices('\n') {
+            if index > start {
+                let mut line_span = span.clone();
+                line_span.text = content[start..index].to_string().into();
+                lines
+                    .last_mut()
+                    .expect("at least one line present")
+                    .push(line_span);
+            }
+
+            lines.push(Vec::new());
+            start = index + 1;
+        }
+
+        if start < content.len() {
+            let mut line_span = span.clone();
+            line_span.text = content[start..].to_string().into();
+            lines
+                .last_mut()
+                .expect("at least one line present")
+                .push(line_span);
+        }
+    }
+
+    lines
 }
 
 pub fn generate_layout<'a>(
