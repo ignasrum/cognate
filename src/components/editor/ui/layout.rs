@@ -1,8 +1,8 @@
 use iced::widget::{
-    Column, Container, Row, Text, TextInput as IcedTextInput, button, markdown, text_editor,
+    Column, Container, Row, Text, TextInput as IcedTextInput, button, image, markdown, text_editor,
 };
 use iced::{Element, Length};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::components::editor::Message;
@@ -13,10 +13,47 @@ use crate::components::note_explorer;
 use crate::components::visualizer;
 use crate::notebook::NoteSearchResult;
 
+struct MarkdownPreviewViewer<'a> {
+    image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+}
+
+impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
+    fn on_link_click(url: markdown::Uri) -> Message {
+        Message::MarkdownLinkClicked(url)
+    }
+
+    fn image(
+        &self,
+        settings: markdown::Settings,
+        url: &'a markdown::Uri,
+        title: &'a str,
+        _alt: &markdown::Text,
+    ) -> Element<'a, Message> {
+        if let Some(image_id) = url.strip_prefix("cognate-image://")
+            && let Some(image_handle) = self.image_handles.get(image_id)
+        {
+            return image(image_handle.clone())
+                .width(Length::Fill)
+                .content_fit(iced::ContentFit::Contain)
+                .into();
+        }
+
+        let fallback_text = if title.is_empty() {
+            url.as_str()
+        } else {
+            title
+        };
+        Container::new(Text::new(fallback_text))
+            .padding(settings.spacing.0 / 2.0)
+            .into()
+    }
+}
+
 pub fn generate_layout<'a>(
     state: &'a EditorState,
     content: &'a iced::widget::text_editor::Content,
     markdown_content: &'a iced::widget::markdown::Content,
+    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
     note_explorer_component: &'a note_explorer::NoteExplorer,
     visualizer_component: &'a visualizer::Visualizer,
 ) -> Element<'a, Message> {
@@ -192,7 +229,25 @@ pub fn generate_layout<'a>(
         let mut editor_widget = text_editor(content);
 
         if state.selected_note_path().is_some() {
-            editor_widget = editor_widget.on_action(Message::EditorAction);
+            editor_widget =
+                editor_widget
+                    .on_action(Message::EditorAction)
+                    .key_binding(|key_press| {
+                        let is_paste_shortcut = key_press.modifiers.command()
+                            && !key_press.modifiers.alt()
+                            && matches!(
+                                key_press.key.as_ref(),
+                                iced::keyboard::Key::Character("v" | "V")
+                            );
+
+                        if is_paste_shortcut {
+                            Some(iced::widget::text_editor::Binding::Custom(
+                                Message::PasteFromClipboard,
+                            ))
+                        } else {
+                            iced::widget::text_editor::Binding::from_key_press(key_press)
+                        }
+                    });
         }
 
         let selected_note_last_updated = state
@@ -244,8 +299,10 @@ pub fn generate_layout<'a>(
             .height(Length::Fill);
 
         let markdown_preview_body: Element<'_, Message> = if state.selected_note_path().is_some() {
-            markdown::view(markdown_content.items(), iced::Theme::Dark)
-                .map(Message::MarkdownLinkClicked)
+            let preview_viewer = MarkdownPreviewViewer {
+                image_handles: markdown_image_handles,
+            };
+            markdown::view_with(markdown_content.items(), iced::Theme::Dark, &preview_viewer)
         } else {
             Container::new(Text::new("Select a note to see markdown preview."))
                 .width(Length::Fill)

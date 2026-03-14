@@ -1,7 +1,11 @@
 use iced::event::Event;
 use iced::keyboard::Key;
 use iced::task::Task;
+use iced::widget::text_editor::{Action, Edit};
 use iced::{Element, Subscription};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Import required types and modules
 use crate::components::editor::actions::{label_actions, note_actions};
@@ -24,7 +28,8 @@ use crate::components::visualizer::Visualizer;
 pub enum Message {
     // Text editing operations
     EditorAction(iced::widget::text_editor::Action),
-    LoadedNoteContent(String, String),
+    PasteFromClipboard,
+    LoadedNoteContent(String, String, HashMap<String, String>),
     HandleTabKey,
     SelectAll,
     Undo,
@@ -48,6 +53,7 @@ pub enum Message {
 
     // Content management
     NoteContentSaved(Result<(), String>),
+    EmbeddedImagesSaved(Result<(), String>),
 
     // Visualizer
     ToggleVisualizer,
@@ -85,6 +91,8 @@ pub struct Editor {
     content: iced::widget::text_editor::Content,
     markdown_text: String,
     markdown_preview: iced::widget::markdown::Content,
+    embedded_images: HashMap<String, String>,
+    embedded_image_handles: HashMap<String, iced::widget::image::Handle>,
 
     // Undo/redo management
     undo_manager: UndoManager,
@@ -104,6 +112,8 @@ impl Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
+            embedded_images: HashMap::new(),
+            embedded_image_handles: HashMap::new(),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
@@ -132,8 +142,9 @@ impl Editor {
             | Message::SelectAll
             | Message::Undo
             | Message::Redo
+            | Message::PasteFromClipboard
             | Message::EditorAction(_)
-            | Message::LoadedNoteContent(_, _) => Self::handle_text_messages(state, message),
+            | Message::LoadedNoteContent(_, _, _) => Self::handle_text_messages(state, message),
 
             Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => {
                 Self::handle_selection_messages(state, message)
@@ -148,9 +159,9 @@ impl Editor {
             | Message::SearchCompleted(_)
             | Message::ClearSearch => Self::handle_search_messages(state, message),
 
-            Message::MetadataSaved(_) | Message::NoteContentSaved(_) => {
-                Self::handle_save_feedback_messages(message)
-            }
+            Message::MetadataSaved(_)
+            | Message::NoteContentSaved(_)
+            | Message::EmbeddedImagesSaved(_) => Self::handle_save_feedback_messages(message),
 
             Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
                 Self::handle_visualizer_messages(state, message)
@@ -190,7 +201,9 @@ impl Editor {
 
                 if state.markdown_text != previous_markdown {
                     state.touch_selected_note_last_updated();
+                    state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
+                    return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
                 }
 
                 save_task
@@ -209,7 +222,9 @@ impl Editor {
                     &state.state,
                 );
                 if state.markdown_text != previous_markdown {
+                    state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
+                    return Task::batch(vec![task, state.persist_embedded_images_task()]);
                 }
                 task
             }
@@ -224,11 +239,18 @@ impl Editor {
                     &state.state,
                 );
                 if state.markdown_text != previous_markdown {
+                    state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
+                    return Task::batch(vec![task, state.persist_embedded_images_task()]);
                 }
                 task
             }
+            Message::PasteFromClipboard => Self::handle_paste_from_clipboard_shortcut(state),
             Message::EditorAction(action) => {
+                if matches!(action, Action::Edit(Edit::Paste(_))) {
+                    return Self::handle_paste_action(state, action);
+                }
+
                 let previous_markdown = state.markdown_text.clone();
                 let save_task = content_handler::handle_editor_action(
                     &mut state.content,
@@ -242,12 +264,18 @@ impl Editor {
 
                 if state.markdown_text != previous_markdown {
                     state.touch_selected_note_last_updated();
+                    state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
+                    return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
                 }
 
                 save_task
             }
-            Message::LoadedNoteContent(note_path, new_content) => {
+            Message::LoadedNoteContent(note_path, new_content, images) => {
+                if state.state.selected_note_path() != Some(&note_path) {
+                    return Task::none();
+                }
+                state.embedded_images = images;
                 let previous_markdown = state.markdown_text.clone();
                 let task = content_handler::handle_loaded_note_content(
                     &mut state.content,
@@ -258,12 +286,180 @@ impl Editor {
                     new_content,
                 );
                 if state.markdown_text != previous_markdown {
+                    state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                 }
                 task
             }
             _ => unreachable!("text handler received non-text message"),
         }
+    }
+
+    fn handle_paste_from_clipboard_shortcut(state: &mut Self) -> Task<Message> {
+        if state.state.selected_note_path().is_none()
+            || state.state.show_visualizer()
+            || state.state.show_move_note_input()
+            || state.state.show_new_note_input()
+            || state.state.show_about_info()
+        {
+            return Task::none();
+        }
+
+        let image_base64 = match read_clipboard_image_as_base64_png() {
+            Ok(value) => value,
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read image clipboard data: {}", _err);
+                None
+            }
+        };
+
+        if let Some(image_base64) = image_base64 {
+            let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                return Task::none();
+            };
+
+            state.undo_manager.add_to_history(
+                &selected_note_path,
+                state.markdown_text.clone(),
+                state.content.cursor(),
+            );
+
+            let image_id = generate_embedded_image_id();
+            let tag = format!("![image:{}]", image_id);
+            state
+                .content
+                .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
+            state.markdown_text = state.content.text();
+            state.embedded_images.insert(image_id, image_base64);
+            state.prune_embedded_images_for_current_markdown();
+            state.touch_selected_note_last_updated();
+            state.sync_markdown_preview();
+
+            let notebook_path = state.state.notebook_path().to_string();
+            let note_path = selected_note_path;
+            let content_text = state.markdown_text.clone();
+            let save_content_task = Task::perform(
+                async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
+                Message::NoteContentSaved,
+            );
+
+            return Task::batch(vec![
+                save_content_task,
+                state.persist_embedded_images_task(),
+            ]);
+        }
+
+        let text_to_paste = match read_clipboard_text() {
+            Ok(Some(text)) => text,
+            Ok(None) => return Task::none(),
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read text clipboard data: {}", _err);
+                return Task::none();
+            }
+        };
+
+        let previous_markdown = state.markdown_text.clone();
+        let save_task = content_handler::handle_editor_action(
+            &mut state.content,
+            &mut state.markdown_text,
+            &mut state.undo_manager,
+            Action::Edit(Edit::Paste(Arc::new(text_to_paste))),
+            state.state.selected_note_path(),
+            state.state.notebook_path(),
+            &state.state,
+        );
+
+        if state.markdown_text != previous_markdown {
+            state.touch_selected_note_last_updated();
+            state.prune_embedded_images_for_current_markdown();
+            state.sync_markdown_preview();
+            return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
+        }
+
+        save_task
+    }
+
+    fn handle_paste_action(state: &mut Self, fallback_action: Action) -> Task<Message> {
+        if state.state.selected_note_path().is_none()
+            || state.state.show_visualizer()
+            || state.state.show_move_note_input()
+            || state.state.show_new_note_input()
+            || state.state.show_about_info()
+        {
+            return content_handler::handle_editor_action(
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                fallback_action,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            );
+        }
+
+        let image_base64 = match read_clipboard_image_as_base64_png() {
+            Ok(Some(base64_png)) => base64_png,
+            Ok(None) => {
+                return content_handler::handle_editor_action(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    &mut state.undo_manager,
+                    fallback_action,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+            }
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read image clipboard data: {}", _err);
+                return content_handler::handle_editor_action(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    &mut state.undo_manager,
+                    fallback_action,
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
+            }
+        };
+
+        let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+            return Task::none();
+        };
+
+        state.undo_manager.add_to_history(
+            &selected_note_path,
+            state.markdown_text.clone(),
+            state.content.cursor(),
+        );
+
+        let image_id = generate_embedded_image_id();
+        let tag = format!("![image:{}]", image_id);
+        state
+            .content
+            .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
+        state.markdown_text = state.content.text();
+        state.embedded_images.insert(image_id, image_base64);
+        state.prune_embedded_images_for_current_markdown();
+        state.touch_selected_note_last_updated();
+        state.sync_markdown_preview();
+
+        let notebook_path = state.state.notebook_path().to_string();
+        let note_path = selected_note_path;
+        let content_text = state.markdown_text.clone();
+        let save_content_task = Task::perform(
+            async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
+            Message::NoteContentSaved,
+        );
+
+        Task::batch(vec![
+            save_content_task,
+            state.persist_embedded_images_task(),
+        ])
     }
 
     fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
@@ -289,7 +485,9 @@ impl Editor {
         };
 
         if state.markdown_text != previous_markdown {
+            state.prune_embedded_images_for_current_markdown();
             state.sync_markdown_preview();
+            return Task::batch(vec![task, state.persist_embedded_images_task()]);
         }
 
         task
@@ -377,6 +575,13 @@ impl Editor {
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("Note content saved successfully.");
+                }
+                Task::none()
+            }
+            Message::EmbeddedImagesSaved(result) => {
+                if let Err(_err) = result {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Error saving embedded images: {}", _err);
                 }
                 Task::none()
             }
@@ -477,7 +682,13 @@ impl Editor {
         };
 
         if state.markdown_text != previous_markdown {
+            if state.state.selected_note_path().is_none() {
+                state.embedded_images.clear();
+            } else {
+                state.prune_embedded_images_for_current_markdown();
+            }
             state.sync_markdown_preview();
+            return Task::batch(vec![task, state.persist_embedded_images_task()]);
         }
 
         task
@@ -503,7 +714,50 @@ impl Editor {
     }
 
     fn sync_markdown_preview(&mut self) {
-        self.markdown_preview = iced::widget::markdown::Content::parse(&self.markdown_text);
+        self.sync_embedded_image_handles();
+        let preview_markdown =
+            build_markdown_preview_content(&self.markdown_text, &self.embedded_images);
+        self.markdown_preview = iced::widget::markdown::Content::parse(&preview_markdown);
+    }
+
+    fn prune_embedded_images_for_current_markdown(&mut self) {
+        let referenced = extract_embedded_image_ids(&self.markdown_text);
+        self.embedded_images
+            .retain(|image_id, _| referenced.contains(image_id));
+    }
+
+    fn persist_embedded_images_task(&self) -> Task<Message> {
+        if let Some(selected_note_path) = self.state.selected_note_path() {
+            let notebook_path = self.state.notebook_path().to_string();
+            let note_path = selected_note_path.clone();
+            let images = self.embedded_images.clone();
+            Task::perform(
+                async move {
+                    notebook::save_note_embedded_images(notebook_path, note_path, images).await
+                },
+                Message::EmbeddedImagesSaved,
+            )
+        } else {
+            Task::none()
+        }
+    }
+
+    fn sync_embedded_image_handles(&mut self) {
+        self.embedded_image_handles
+            .retain(|image_id, _| self.embedded_images.contains_key(image_id));
+
+        for (image_id, base64_png) in &self.embedded_images {
+            if self.embedded_image_handles.contains_key(image_id) {
+                continue;
+            }
+
+            if let Some(png_bytes) = decode_base64_png_to_bytes(base64_png) {
+                self.embedded_image_handles.insert(
+                    image_id.clone(),
+                    iced::widget::image::Handle::from_bytes(png_bytes),
+                );
+            }
+        }
     }
 
     fn touch_selected_note_last_updated(&mut self) {
@@ -524,6 +778,7 @@ impl Editor {
             &state.state,
             &state.content,
             &state.markdown_preview,
+            &state.embedded_image_handles,
             &state.note_explorer,
             &state.visualizer,
         )
@@ -578,10 +833,154 @@ impl Default for Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
+            embedded_images: HashMap::new(),
+            embedded_image_handles: HashMap::new(),
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(String::new()),
             visualizer: visualizer::Visualizer::new(),
         }
+    }
+}
+
+fn generate_embedded_image_id() -> String {
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("img_{timestamp_nanos:x}")
+}
+
+fn extract_embedded_image_ids(markdown: &str) -> HashSet<String> {
+    let marker = "![image:";
+    let mut referenced = HashSet::new();
+    let mut cursor = 0usize;
+
+    while let Some(relative_start) = markdown[cursor..].find(marker) {
+        let start = cursor + relative_start + marker.len();
+        let Some(relative_end) = markdown[start..].find(']') else {
+            break;
+        };
+
+        let end = start + relative_end;
+        let image_id = markdown[start..end].trim();
+        if !image_id.is_empty() {
+            referenced.insert(image_id.to_string());
+        }
+
+        cursor = end + 1;
+    }
+
+    referenced
+}
+
+fn build_markdown_preview_content(markdown: &str, images: &HashMap<String, String>) -> String {
+    let marker = "![image:";
+    let mut cursor = 0usize;
+    let mut rendered = String::with_capacity(markdown.len());
+
+    while let Some(relative_start) = markdown[cursor..].find(marker) {
+        let start = cursor + relative_start;
+        rendered.push_str(&markdown[cursor..start]);
+
+        let image_id_start = start + marker.len();
+        let Some(relative_end) = markdown[image_id_start..].find(']') else {
+            rendered.push_str(&markdown[start..]);
+            cursor = markdown.len();
+            break;
+        };
+
+        let image_id_end = image_id_start + relative_end;
+        let image_id = markdown[image_id_start..image_id_end].trim();
+
+        if images.contains_key(image_id) {
+            rendered.push_str("![image](cognate-image://");
+            rendered.push_str(image_id);
+            rendered.push(')');
+        } else {
+            rendered.push_str(&markdown[start..=image_id_end]);
+        }
+
+        cursor = image_id_end + 1;
+    }
+
+    if cursor < markdown.len() {
+        rendered.push_str(&markdown[cursor..]);
+    }
+
+    rendered
+}
+
+fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .ok()
+}
+
+fn read_clipboard_image_as_base64_png() -> Result<Option<String>, String> {
+    use base64::Engine;
+
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
+    let image = match clipboard.get_image() {
+        Ok(image) => image,
+        Err(_) => return Ok(None),
+    };
+
+    let mut encoded_png = Vec::new();
+    {
+        let mut encoder =
+            png::Encoder::new(&mut encoded_png, image.width as u32, image.height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|err| format!("Failed to write image header: {}", err))?;
+        writer
+            .write_image_data(image.bytes.as_ref())
+            .map_err(|err| format!("Failed to encode clipboard image as PNG: {}", err))?;
+    }
+
+    Ok(Some(
+        base64::engine::general_purpose::STANDARD.encode(encoded_png),
+    ))
+}
+
+fn read_clipboard_text() -> Result<Option<String>, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
+
+    match clipboard.get_text() {
+        Ok(text) => Ok(Some(text)),
+        Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod image_tag_tests {
+    use super::{build_markdown_preview_content, extract_embedded_image_ids};
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn extract_embedded_image_ids_parses_all_tags() {
+        let markdown = "A ![image:img_one] and ![image:img_two].";
+        let ids = extract_embedded_image_ids(markdown);
+
+        let expected: HashSet<String> = ["img_one".to_string(), "img_two".to_string()]
+            .into_iter()
+            .collect();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn build_markdown_preview_content_replaces_known_tags() {
+        let markdown = "before ![image:img_one] after ![image:missing]";
+        let mut images = HashMap::new();
+        images.insert("img_one".to_string(), "AAAABBBB".to_string());
+
+        let rendered = build_markdown_preview_content(markdown, &images);
+        assert!(rendered.contains("cognate-image://img_one"));
+        assert!(rendered.contains("![image:missing]"));
     }
 }

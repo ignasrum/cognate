@@ -53,7 +53,11 @@ mod tests {
             EditorMessage::MetadataSaved(Err("meta failed".to_string())),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err("save failed".to_string())),
-            EditorMessage::LoadedNoteContent("folder/note".to_string(), "body".to_string()),
+            EditorMessage::LoadedNoteContent(
+                "folder/note".to_string(),
+                "body".to_string(),
+                std::collections::HashMap::new(),
+            ),
             EditorMessage::Undo,
             EditorMessage::Redo,
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(
@@ -125,6 +129,7 @@ mod tests {
         let mut state = EditorState::new();
         let content = Content::with_text("hello");
         let markdown_content = iced::widget::markdown::Content::parse("hello");
+        let markdown_image_handles = std::collections::HashMap::new();
         let mut explorer = note_explorer::NoteExplorer::new("dummy".to_string());
         explorer.notes = vec![
             NoteMetadata {
@@ -140,33 +145,69 @@ mod tests {
         ];
         let visualizer = visualizer::Visualizer::new();
 
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
 
         state.set_notebook_path("dummy".to_string());
         state.set_selected_note_path(Some("folder/note".to_string()));
         state.set_selected_note_labels(vec!["tag".to_string()]);
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
 
         state.set_show_about_info(true);
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
         state.set_show_about_info(false);
 
         state.set_show_visualizer(true);
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
         state.set_show_visualizer(false);
 
         state.show_new_note_dialog();
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
         state.hide_new_note_dialog();
 
         state.show_move_note_dialog("folder".to_string());
-        let _ =
-            layout::generate_layout(&state, &content, &markdown_content, &explorer, &visualizer);
+        let _ = layout::generate_layout(
+            &state,
+            &content,
+            &markdown_content,
+            &markdown_image_handles,
+            &explorer,
+            &visualizer,
+        );
 
         let _ = dialogs::about_dialog("0.2.0");
         let _ = dialogs::new_note_dialog("new/path");

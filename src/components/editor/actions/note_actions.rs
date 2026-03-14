@@ -64,9 +64,12 @@ fn handle_note_selection_internal(
                         String::new()
                     }
                 };
-                (selected_note_path, loaded_content)
+                let loaded_images =
+                    notebook::load_note_embedded_images(&notebook_path, &selected_note_path);
+
+                (selected_note_path, loaded_content, loaded_images)
             },
-            |(note_path, content)| Message::LoadedNoteContent(note_path, content),
+            |(note_path, content, images)| Message::LoadedNoteContent(note_path, content, images),
         ));
     }
 

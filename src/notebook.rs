@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
@@ -9,6 +10,7 @@ use time::format_description::well_known::Rfc3339;
 
 const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
 const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
+const EMBEDDED_IMAGES_FILE: &str = "embedded_images.json";
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +31,12 @@ pub struct NotebookMetadata {
 pub struct NoteSearchResult {
     pub rel_path: String,
     pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct EmbeddedImagesStore {
+    #[serde(default)]
+    images: HashMap<String, String>,
 }
 
 pub fn current_timestamp_rfc3339() -> String {
@@ -588,6 +596,87 @@ pub async fn save_note_content(
         save_metadata(&notebook_path, &notes)
             .map_err(|e| format!("Failed to save metadata after content update: {}", e))?;
     }
+
+    Ok(())
+}
+
+fn embedded_images_path(notebook_path: &str, rel_note_path: &str) -> PathBuf {
+    Path::new(notebook_path)
+        .join(rel_note_path)
+        .join(EMBEDDED_IMAGES_FILE)
+}
+
+pub fn load_note_embedded_images(
+    notebook_path: &str,
+    rel_note_path: &str,
+) -> HashMap<String, String> {
+    let images_path = embedded_images_path(notebook_path, rel_note_path);
+
+    let contents = match fs::read_to_string(&images_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == ErrorKind::NotFound => return HashMap::new(),
+        Err(_err) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Failed to read embedded images store '{}': {}",
+                images_path.display(),
+                _err
+            );
+            return HashMap::new();
+        }
+    };
+
+    match serde_json::from_str::<EmbeddedImagesStore>(&contents) {
+        Ok(store) => store.images,
+        Err(_err) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Failed to parse embedded images store '{}': {}",
+                images_path.display(),
+                _err
+            );
+            HashMap::new()
+        }
+    }
+}
+
+pub async fn save_note_embedded_images(
+    notebook_path: String,
+    rel_note_path: String,
+    images: HashMap<String, String>,
+) -> Result<(), String> {
+    let images_path = embedded_images_path(&notebook_path, &rel_note_path);
+
+    if images.is_empty() {
+        match fs::remove_file(&images_path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "Failed to remove embedded images store '{}': {}",
+                    images_path.display(),
+                    err
+                ));
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(parent) = images_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create embedded image directory: {}", err))?;
+    }
+
+    let store = EmbeddedImagesStore { images };
+    let serialized = serde_json::to_string_pretty(&store)
+        .map_err(|err| format!("Failed to serialize embedded images store: {}", err))?;
+    fs::write(&images_path, serialized).map_err(|err| {
+        format!(
+            "Failed to write embedded images store '{}': {}",
+            images_path.display(),
+            err
+        )
+    })?;
 
     Ok(())
 }
