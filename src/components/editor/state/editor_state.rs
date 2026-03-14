@@ -16,6 +16,8 @@ enum UiMode {
 pub struct EditorState {
     // Core state
     notebook_path: String,
+    config_path: String,
+    ui_scale: f32,
     app_version: String,
 
     // Note selection and metadata
@@ -41,6 +43,8 @@ impl EditorState {
     pub fn new() -> Self {
         Self {
             notebook_path: String::new(),
+            config_path: String::new(),
+            ui_scale: 1.0,
             app_version: String::new(),
             selected_note_path: None,
             selected_note_labels: Vec::new(),
@@ -62,6 +66,14 @@ impl EditorState {
 
     pub fn app_version(&self) -> &str {
         &self.app_version
+    }
+
+    pub fn config_path(&self) -> &str {
+        &self.config_path
+    }
+
+    pub fn ui_scale(&self) -> f32 {
+        self.ui_scale
     }
 
     pub fn selected_note_path(&self) -> Option<&String> {
@@ -131,6 +143,16 @@ impl EditorState {
 
     pub fn set_app_version(&mut self, version: String) {
         self.app_version = version;
+    }
+
+    pub fn set_config_path(&mut self, path: String) {
+        self.config_path = path;
+    }
+
+    pub fn set_ui_scale(&mut self, scale: f32) {
+        if scale.is_finite() && scale > 0.0 {
+            self.ui_scale = scale;
+        }
     }
 
     pub fn set_selected_note_path(&mut self, path: Option<String>) {

@@ -14,6 +14,8 @@ mod tests {
         let cfg_known = Configuration {
             theme: "Dark".to_string(),
             notebook_path: String::new(),
+            scale: 1.0,
+            config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
         };
         let _ = Editor::create(cfg_known);
@@ -21,6 +23,8 @@ mod tests {
         let cfg_unknown = Configuration {
             theme: "CustomThemeThatDoesNotExist".to_string(),
             notebook_path: String::new(),
+            scale: 1.0,
+            config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
         };
         let _ = Editor::create(cfg_unknown);

@@ -14,7 +14,7 @@ use crate::components::editor::text_management::content_handler;
 use crate::components::editor::text_management::undo_manager;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::ui::layout;
-use crate::configuration::Configuration;
+use crate::configuration::{Configuration, save_scale_to_config};
 use crate::notebook::{self, NoteMetadata};
 
 // Import re-exported components
@@ -79,7 +79,10 @@ pub enum Message {
 
     // UI interactions
     AboutButtonClicked,
+    IncreaseScale,
+    DecreaseScale,
     MarkdownLinkClicked(String),
+    ScaleSaved(Result<(), String>),
 }
 
 // Define the Editor struct
@@ -121,6 +124,8 @@ impl Editor {
         };
 
         editor_instance.state.set_notebook_path(notebook_path_clone);
+        editor_instance.state.set_config_path(flags.config_path);
+        editor_instance.state.set_ui_scale(flags.scale);
         editor_instance.state.set_app_version(flags.version);
 
         let initial_command = if !editor_instance.state.notebook_path().is_empty() {
@@ -161,7 +166,8 @@ impl Editor {
 
             Message::MetadataSaved(_)
             | Message::NoteContentSaved(_)
-            | Message::EmbeddedImagesSaved(_) => Self::handle_save_feedback_messages(message),
+            | Message::EmbeddedImagesSaved(_)
+            | Message::ScaleSaved(_) => Self::handle_save_feedback_messages(message),
 
             Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
                 Self::handle_visualizer_messages(state, message)
@@ -183,6 +189,8 @@ impl Editor {
 
             Message::InitiateFolderRename(_)
             | Message::AboutButtonClicked
+            | Message::IncreaseScale
+            | Message::DecreaseScale
             | Message::MarkdownLinkClicked(_) => Self::handle_ui_messages(state, message),
         }
     }
@@ -585,6 +593,13 @@ impl Editor {
                 }
                 Task::none()
             }
+            Message::ScaleSaved(result) => {
+                if let Err(_err) = result {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Error saving scale to config: {}", _err);
+                }
+                Task::none()
+            }
             _ => unreachable!("save-feedback handler received invalid message"),
         }
     }
@@ -704,6 +719,16 @@ impl Editor {
                 state.state.toggle_about_info();
                 Task::none()
             }
+            Message::IncreaseScale => {
+                let new_scale = round_scale_step((state.state.ui_scale() + 0.1).min(4.0));
+                state.state.set_ui_scale(new_scale);
+                state.persist_scale_task()
+            }
+            Message::DecreaseScale => {
+                let new_scale = round_scale_step((state.state.ui_scale() - 0.1).max(0.5));
+                state.state.set_ui_scale(new_scale);
+                state.persist_scale_task()
+            }
             Message::MarkdownLinkClicked(_uri) => {
                 #[cfg(debug_assertions)]
                 eprintln!("Markdown link clicked: {}", _uri);
@@ -740,6 +765,20 @@ impl Editor {
         } else {
             Task::none()
         }
+    }
+
+    fn persist_scale_task(&self) -> Task<Message> {
+        let config_path = self.state.config_path().to_string();
+        let scale = self.state.ui_scale();
+
+        if config_path.trim().is_empty() {
+            return Task::none();
+        }
+
+        Task::perform(
+            async move { save_scale_to_config(&config_path, scale) },
+            Message::ScaleSaved,
+        )
     }
 
     fn sync_embedded_image_handles(&mut self) {
@@ -782,6 +821,10 @@ impl Editor {
             &state.note_explorer,
             &state.visualizer,
         )
+    }
+
+    pub fn scale_factor(state: &Self) -> f32 {
+        state.state.ui_scale()
     }
 
     // Keep subscription method as is
@@ -955,6 +998,10 @@ fn read_clipboard_text() -> Result<Option<String>, String> {
         Ok(text) => Ok(Some(text)),
         Err(_) => Ok(None),
     }
+}
+
+fn round_scale_step(scale: f32) -> f32 {
+    (scale * 100.0).round() / 100.0
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ pub fn main() -> iced::Result {
         Ok(cfg) => {
             println!("Theme: {}", cfg.theme);
             println!("Notebook Path: {}", cfg.notebook_path);
+            println!("Scale: {}", cfg.scale);
             println!("App Version: {}", cfg.version);
             cfg
         }
@@ -53,6 +54,7 @@ pub fn main() -> iced::Result {
     )
     .title("Cognate")
     .theme(app_theme.clone())
+    .scale_factor(Editor::scale_factor)
     .subscription(Editor::subscription);
 
     app.run()

@@ -44,7 +44,8 @@ mod tests {
             "valid",
             r#"{
                 "theme": "CatppuccinMacchiato",
-                "notebook_path": "/tmp/my_notebook"
+                "notebook_path": "/tmp/my_notebook",
+                "scale": 1.25
             }"#,
         );
 
@@ -53,6 +54,7 @@ mod tests {
 
         assert_eq!(config.theme, "CatppuccinMacchiato");
         assert_eq!(config.notebook_path, "/tmp/my_notebook");
+        assert!((config.scale - 1.25).abs() < f32::EPSILON);
         assert!(!config.version.is_empty());
     }
 
@@ -77,7 +79,41 @@ mod tests {
 
         assert_eq!(config.theme, "Dark");
         assert_eq!(config.notebook_path, "");
+        assert!((config.scale - 1.0).abs() < f32::EPSILON);
         assert!(!config.version.is_empty());
+    }
+
+    #[test]
+    fn read_configuration_defaults_scale_when_missing() {
+        let config_file = TestConfigFile::new(
+            "missing_scale",
+            r#"{
+                "theme": "Dark",
+                "notebook_path": "/tmp/my_notebook"
+            }"#,
+        );
+
+        let config =
+            read_configuration(config_file.as_str()).expect("Expected valid configuration");
+
+        assert!((config.scale - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn read_configuration_defaults_scale_when_invalid() {
+        let config_file = TestConfigFile::new(
+            "invalid_scale",
+            r#"{
+                "theme": "Dark",
+                "notebook_path": "/tmp/my_notebook",
+                "scale": -2
+            }"#,
+        );
+
+        let config =
+            read_configuration(config_file.as_str()).expect("Expected valid configuration");
+
+        assert!((config.scale - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

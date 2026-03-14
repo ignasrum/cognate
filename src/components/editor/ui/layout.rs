@@ -1,5 +1,6 @@
 use iced::widget::{
-    Column, Container, Row, Text, TextInput as IcedTextInput, button, image, markdown, text_editor,
+    Column, Container, Row, Space, Text, TextInput as IcedTextInput, button, image, markdown,
+    text_editor,
 };
 use iced::{Element, Length};
 use std::collections::{HashMap, HashSet};
@@ -158,6 +159,36 @@ pub fn generate_layout<'a>(
             "Please configure the 'notebook_path' in your config.json file to open a notebook.",
         ));
     }
+
+    // Always keep scale controls right-aligned in top bar.
+    top_bar = top_bar
+        .push(Space::new().width(Length::Fill))
+        .push(
+            button(
+                Container::new(Text::new("-"))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+                .padding(0)
+                .width(Length::Fixed(30.0))
+                .height(Length::Fixed(30.0))
+                .on_press(Message::DecreaseScale),
+        )
+        .push(
+            button(
+                Container::new(Text::new("+"))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+                .padding(0)
+                .width(Length::Fixed(30.0))
+                .height(Length::Fixed(30.0))
+                .on_press(Message::IncreaseScale),
+        );
 
     // Main content area
     let main_content: Element<'_, Message> = if state.show_about_info() {

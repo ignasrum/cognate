@@ -13,7 +13,7 @@ Cognate is a simple note taking application built with the Iced GUI library for 
     - Move and rename notes and folders within the notebook.
 - **Labeling:** Add and remove labels to individual notes for better organization.
 - **Visualizer:** View your notes grouped by their labels.
-- **Configuration:** Customize the application theme and notebook path via a `config.json` file.
+- **Configuration:** Customize the application theme, notebook path, and UI scale via a `config.json` file.
 
 ## Getting Started
 
@@ -50,5 +50,10 @@ A sample `config.json` looks like this:
 ```cognate/config.json
 {
   "theme": "CatppuccinMacchiato",
-  "notebook_path": "/home/{USER}/Documents/cognate/example_notebook"
+  "notebook_path": "/home/{USER}/Documents/cognate/example_notebook",
+  "scale": 1.0
 }
+```
+
+`scale` controls global UI scaling. It must be a positive number.
+For example, `1.25` scales the interface up by 25%.
