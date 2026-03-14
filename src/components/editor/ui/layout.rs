@@ -218,25 +218,18 @@ pub fn generate_layout<'a>(
             )
         });
 
-        // Create a column with the editor and a bottom spacer
-        let mut editor_with_bottom_spacer = Column::new().spacing(5).width(Length::Fill);
+        // Create a column with note info and the editor
+        let mut editor_column = Column::new().spacing(5).width(Length::Fill);
 
         if let Some(note_info_row) = selected_note_info {
-            editor_with_bottom_spacer = editor_with_bottom_spacer.push(note_info_row);
+            editor_column = editor_column.push(note_info_row);
         }
 
-        editor_with_bottom_spacer = editor_with_bottom_spacer
-            .push(editor_widget)
-            .push(
-                Container::new(Text::new("")) // Empty container as spacer
-                    .height(Length::Fixed(5.0))
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill);
+        editor_column = editor_column.push(editor_widget).width(Length::Fill);
 
         // Create a row with the editor column and a right-side spacer
         let editor_with_padding = Row::new()
-            .push(editor_with_bottom_spacer)
+            .push(editor_column)
             .push(Container::new(Text::new("").width(Length::Fixed(20.0)))) // Right padding
             .width(Length::Fill);
 
@@ -298,7 +291,7 @@ pub fn generate_layout<'a>(
 
         let bottom_bar: Element<'_, Message> = Container::new(labels_row)
             .width(Length::Fill)
-            .height(Length::FillPortion(1))
+            .height(Length::Shrink)
             .into();
 
         Column::new().push(content_row).push(bottom_bar).into()
