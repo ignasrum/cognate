@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
+const HTML_BR_SENTINEL_CHAR: char = '\u{E000}';
 
 // Import required types and modules
 use crate::components::editor::actions::{label_actions, note_actions};
@@ -222,13 +223,18 @@ impl Editor {
                     state.touch_selected_note_last_updated();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
-                    return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
+                    return Task::batch(vec![
+                        save_task,
+                        state.persist_embedded_images_task(),
+                        state.scroll_preview_to_cursor_task(),
+                    ]);
                 }
 
-                save_task
+                state.with_preview_scroll_task(save_task)
             }
             Message::SelectAll => {
-                content_handler::handle_select_all(&mut state.content, &state.state)
+                let task = content_handler::handle_select_all(&mut state.content, &state.state);
+                state.with_preview_scroll_task(task)
             }
             Message::Undo => {
                 let previous_markdown = state.markdown_text.clone();
@@ -243,9 +249,13 @@ impl Editor {
                 if state.markdown_text != previous_markdown {
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
-                    return Task::batch(vec![task, state.persist_embedded_images_task()]);
+                    return Task::batch(vec![
+                        task,
+                        state.persist_embedded_images_task(),
+                        state.scroll_preview_to_cursor_task(),
+                    ]);
                 }
-                task
+                state.with_preview_scroll_task(task)
             }
             Message::Redo => {
                 let previous_markdown = state.markdown_text.clone();
@@ -260,9 +270,13 @@ impl Editor {
                 if state.markdown_text != previous_markdown {
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
-                    return Task::batch(vec![task, state.persist_embedded_images_task()]);
+                    return Task::batch(vec![
+                        task,
+                        state.persist_embedded_images_task(),
+                        state.scroll_preview_to_cursor_task(),
+                    ]);
                 }
-                task
+                state.with_preview_scroll_task(task)
             }
             Message::PasteFromClipboard => Self::handle_paste_from_clipboard_shortcut(state),
             Message::EditorAction(action) => {
@@ -295,10 +309,14 @@ impl Editor {
                     state.touch_selected_note_last_updated();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
-                    return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
+                    return Task::batch(vec![
+                        save_task,
+                        state.persist_embedded_images_task(),
+                        state.scroll_preview_to_cursor_task(),
+                    ]);
                 }
 
-                save_task
+                state.with_preview_scroll_task(save_task)
             }
             Message::LoadedNoteContent(note_path, new_content, images) => {
                 if state.state.selected_note_path() != Some(&note_path) {
@@ -318,7 +336,7 @@ impl Editor {
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                 }
-                task
+                state.with_preview_scroll_task(task)
             }
             _ => unreachable!("text handler received non-text message"),
         }
@@ -391,6 +409,7 @@ impl Editor {
             return Task::batch(vec![
                 save_content_task,
                 state.persist_embedded_images_task(),
+                state.scroll_preview_to_cursor_task(),
             ]);
         }
 
@@ -413,10 +432,14 @@ impl Editor {
             state.touch_selected_note_last_updated();
             state.prune_embedded_images_for_current_markdown();
             state.sync_markdown_preview();
-            return Task::batch(vec![save_task, state.persist_embedded_images_task()]);
+            return Task::batch(vec![
+                save_task,
+                state.persist_embedded_images_task(),
+                state.scroll_preview_to_cursor_task(),
+            ]);
         }
 
-        save_task
+        state.with_preview_scroll_task(save_task)
     }
 
     fn handle_paste_action(state: &mut Self, fallback_action: Action) -> Task<Message> {
@@ -427,7 +450,7 @@ impl Editor {
             || state.state.show_embedded_image_delete_confirmation()
             || state.state.show_about_info()
         {
-            return content_handler::handle_editor_action(
+            let task = content_handler::handle_editor_action(
                 &mut state.content,
                 &mut state.markdown_text,
                 &mut state.undo_manager,
@@ -436,6 +459,7 @@ impl Editor {
                 state.state.notebook_path(),
                 &state.state,
             );
+            return state.with_preview_scroll_task(task);
         }
 
         let clipboard_text = match read_clipboard_text() {
@@ -454,7 +478,7 @@ impl Editor {
                     .as_deref()
                     .and_then(read_clipboard_image_file_as_base64_from_text)
                 else {
-                    return content_handler::handle_editor_action(
+                    let task = content_handler::handle_editor_action(
                         &mut state.content,
                         &mut state.markdown_text,
                         &mut state.undo_manager,
@@ -463,6 +487,7 @@ impl Editor {
                         state.state.notebook_path(),
                         &state.state,
                     );
+                    return state.with_preview_scroll_task(task);
                 };
 
                 file_image_base64
@@ -474,7 +499,7 @@ impl Editor {
                     .as_deref()
                     .and_then(read_clipboard_image_file_as_base64_from_text)
                 else {
-                    return content_handler::handle_editor_action(
+                    let task = content_handler::handle_editor_action(
                         &mut state.content,
                         &mut state.markdown_text,
                         &mut state.undo_manager,
@@ -483,6 +508,7 @@ impl Editor {
                         state.state.notebook_path(),
                         &state.state,
                     );
+                    return state.with_preview_scroll_task(task);
                 };
 
                 file_image_base64
@@ -521,6 +547,7 @@ impl Editor {
         Task::batch(vec![
             save_content_task,
             state.persist_embedded_images_task(),
+            state.scroll_preview_to_cursor_task(),
         ])
     }
 
@@ -549,7 +576,11 @@ impl Editor {
         if state.markdown_text != previous_markdown {
             state.prune_embedded_images_for_current_markdown();
             state.sync_markdown_preview();
-            return Task::batch(vec![task, state.persist_embedded_images_task()]);
+            return Task::batch(vec![
+                task,
+                state.persist_embedded_images_task(),
+                state.scroll_preview_to_cursor_task(),
+            ]);
         }
 
         task
@@ -765,7 +796,11 @@ impl Editor {
                 state.prune_embedded_images_for_current_markdown();
             }
             state.sync_markdown_preview();
-            return Task::batch(vec![task, state.persist_embedded_images_task()]);
+            return Task::batch(vec![
+                task,
+                state.persist_embedded_images_task(),
+                state.scroll_preview_to_cursor_task(),
+            ]);
         }
 
         task
@@ -854,7 +889,7 @@ impl Editor {
             }
 
             self.sync_markdown_preview();
-            return save_task;
+            return self.with_preview_scroll_task(save_task);
         }
 
         self.pending_embedded_image_deletion_ids.clear();
@@ -919,6 +954,48 @@ impl Editor {
         )
     }
 
+    fn with_preview_scroll_task(&self, task: Task<Message>) -> Task<Message> {
+        Task::batch(vec![task, self.scroll_preview_to_cursor_task()])
+    }
+
+    fn scroll_preview_to_cursor_task(&self) -> Task<Message> {
+        if self.state.selected_note_path().is_none()
+            || self.state.show_visualizer()
+            || self.state.show_move_note_input()
+            || self.state.show_new_note_input()
+            || self.state.show_embedded_image_delete_confirmation()
+            || self.state.show_about_info()
+        {
+            return Task::none();
+        }
+
+        let Some(cursor_char_index) = cursor_preview_character_index(
+            &self.markdown_text,
+            self.content.cursor(),
+            &self.embedded_images,
+        ) else {
+            return Task::none();
+        };
+
+        let rendered_preview_markdown =
+            build_markdown_preview_content(&self.markdown_text, &self.embedded_images);
+        let total_rendered_chars = preview_rendered_char_count(&rendered_preview_markdown);
+
+        let y = if total_rendered_chars == 0 {
+            0.0
+        } else {
+            (cursor_char_index as f32 / total_rendered_chars as f32).clamp(0.0, 1.0)
+        };
+
+        iced::widget::operation::snap_to(
+            layout::MARKDOWN_PREVIEW_SCROLLABLE_ID,
+            iced::widget::operation::RelativeOffset::<Option<f32>> {
+                x: None,
+                y: Some(y),
+            },
+        )
+    }
+
     fn sync_embedded_image_handles(&mut self) {
         self.embedded_image_handles
             .retain(|image_id, _| self.embedded_images.contains_key(image_id));
@@ -951,6 +1028,16 @@ impl Editor {
 
     // Keep view method as is, but fix the state reference
     pub fn view(state: &Self) -> Element<'_, Message> {
+        let preview_indicator_char_index = if state.state.selected_note_path().is_some() {
+            cursor_preview_character_index(
+                &state.markdown_text,
+                state.content.cursor(),
+                &state.embedded_images,
+            )
+        } else {
+            None
+        };
+
         layout::generate_layout(
             &state.state,
             &state.content,
@@ -958,6 +1045,7 @@ impl Editor {
             &state.embedded_image_handles,
             &state.note_explorer,
             &state.visualizer,
+            preview_indicator_char_index,
         )
     }
 
@@ -1151,6 +1239,57 @@ fn position_to_byte_index(markdown: &str, position: EditorPosition) -> Option<us
     Some(line_start + column_offset)
 }
 
+fn cursor_preview_character_index(
+    markdown: &str,
+    cursor: EditorCursor,
+    images: &HashMap<String, String>,
+) -> Option<usize> {
+    let cursor_byte_index = position_to_byte_index(markdown, cursor.position)?.min(markdown.len());
+    let preview_prefix = build_markdown_preview_content(&markdown[..cursor_byte_index], images);
+    let mut rendered_char_count = preview_rendered_char_count(&preview_prefix);
+
+    let previous_char = markdown[..cursor_byte_index].chars().next_back();
+    let next_char = markdown[cursor_byte_index..].chars().next();
+
+    if matches!(previous_char, Some(' ' | '\t' | '\n' | '\r'))
+        && matches!(next_char, Some(ch) if ch != '\n' && ch != '\r')
+        && let Some(next_boundary) = next_char_boundary(markdown, cursor_byte_index)
+    {
+        let preview_with_next = build_markdown_preview_content(&markdown[..next_boundary], images);
+        let rendered_with_next = preview_rendered_char_count(&preview_with_next);
+
+        if rendered_with_next > rendered_char_count {
+            rendered_char_count = rendered_with_next.saturating_sub(1);
+        }
+    }
+
+    Some(rendered_char_count)
+}
+
+fn preview_rendered_char_count(preview_markdown: &str) -> usize {
+    pulldown_cmark::Parser::new_ext(preview_markdown, markdown_parser_options()).fold(
+        0usize,
+        |count, event| match event {
+            pulldown_cmark::Event::Text(text) => count + text.chars().count(),
+            pulldown_cmark::Event::Code(code) => count + code.chars().count(),
+            pulldown_cmark::Event::SoftBreak | pulldown_cmark::Event::HardBreak => count + 1,
+            _ => count,
+        },
+    )
+}
+
+#[cfg(test)]
+fn preview_line_from_cursor_byte(markdown: &str, cursor_byte_index: usize) -> usize {
+    let clamped_index = cursor_byte_index.min(markdown.len());
+    let prefix = &markdown[..clamped_index];
+    let normalized_prefix = normalize_html_line_break_tags(prefix);
+
+    normalized_prefix
+        .chars()
+        .filter(|ch| *ch == '\n' || *ch == HTML_BR_SENTINEL_CHAR)
+        .count()
+}
+
 fn char_index_to_byte_offset(text: &str, char_index: usize) -> Option<usize> {
     if char_index == 0 {
         return Some(0);
@@ -1221,16 +1360,12 @@ fn build_markdown_preview_content(markdown: &str, images: &HashMap<String, Strin
 }
 
 fn normalize_html_line_break_tags(markdown: &str) -> String {
-    let options = pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | pulldown_cmark::Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
-        | pulldown_cmark::Options::ENABLE_TABLES
-        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
-        | pulldown_cmark::Options::ENABLE_TASKLISTS;
-
     let mut normalized = String::with_capacity(markdown.len());
     let mut cursor = 0usize;
 
-    for (event, range) in pulldown_cmark::Parser::new_ext(markdown, options).into_offset_iter() {
+    for (event, range) in
+        pulldown_cmark::Parser::new_ext(markdown, markdown_parser_options()).into_offset_iter()
+    {
         if let pulldown_cmark::Event::Html(html) | pulldown_cmark::Event::InlineHtml(html) = event
             && let Some(line_breaks) = html_line_breaks_replacement(html.as_ref())
         {
@@ -1317,6 +1452,14 @@ fn is_html_line_break_tag(html: &str) -> bool {
     };
 
     tag_name.eq_ignore_ascii_case("br")
+}
+
+fn markdown_parser_options() -> pulldown_cmark::Options {
+    pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | pulldown_cmark::Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
+        | pulldown_cmark::Options::ENABLE_TABLES
+        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
+        | pulldown_cmark::Options::ENABLE_TASKLISTS
 }
 
 fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
@@ -1489,12 +1632,14 @@ fn round_scale_step(scale: f32) -> f32 {
 #[cfg(test)]
 mod image_tag_tests {
     use super::{
-        HTML_BR_SENTINEL, build_markdown_preview_content, extract_embedded_image_ids,
-        html_line_breaks_replacement, is_probably_image_file, normalize_html_line_break_tags,
-        parse_clipboard_image_file_paths, parse_file_uri_to_path, percent_decode,
+        HTML_BR_SENTINEL, build_markdown_preview_content, cursor_preview_character_index,
+        extract_embedded_image_ids, html_line_breaks_replacement, is_probably_image_file,
+        normalize_html_line_break_tags, parse_clipboard_image_file_paths, parse_file_uri_to_path,
+        percent_decode, preview_line_from_cursor_byte,
         read_clipboard_image_file_as_base64_from_text, read_image_file_as_base64,
     };
     use base64::Engine;
+    use iced::widget::text_editor::{Cursor as EditorCursor, Position as EditorPosition};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1575,6 +1720,61 @@ mod image_tag_tests {
 
         let expected = format!("line 1{}line 2", HTML_BR_SENTINEL);
         assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn preview_line_from_cursor_byte_tracks_newlines() {
+        let markdown = "first line\nsecond line\nthird line";
+        let third_line_start = markdown
+            .find("third")
+            .expect("test fixture should contain third line");
+
+        assert_eq!(preview_line_from_cursor_byte(markdown, third_line_start), 2);
+    }
+
+    #[test]
+    fn preview_line_from_cursor_byte_counts_html_break_tags() {
+        let markdown = "one<br>two<br/>three";
+        let third_segment_start = markdown
+            .find("three")
+            .expect("test fixture should contain third segment");
+
+        assert_eq!(
+            preview_line_from_cursor_byte(markdown, third_segment_start),
+            2
+        );
+    }
+
+    #[test]
+    fn cursor_preview_character_index_handles_space_before_following_text() {
+        let markdown = "hello sample";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 0, column: 6 },
+            selection: None,
+        };
+
+        let index = cursor_preview_character_index(markdown, cursor, &HashMap::new());
+        assert_eq!(
+            index,
+            Some(6),
+            "cursor after a space before text should still point to the next visible character"
+        );
+    }
+
+    #[test]
+    fn cursor_preview_character_index_handles_newline_before_following_text() {
+        let markdown = "hello\nsample";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 1, column: 0 },
+            selection: None,
+        };
+
+        let index = cursor_preview_character_index(markdown, cursor, &HashMap::new());
+        assert_eq!(
+            index,
+            Some(6),
+            "cursor after a newline before text should still point to the next visible character"
+        );
     }
 
     #[test]

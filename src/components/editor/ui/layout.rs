@@ -3,6 +3,7 @@ use iced::widget::{
     rich_text, text_editor,
 };
 use iced::{Element, Length};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -15,8 +16,12 @@ use crate::components::note_explorer;
 use crate::components::visualizer;
 use crate::notebook::NoteSearchResult;
 
+pub const MARKDOWN_PREVIEW_SCROLLABLE_ID: &str = "cognate_markdown_preview_scrollable";
+
 struct MarkdownPreviewViewer<'a> {
     image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    indicator_char_index: Option<usize>,
+    consumed_chars: Cell<usize>,
 }
 
 impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
@@ -55,63 +60,155 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
         settings: markdown::Settings,
         text: &markdown::Text,
     ) -> Element<'a, Message> {
-        let lines = split_markdown_spans_by_newline(text, settings.style);
+        render_text_block_with_indicator(
+            text,
+            settings.style,
+            settings.text_size,
+            self.indicator_char_index,
+            &self.consumed_chars,
+            None,
+        )
+    }
 
-        if lines.len() <= 1 {
-            return markdown::paragraph(settings, text, Self::on_link_click);
-        }
+    fn heading(
+        &self,
+        settings: markdown::Settings,
+        level: &'a markdown::HeadingLevel,
+        text: &'a markdown::Text,
+        index: usize,
+    ) -> Element<'a, Message> {
+        let heading_size = match level {
+            markdown::HeadingLevel::H1 => settings.h1_size,
+            markdown::HeadingLevel::H2 => settings.h2_size,
+            markdown::HeadingLevel::H3 => settings.h3_size,
+            markdown::HeadingLevel::H4 => settings.h4_size,
+            markdown::HeadingLevel::H5 => settings.h5_size,
+            markdown::HeadingLevel::H6 => settings.h6_size,
+        };
 
-        let mut paragraph_lines = Column::new().spacing(0);
+        Container::new(render_text_block_with_indicator(
+            text,
+            settings.style,
+            heading_size,
+            self.indicator_char_index,
+            &self.consumed_chars,
+            None,
+        ))
+        .padding(iced::padding::top(if index > 0 {
+            settings.text_size / 2.0
+        } else {
+            iced::Pixels::ZERO
+        }))
+        .into()
+    }
+
+    fn code_block(
+        &self,
+        settings: markdown::Settings,
+        _language: Option<&'a str>,
+        _code: &'a str,
+        lines: &'a [markdown::Text],
+    ) -> Element<'a, Message> {
+        let mut rendered_lines = Column::new().spacing(0);
 
         for line in lines {
-            let line_widget = if line.is_empty() {
-                rich_text(vec![iced::widget::text::Span::<markdown::Uri>::new(" ")])
-            } else {
-                rich_text(line).on_link_click(Self::on_link_click)
-            };
-
-            paragraph_lines = paragraph_lines.push(line_widget.size(settings.text_size));
+            rendered_lines = rendered_lines.push(render_text_block_with_indicator(
+                line,
+                settings.style,
+                settings.code_size,
+                self.indicator_char_index,
+                &self.consumed_chars,
+                Some(settings.style.code_block_font),
+            ));
         }
 
-        paragraph_lines.into()
+        Container::new(
+            iced::widget::scrollable(Container::new(rendered_lines).padding(settings.code_size))
+                .direction(iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::default()
+                        .width(settings.code_size / 2)
+                        .scroller_width(settings.code_size / 2),
+                )),
+        )
+        .width(Length::Fill)
+        .padding(settings.code_size / 4)
+        .class(<iced::Theme as markdown::Catalog>::code_block())
+        .into()
     }
 }
 
-fn split_markdown_spans_by_newline(
+fn render_text_block_with_indicator<'a>(
     text: &markdown::Text,
     style: markdown::Style,
+    text_size: iced::Pixels,
+    indicator_char_index: Option<usize>,
+    consumed_chars: &Cell<usize>,
+    font_override: Option<iced::Font>,
+) -> Element<'a, Message> {
+    let lines = split_markdown_spans_by_newline_with_indicator(
+        text,
+        style,
+        indicator_char_index,
+        consumed_chars,
+    );
+
+    let mut paragraph_lines = Column::new().spacing(0);
+
+    for line in lines {
+        let mut line_widget = if line.is_empty() {
+            rich_text(vec![iced::widget::text::Span::<markdown::Uri>::new(" ")])
+        } else {
+            rich_text(line).on_link_click(Message::MarkdownLinkClicked)
+        };
+
+        if let Some(font) = font_override {
+            line_widget = line_widget.font(font);
+        }
+
+        paragraph_lines = paragraph_lines.push(line_widget.size(text_size));
+    }
+
+    paragraph_lines.into()
+}
+
+fn split_markdown_spans_by_newline_with_indicator(
+    text: &markdown::Text,
+    style: markdown::Style,
+    indicator_char_index: Option<usize>,
+    consumed_chars: &Cell<usize>,
 ) -> Vec<Vec<iced::widget::text::Span<'static, markdown::Uri>>> {
     let spans = text.spans(style);
     let mut lines: Vec<Vec<iced::widget::text::Span<'static, markdown::Uri>>> = vec![Vec::new()];
+    let mut global_char_index = consumed_chars.get();
 
     for span in spans.iter() {
         let content = span.text.as_ref().replace(HTML_BR_SENTINEL, "\n");
-        let mut start = 0usize;
 
-        for (index, _) in content.match_indices('\n') {
-            if index > start {
-                let mut line_span = span.clone();
-                line_span.text = content[start..index].to_string().into();
-                lines
-                    .last_mut()
-                    .expect("at least one line present")
-                    .push(line_span);
+        for ch in content.chars() {
+            if ch == '\n' {
+                global_char_index += 1;
+                lines.push(Vec::new());
+                continue;
             }
 
-            lines.push(Vec::new());
-            start = index + 1;
-        }
+            let mut char_span = span.clone();
+            char_span.text = ch.to_string().into();
 
-        if start < content.len() {
-            let mut line_span = span.clone();
-            line_span.text = content[start..].to_string().into();
+            if indicator_char_index == Some(global_char_index) {
+                char_span = char_span
+                    .background(iced::Color::from_rgba(0.18, 0.70, 0.95, 0.28))
+                    .border(iced::Border::default().rounded(2.0));
+            }
+
             lines
                 .last_mut()
                 .expect("at least one line present")
-                .push(line_span);
+                .push(char_span);
+            global_char_index += 1;
         }
     }
 
+    consumed_chars.set(global_char_index);
     lines
 }
 
@@ -122,6 +219,7 @@ pub fn generate_layout<'a>(
     markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
     note_explorer_component: &'a note_explorer::NoteExplorer,
     visualizer_component: &'a visualizer::Visualizer,
+    preview_indicator_char_index: Option<usize>,
 ) -> Element<'a, Message> {
     let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
@@ -399,6 +497,8 @@ pub fn generate_layout<'a>(
         let markdown_preview_body: Element<'_, Message> = if state.selected_note_path().is_some() {
             let preview_viewer = MarkdownPreviewViewer {
                 image_handles: markdown_image_handles,
+                indicator_char_index: preview_indicator_char_index,
+                consumed_chars: Cell::new(0),
             };
             markdown::view_with(markdown_content.items(), iced::Theme::Dark, &preview_viewer)
         } else {
@@ -410,7 +510,8 @@ pub fn generate_layout<'a>(
 
         let markdown_preview_scrollable = iced::widget::scrollable(markdown_preview_body)
             .width(Length::Fill)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .id(MARKDOWN_PREVIEW_SCROLLABLE_ID);
 
         let markdown_preview_container = Container::new(markdown_preview_scrollable)
             .width(Length::FillPortion(4))

@@ -157,6 +157,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
 
         state.set_notebook_path("dummy".to_string());
@@ -169,6 +170,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            Some(0),
         );
 
         state.set_show_about_info(true);
@@ -179,6 +181,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
         state.set_show_about_info(false);
 
@@ -190,6 +193,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
         state.set_show_visualizer(false);
 
@@ -201,6 +205,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
         state.hide_new_note_dialog();
 
@@ -212,6 +217,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
         state.hide_move_note_dialog();
 
@@ -223,6 +229,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
+            None,
         );
         state.hide_embedded_image_delete_dialog();
 
