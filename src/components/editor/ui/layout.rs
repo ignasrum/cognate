@@ -508,14 +508,8 @@ pub fn generate_layout<'a>(
                 .into()
         };
 
-        let markdown_preview_scrollable = iced::widget::scrollable(markdown_preview_body)
+        let markdown_preview_frame = Container::new(markdown_preview_body)
             .width(Length::Fill)
-            .height(Length::Fill)
-            .id(MARKDOWN_PREVIEW_SCROLLABLE_ID);
-
-        let markdown_preview_container = Container::new(markdown_preview_scrollable)
-            .width(Length::FillPortion(4))
-            .height(Length::Fill)
             .padding(8)
             .style(|theme| iced::widget::container::Style {
                 background: Some(iced::Background::Color(theme.palette().background)),
@@ -528,6 +522,21 @@ pub fn generate_layout<'a>(
                 shadow: iced::Shadow::default(),
                 snap: false,
             });
+
+        // Match editor behavior by reserving space so the scrollbar sits outside preview content.
+        let markdown_preview_with_padding = Row::new()
+            .push(markdown_preview_frame)
+            .push(Container::new(Text::new("").width(Length::Fixed(20.0))))
+            .width(Length::Fill);
+
+        let markdown_preview_scrollable = iced::widget::scrollable(markdown_preview_with_padding)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .id(MARKDOWN_PREVIEW_SCROLLABLE_ID);
+
+        let markdown_preview_container = Container::new(markdown_preview_scrollable)
+            .width(Length::FillPortion(4))
+            .height(Length::Fill);
 
         let content_row = Row::new()
             .push(note_explorer_view)
