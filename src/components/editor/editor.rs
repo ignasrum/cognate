@@ -353,25 +353,18 @@ impl Editor {
             return Task::none();
         }
 
-        let clipboard_text = match read_clipboard_text() {
-            Ok(value) => value,
+        let clipboard_contents = match read_clipboard_contents() {
+            Ok(contents) => contents,
             Err(_err) => {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to read text clipboard data: {}", _err);
-                None
+                eprintln!("Failed to read clipboard data: {}", _err);
+                ClipboardContents::default()
             }
         };
 
-        let image_base64 = match read_clipboard_image_as_base64_png() {
-            Ok(value) => value,
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read image clipboard data: {}", _err);
-                None
-            }
-        }
-        .or_else(|| {
-            clipboard_text
+        let image_base64 = clipboard_contents.image_base64_png.or_else(|| {
+            clipboard_contents
+                .text
                 .as_deref()
                 .and_then(read_clipboard_image_file_as_base64_from_text)
         });
@@ -413,7 +406,7 @@ impl Editor {
             ]);
         }
 
-        let Some(text_to_paste) = clipboard_text else {
+        let Some(text_to_paste) = clipboard_contents.text else {
             return Task::none();
         };
 
@@ -462,57 +455,41 @@ impl Editor {
             return state.with_preview_scroll_task(task);
         }
 
-        let clipboard_text = match read_clipboard_text() {
-            Ok(value) => value,
+        let fallback_text = paste_text_from_action(&fallback_action);
+        let clipboard_contents = match read_clipboard_contents() {
+            Ok(contents) => contents,
             Err(_err) => {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to read text clipboard data: {}", _err);
-                None
+                eprintln!("Failed to read clipboard data: {}", _err);
+                ClipboardContents::default()
             }
         };
 
-        let image_base64 = match read_clipboard_image_as_base64_png() {
-            Ok(Some(base64_png)) => base64_png,
-            Ok(None) => {
-                let Some(file_image_base64) = clipboard_text
-                    .as_deref()
-                    .and_then(read_clipboard_image_file_as_base64_from_text)
-                else {
-                    let task = content_handler::handle_editor_action(
-                        &mut state.content,
-                        &mut state.markdown_text,
-                        &mut state.undo_manager,
-                        fallback_action,
-                        state.state.selected_note_path(),
-                        state.state.notebook_path(),
-                        &state.state,
-                    );
-                    return state.with_preview_scroll_task(task);
-                };
+        let text_for_file_detection = clipboard_contents
+            .text
+            .as_deref()
+            .or(fallback_text.as_deref());
+        let image_base64 = clipboard_contents.image_base64_png.or_else(|| {
+            text_for_file_detection.and_then(read_clipboard_image_file_as_base64_from_text)
+        });
 
-                file_image_base64
-            }
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read image clipboard data: {}", _err);
-                let Some(file_image_base64) = clipboard_text
-                    .as_deref()
-                    .and_then(read_clipboard_image_file_as_base64_from_text)
-                else {
-                    let task = content_handler::handle_editor_action(
-                        &mut state.content,
-                        &mut state.markdown_text,
-                        &mut state.undo_manager,
-                        fallback_action,
-                        state.state.selected_note_path(),
-                        state.state.notebook_path(),
-                        &state.state,
-                    );
-                    return state.with_preview_scroll_task(task);
-                };
+        let fallback_action = clipboard_contents
+            .text
+            .or(fallback_text)
+            .map(|text| Action::Edit(Edit::Paste(Arc::new(text))))
+            .unwrap_or(fallback_action);
 
-                file_image_base64
-            }
+        let Some(image_base64) = image_base64 else {
+            let task = content_handler::handle_editor_action(
+                &mut state.content,
+                &mut state.markdown_text,
+                &mut state.undo_manager,
+                fallback_action,
+                state.state.selected_note_path(),
+                state.state.notebook_path(),
+                &state.state,
+            );
+            return state.with_preview_scroll_task(task);
         };
 
         let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
@@ -1580,14 +1557,48 @@ fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-fn read_clipboard_image_as_base64_png() -> Result<Option<String>, String> {
-    use base64::Engine;
+#[derive(Default)]
+struct ClipboardContents {
+    text: Option<String>,
+    image_base64_png: Option<String>,
+}
 
+fn read_clipboard_contents() -> Result<ClipboardContents, String> {
     let mut clipboard =
         arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
-    let image = match clipboard.get_image() {
-        Ok(image) => image,
-        Err(_) => return Ok(None),
+
+    Ok(ClipboardContents {
+        image_base64_png: read_clipboard_image_as_base64_png_from(&mut clipboard)?,
+        text: match clipboard.get_text() {
+            Ok(text) => Some(text),
+            Err(_) => None,
+        },
+    })
+}
+
+fn read_clipboard_image_as_base64_png_from(
+    clipboard: &mut arboard::Clipboard,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+
+    let attempt_count = clipboard_image_retry_attempts();
+    let mut image = None;
+
+    for attempt in 0..attempt_count {
+        match clipboard.get_image() {
+            Ok(value) => {
+                image = Some(value);
+                break;
+            }
+            Err(_) if attempt + 1 < attempt_count => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(_) => break,
+        }
+    }
+
+    let Some(image) = image else {
+        return Ok(None);
     };
 
     let mut encoded_png = Vec::new();
@@ -1609,20 +1620,29 @@ fn read_clipboard_image_as_base64_png() -> Result<Option<String>, String> {
     ))
 }
 
-fn read_clipboard_text() -> Result<Option<String>, String> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
-
-    match clipboard.get_text() {
-        Ok(text) => Ok(Some(text)),
-        Err(_) => Ok(None),
+fn clipboard_image_retry_attempts() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return 3;
+        }
     }
+
+    1
 }
 
 fn read_clipboard_image_file_as_base64_from_text(text: &str) -> Option<String> {
     parse_clipboard_image_file_paths(text)
         .into_iter()
         .find_map(|path| read_image_file_as_base64(&path))
+}
+
+fn paste_text_from_action(action: &Action) -> Option<String> {
+    let Action::Edit(Edit::Paste(text)) = action else {
+        return None;
+    };
+
+    Some((**text).clone())
 }
 
 fn parse_clipboard_image_file_paths(text: &str) -> Vec<PathBuf> {
@@ -1746,14 +1766,18 @@ mod image_tag_tests {
         HTML_BR_SENTINEL, build_markdown_preview_content, column_byte_offset,
         cursor_preview_character_index, cursor_preview_character_range, extract_embedded_image_ids,
         html_line_breaks_replacement, is_probably_image_file, normalize_html_line_break_tags,
-        parse_clipboard_image_file_paths, parse_file_uri_to_path, percent_decode,
+        parse_clipboard_image_file_paths, parse_file_uri_to_path, paste_text_from_action,
+        percent_decode,
         preview_line_from_cursor_byte,
         read_clipboard_image_file_as_base64_from_text, read_image_file_as_base64,
     };
     use base64::Engine;
-    use iced::widget::text_editor::{Cursor as EditorCursor, Position as EditorPosition};
+    use iced::widget::text_editor::{
+        Action, Cursor as EditorCursor, Edit, Position as EditorPosition,
+    };
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -2029,6 +2053,15 @@ mod image_tag_tests {
         assert_eq!(parsed, vec![path.clone()]);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn paste_text_from_action_extracts_pasted_text() {
+        let action = Action::Edit(Edit::Paste(Arc::new("hello".to_string())));
+        assert_eq!(paste_text_from_action(&action), Some("hello".to_string()));
+
+        let non_paste_action = Action::Edit(Edit::Insert('a'));
+        assert_eq!(paste_text_from_action(&non_paste_action), None);
     }
 
     #[test]
