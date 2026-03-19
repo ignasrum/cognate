@@ -1028,8 +1028,8 @@ impl Editor {
 
     // Keep view method as is, but fix the state reference
     pub fn view(state: &Self) -> Element<'_, Message> {
-        let preview_indicator_char_index = if state.state.selected_note_path().is_some() {
-            cursor_preview_character_index(
+        let preview_indicator_char_range = if state.state.selected_note_path().is_some() {
+            cursor_preview_character_range(
                 &state.markdown_text,
                 state.content.cursor(),
                 &state.embedded_images,
@@ -1045,7 +1045,7 @@ impl Editor {
             &state.embedded_image_handles,
             &state.note_explorer,
             &state.visualizer,
-            preview_indicator_char_index,
+            preview_indicator_char_range,
         )
     }
 
@@ -1234,7 +1234,7 @@ fn position_to_byte_index(markdown: &str, position: EditorPosition) -> Option<us
         .map(|offset| line_start + offset)
         .unwrap_or(markdown.len());
     let line_text = &markdown[line_start..line_end];
-    let column_offset = char_index_to_byte_offset(line_text, position.column)?;
+    let column_offset = column_byte_offset(line_text, position.column)?;
 
     Some(line_start + column_offset)
 }
@@ -1245,25 +1245,140 @@ fn cursor_preview_character_index(
     images: &HashMap<String, String>,
 ) -> Option<usize> {
     let cursor_byte_index = position_to_byte_index(markdown, cursor.position)?.min(markdown.len());
-    let preview_prefix = build_markdown_preview_content(&markdown[..cursor_byte_index], images);
-    let mut rendered_char_count = preview_rendered_char_count(&preview_prefix);
+    Some(adjusted_preview_character_index_at_byte(
+        markdown,
+        cursor_byte_index,
+        images,
+    ))
+}
 
-    let previous_char = markdown[..cursor_byte_index].chars().next_back();
-    let next_char = markdown[cursor_byte_index..].chars().next();
+fn cursor_preview_character_range(
+    markdown: &str,
+    cursor: EditorCursor,
+    images: &HashMap<String, String>,
+) -> Option<(usize, usize)> {
+    let cursor_char_index = cursor_preview_character_index(markdown, cursor, images)?;
+    let cursor_byte_index = position_to_byte_index(markdown, cursor.position)?.min(markdown.len());
+
+    let Some(selection_position) = cursor.selection else {
+        return Some((cursor_char_index, 1));
+    };
+
+    let selection_byte_index = position_to_byte_index(markdown, selection_position)?.min(markdown.len());
+
+    if selection_byte_index == cursor_byte_index {
+        return Some((cursor_char_index, 1));
+    }
+
+    let (selection_start, selection_end) = if cursor_byte_index <= selection_byte_index {
+        (cursor_byte_index, selection_byte_index)
+    } else {
+        (selection_byte_index, cursor_byte_index)
+    };
+
+    let preview_start = adjusted_preview_character_index_at_byte(markdown, selection_start, images);
+    let preview_end = adjusted_preview_character_index_at_byte(markdown, selection_end, images);
+    let preview_length = preview_end.saturating_sub(preview_start);
+
+    if preview_length == 0 {
+        Some((cursor_char_index, 1))
+    } else {
+        Some((preview_start, preview_length))
+    }
+}
+
+fn preview_character_index_at_byte(
+    markdown: &str,
+    byte_index: usize,
+    images: &HashMap<String, String>,
+) -> usize {
+    let clamped_index = byte_index.min(markdown.len());
+    let preview_full = build_markdown_preview_content(markdown, images);
+    let preview_prefix = build_markdown_preview_content(&markdown[..clamped_index], images);
+
+    let boundary = if preview_full.starts_with(&preview_prefix) {
+        preview_prefix.len()
+    } else {
+        common_prefix_byte_len(&preview_full, &preview_prefix)
+    };
+
+    preview_rendered_char_count_until_byte(&preview_full, boundary)
+}
+
+fn preview_rendered_char_count_until_byte(preview_markdown: &str, byte_boundary: usize) -> usize {
+    let clamped_boundary = byte_boundary.min(preview_markdown.len());
+
+    pulldown_cmark::Parser::new_ext(preview_markdown, markdown_parser_options())
+        .into_offset_iter()
+        .fold(0usize, |count, (event, range)| {
+            if range.start >= clamped_boundary {
+                return count;
+            }
+
+            match event {
+                pulldown_cmark::Event::Text(text) => {
+                    if range.end <= clamped_boundary {
+                        count + text.chars().count()
+                    } else {
+                        count + preview_markdown[range.start..clamped_boundary].chars().count()
+                    }
+                }
+                pulldown_cmark::Event::Code(code) => {
+                    if range.end <= clamped_boundary {
+                        count + code.chars().count()
+                    } else {
+                        count + preview_markdown[range.start..clamped_boundary].chars().count()
+                    }
+                }
+                pulldown_cmark::Event::SoftBreak | pulldown_cmark::Event::HardBreak => {
+                    if range.end <= clamped_boundary {
+                        count + 1
+                    } else {
+                        count
+                    }
+                }
+                _ => count,
+            }
+        })
+}
+
+fn common_prefix_byte_len(left: &str, right: &str) -> usize {
+    let mut total = 0usize;
+
+    for (left_char, right_char) in left.chars().zip(right.chars()) {
+        if left_char != right_char {
+            break;
+        }
+
+        total += left_char.len_utf8();
+    }
+
+    total
+}
+
+fn adjusted_preview_character_index_at_byte(
+    markdown: &str,
+    byte_index: usize,
+    images: &HashMap<String, String>,
+) -> usize {
+    let clamped_index = byte_index.min(markdown.len());
+    let mut rendered_char_count = preview_character_index_at_byte(markdown, clamped_index, images);
+
+    let previous_char = markdown[..clamped_index].chars().next_back();
+    let next_char = markdown[clamped_index..].chars().next();
 
     if matches!(previous_char, Some(' ' | '\t' | '\n' | '\r'))
         && matches!(next_char, Some(ch) if ch != '\n' && ch != '\r')
-        && let Some(next_boundary) = next_char_boundary(markdown, cursor_byte_index)
+        && let Some(next_boundary) = next_char_boundary(markdown, clamped_index)
     {
-        let preview_with_next = build_markdown_preview_content(&markdown[..next_boundary], images);
-        let rendered_with_next = preview_rendered_char_count(&preview_with_next);
+        let rendered_with_next = preview_character_index_at_byte(markdown, next_boundary, images);
 
         if rendered_with_next > rendered_char_count {
             rendered_char_count = rendered_with_next.saturating_sub(1);
         }
     }
 
-    Some(rendered_char_count)
+    rendered_char_count
 }
 
 fn preview_rendered_char_count(preview_markdown: &str) -> usize {
@@ -1290,15 +1405,11 @@ fn preview_line_from_cursor_byte(markdown: &str, cursor_byte_index: usize) -> us
         .count()
 }
 
-fn char_index_to_byte_offset(text: &str, char_index: usize) -> Option<usize> {
-    if char_index == 0 {
-        return Some(0);
-    }
-
-    match text.char_indices().nth(char_index) {
-        Some((offset, _)) => Some(offset),
-        None if char_index == text.chars().count() => Some(text.len()),
-        None => None,
+fn column_byte_offset(text: &str, column: usize) -> Option<usize> {
+    if column <= text.len() && text.is_char_boundary(column) {
+        Some(column)
+    } else {
+        None
     }
 }
 
@@ -1632,10 +1743,11 @@ fn round_scale_step(scale: f32) -> f32 {
 #[cfg(test)]
 mod image_tag_tests {
     use super::{
-        HTML_BR_SENTINEL, build_markdown_preview_content, cursor_preview_character_index,
-        extract_embedded_image_ids, html_line_breaks_replacement, is_probably_image_file,
-        normalize_html_line_break_tags, parse_clipboard_image_file_paths, parse_file_uri_to_path,
-        percent_decode, preview_line_from_cursor_byte,
+        HTML_BR_SENTINEL, build_markdown_preview_content, column_byte_offset,
+        cursor_preview_character_index, cursor_preview_character_range, extract_embedded_image_ids,
+        html_line_breaks_replacement, is_probably_image_file, normalize_html_line_break_tags,
+        parse_clipboard_image_file_paths, parse_file_uri_to_path, percent_decode,
+        preview_line_from_cursor_byte,
         read_clipboard_image_file_as_base64_from_text, read_image_file_as_base64,
     };
     use base64::Engine;
@@ -1774,6 +1886,116 @@ mod image_tag_tests {
             index,
             Some(6),
             "cursor after a newline before text should still point to the next visible character"
+        );
+    }
+
+    #[test]
+    fn cursor_preview_character_range_defaults_to_single_character_without_selection() {
+        let markdown = "hello";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 0, column: 2 },
+            selection: None,
+        };
+
+        let range = cursor_preview_character_range(markdown, cursor, &HashMap::new());
+        assert_eq!(range, Some((2, 1)));
+    }
+
+    #[test]
+    fn cursor_preview_character_range_matches_selected_text_length() {
+        let markdown = "hello world";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 0, column: 11 },
+            selection: Some(EditorPosition { line: 0, column: 6 }),
+        };
+
+        let range = cursor_preview_character_range(markdown, cursor, &HashMap::new());
+        assert_eq!(range, Some((6, 5)));
+    }
+
+    #[test]
+    fn cursor_preview_character_index_stays_stable_inside_ordered_list_marker() {
+        let markdown = "1. first";
+
+        for column in 0..=3 {
+            let cursor = EditorCursor {
+                position: EditorPosition { line: 0, column },
+                selection: None,
+            };
+
+            let index = cursor_preview_character_index(markdown, cursor, &HashMap::new());
+            assert_eq!(
+                index,
+                Some(0),
+                "ordered-list marker should not shift rendered index at column {}",
+                column
+            );
+        }
+
+        let after_first_character = EditorCursor {
+            position: EditorPosition { line: 0, column: 4 },
+            selection: None,
+        };
+        assert_eq!(
+            cursor_preview_character_index(markdown, after_first_character, &HashMap::new()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn column_byte_offset_handles_multibyte_unicode() {
+        let text = "båd";
+
+        assert_eq!(column_byte_offset(text, 0), Some(0));
+        assert_eq!(column_byte_offset(text, 1), Some(1));
+        assert_eq!(column_byte_offset(text, 2), None);
+        assert_eq!(column_byte_offset(text, 3), Some(3));
+        assert_eq!(column_byte_offset(text, 4), Some(4));
+    }
+
+    #[test]
+    fn cursor_preview_character_index_tracks_multibyte_unicode_plain_text() {
+        let markdown = "båd";
+
+        let before_unicode = EditorCursor {
+            position: EditorPosition { line: 0, column: 1 },
+            selection: None,
+        };
+        let after_unicode = EditorCursor {
+            position: EditorPosition { line: 0, column: 3 },
+            selection: None,
+        };
+
+        assert_eq!(
+            cursor_preview_character_index(markdown, before_unicode, &HashMap::new()),
+            Some(1)
+        );
+        assert_eq!(
+            cursor_preview_character_index(markdown, after_unicode, &HashMap::new()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn cursor_preview_character_index_tracks_multibyte_unicode_inside_ordered_list() {
+        let markdown = "1. båd";
+
+        let before_unicode = EditorCursor {
+            position: EditorPosition { line: 0, column: 4 },
+            selection: None,
+        };
+        let after_unicode = EditorCursor {
+            position: EditorPosition { line: 0, column: 6 },
+            selection: None,
+        };
+
+        assert_eq!(
+            cursor_preview_character_index(markdown, before_unicode, &HashMap::new()),
+            Some(1)
+        );
+        assert_eq!(
+            cursor_preview_character_index(markdown, after_unicode, &HashMap::new()),
+            Some(2)
         );
     }
 

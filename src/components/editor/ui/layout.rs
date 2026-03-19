@@ -20,7 +20,7 @@ pub const MARKDOWN_PREVIEW_SCROLLABLE_ID: &str = "cognate_markdown_preview_scrol
 
 struct MarkdownPreviewViewer<'a> {
     image_handles: &'a HashMap<String, iced::widget::image::Handle>,
-    indicator_char_index: Option<usize>,
+    indicator_char_range: Option<(usize, usize)>,
     consumed_chars: Cell<usize>,
 }
 
@@ -64,7 +64,7 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
             text,
             settings.style,
             settings.text_size,
-            self.indicator_char_index,
+            self.indicator_char_range,
             &self.consumed_chars,
             None,
         )
@@ -90,7 +90,7 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
             text,
             settings.style,
             heading_size,
-            self.indicator_char_index,
+            self.indicator_char_range,
             &self.consumed_chars,
             None,
         ))
@@ -116,7 +116,7 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
                 line,
                 settings.style,
                 settings.code_size,
-                self.indicator_char_index,
+                self.indicator_char_range,
                 &self.consumed_chars,
                 Some(settings.style.code_block_font),
             ));
@@ -141,14 +141,14 @@ fn render_text_block_with_indicator<'a>(
     text: &markdown::Text,
     style: markdown::Style,
     text_size: iced::Pixels,
-    indicator_char_index: Option<usize>,
+    indicator_char_range: Option<(usize, usize)>,
     consumed_chars: &Cell<usize>,
     font_override: Option<iced::Font>,
 ) -> Element<'a, Message> {
     let lines = split_markdown_spans_by_newline_with_indicator(
         text,
         style,
-        indicator_char_index,
+        indicator_char_range,
         consumed_chars,
     );
 
@@ -174,7 +174,7 @@ fn render_text_block_with_indicator<'a>(
 fn split_markdown_spans_by_newline_with_indicator(
     text: &markdown::Text,
     style: markdown::Style,
-    indicator_char_index: Option<usize>,
+    indicator_char_range: Option<(usize, usize)>,
     consumed_chars: &Cell<usize>,
 ) -> Vec<Vec<iced::widget::text::Span<'static, markdown::Uri>>> {
     let spans = text.spans(style);
@@ -194,7 +194,12 @@ fn split_markdown_spans_by_newline_with_indicator(
             let mut char_span = span.clone();
             char_span.text = ch.to_string().into();
 
-            if indicator_char_index == Some(global_char_index) {
+            let should_highlight = indicator_char_range.is_some_and(|(start, len)| {
+                let end = start.saturating_add(len);
+                global_char_index >= start && global_char_index < end
+            });
+
+            if should_highlight {
                 char_span = char_span
                     .background(iced::Color::from_rgba(0.18, 0.70, 0.95, 0.28))
                     .border(iced::Border::default().rounded(2.0));
@@ -219,7 +224,7 @@ pub fn generate_layout<'a>(
     markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
     note_explorer_component: &'a note_explorer::NoteExplorer,
     visualizer_component: &'a visualizer::Visualizer,
-    preview_indicator_char_index: Option<usize>,
+    preview_indicator_char_range: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
     let mut top_bar = Row::new().spacing(10).padding(5).width(Length::Fill);
 
@@ -497,7 +502,7 @@ pub fn generate_layout<'a>(
         let markdown_preview_body: Element<'_, Message> = if state.selected_note_path().is_some() {
             let preview_viewer = MarkdownPreviewViewer {
                 image_handles: markdown_image_handles,
-                indicator_char_index: preview_indicator_char_index,
+                indicator_char_range: preview_indicator_char_range,
                 consumed_chars: Cell::new(0),
             };
             markdown::view_with(markdown_content.items(), iced::Theme::Dark, &preview_viewer)

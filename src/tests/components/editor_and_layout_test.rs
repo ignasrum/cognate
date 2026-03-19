@@ -170,7 +170,7 @@ mod tests {
             &markdown_image_handles,
             &explorer,
             &visualizer,
-            Some(0),
+            Some((0, 1)),
         );
 
         state.set_show_about_info(true);
