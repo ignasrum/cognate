@@ -664,6 +664,9 @@ impl Editor {
                     let _ = state.visualizer.update(visualizer::Message::UpdateNotes(
                         state.note_explorer.notes.clone(),
                     ));
+                    let _ = state.visualizer.update(visualizer::Message::FocusOnNote(
+                        state.state.selected_note_path().cloned(),
+                    ));
                 }
 
                 Task::none()

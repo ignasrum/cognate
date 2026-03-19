@@ -24,19 +24,18 @@ mod tests {
     }
 
     #[test]
-    fn update_notes_sets_labels_and_toggle_changes_state() {
+    fn update_notes_builds_label_connected_graph() {
         let mut visualizer = Visualizer::new();
         let _ = visualizer.update(Message::UpdateNotes(sample_notes()));
 
         assert_eq!(visualizer.notes.len(), 3);
-        assert_eq!(visualizer.expanded_labels.get("urgent"), Some(&false));
-        assert_eq!(visualizer.expanded_labels.get("work"), Some(&false));
+        assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
+
+        let _ = visualizer.update(Message::FocusOnNote(Some("x/n2".to_string())));
+        assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
 
         let _ = visualizer.update(Message::ToggleLabel("work".to_string()));
-        assert_eq!(visualizer.expanded_labels.get("work"), Some(&true));
-
-        let _ = visualizer.update(Message::ToggleLabel("work".to_string()));
-        assert_eq!(visualizer.expanded_labels.get("work"), Some(&false));
+        assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
     }
 
     #[test]

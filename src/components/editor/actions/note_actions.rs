@@ -181,6 +181,9 @@ pub fn handle_visualizer_message(
         visualizer::Message::UpdateNotes(_) => {
             // No additional editor commands needed when visualizer just updates notes
         }
+        visualizer::Message::FocusOnNote(_) => {
+            // Focus changes are visual-only and do not require editor actions.
+        }
         visualizer::Message::ToggleLabel(_) => {
             // No additional editor commands needed when a label is toggled in the visualizer
         }
