@@ -353,86 +353,81 @@ impl Editor {
             return Task::none();
         }
 
-        let clipboard_contents = match read_clipboard_contents() {
-            Ok(contents) => contents,
+        let clipboard_payload = match read_clipboard_paste_payload() {
+            Ok(payload) => payload,
             Err(_err) => {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to read clipboard data: {}", _err);
-                ClipboardContents::default()
+                None
             }
         };
 
-        let image_base64 = clipboard_contents.image_base64_png.or_else(|| {
-            clipboard_contents
-                .text
-                .as_deref()
-                .and_then(read_clipboard_image_file_as_base64_from_text)
-        });
+        match clipboard_payload {
+            Some(ClipboardPastePayload::ImageBase64(image_base64)) => {
+                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                    return Task::none();
+                };
 
-        if let Some(image_base64) = image_base64 {
-            let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
-                return Task::none();
-            };
+                state.undo_manager.add_to_history(
+                    &selected_note_path,
+                    state.markdown_text.clone(),
+                    state.content.cursor(),
+                );
 
-            state.undo_manager.add_to_history(
-                &selected_note_path,
-                state.markdown_text.clone(),
-                state.content.cursor(),
-            );
+                let image_id = generate_embedded_image_id();
+                let tag = format!("![image:{}]", image_id);
+                state
+                    .content
+                    .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
+                state.markdown_text = state.content.text();
+                state.embedded_images.insert(image_id, image_base64);
+                state.prune_embedded_images_for_current_markdown();
+                state.touch_selected_note_last_updated();
+                state.sync_markdown_preview();
 
-            let image_id = generate_embedded_image_id();
-            let tag = format!("![image:{}]", image_id);
-            state
-                .content
-                .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
-            state.markdown_text = state.content.text();
-            state.embedded_images.insert(image_id, image_base64);
-            state.prune_embedded_images_for_current_markdown();
-            state.touch_selected_note_last_updated();
-            state.sync_markdown_preview();
+                let notebook_path = state.state.notebook_path().to_string();
+                let note_path = selected_note_path;
+                let content_text = state.markdown_text.clone();
+                let save_content_task = Task::perform(
+                    async move {
+                        notebook::save_note_content(notebook_path, note_path, content_text).await
+                    },
+                    Message::NoteContentSaved,
+                );
 
-            let notebook_path = state.state.notebook_path().to_string();
-            let note_path = selected_note_path;
-            let content_text = state.markdown_text.clone();
-            let save_content_task = Task::perform(
-                async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
-                Message::NoteContentSaved,
-            );
+                Task::batch(vec![
+                    save_content_task,
+                    state.persist_embedded_images_task(),
+                    state.scroll_preview_to_cursor_task(),
+                ])
+            }
+            Some(ClipboardPastePayload::Text(text_to_paste)) => {
+                let previous_markdown = state.markdown_text.clone();
+                let save_task = content_handler::handle_editor_action(
+                    &mut state.content,
+                    &mut state.markdown_text,
+                    &mut state.undo_manager,
+                    Action::Edit(Edit::Paste(Arc::new(text_to_paste))),
+                    state.state.selected_note_path(),
+                    state.state.notebook_path(),
+                    &state.state,
+                );
 
-            return Task::batch(vec![
-                save_content_task,
-                state.persist_embedded_images_task(),
-                state.scroll_preview_to_cursor_task(),
-            ]);
+                if state.markdown_text != previous_markdown {
+                    state.touch_selected_note_last_updated();
+                    state.prune_embedded_images_for_current_markdown();
+                    state.sync_markdown_preview();
+                    return Task::batch(vec![
+                        save_task,
+                        state.persist_embedded_images_task(),
+                        state.scroll_preview_to_cursor_task(),
+                    ]);
+                }
+
+                state.with_preview_scroll_task(save_task)
+            }
+            None => Task::none(),
         }
-
-        let Some(text_to_paste) = clipboard_contents.text else {
-            return Task::none();
-        };
-
-        let previous_markdown = state.markdown_text.clone();
-        let save_task = content_handler::handle_editor_action(
-            &mut state.content,
-            &mut state.markdown_text,
-            &mut state.undo_manager,
-            Action::Edit(Edit::Paste(Arc::new(text_to_paste))),
-            state.state.selected_note_path(),
-            state.state.notebook_path(),
-            &state.state,
-        );
-
-        if state.markdown_text != previous_markdown {
-            state.touch_selected_note_last_updated();
-            state.prune_embedded_images_for_current_markdown();
-            state.sync_markdown_preview();
-            return Task::batch(vec![
-                save_task,
-                state.persist_embedded_images_task(),
-                state.scroll_preview_to_cursor_task(),
-            ]);
-        }
-
-        state.with_preview_scroll_task(save_task)
     }
 
     fn handle_paste_action(state: &mut Self, fallback_action: Action) -> Task<Message> {
@@ -456,28 +451,10 @@ impl Editor {
         }
 
         let fallback_text = paste_text_from_action(&fallback_action);
-        let clipboard_contents = match read_clipboard_contents() {
-            Ok(contents) => contents,
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read clipboard data: {}", _err);
-                ClipboardContents::default()
-            }
-        };
-
-        let text_for_file_detection = clipboard_contents
-            .text
+        let image_base64 = fallback_text
             .as_deref()
-            .or(fallback_text.as_deref());
-        let image_base64 = clipboard_contents.image_base64_png.or_else(|| {
-            text_for_file_detection.and_then(read_clipboard_image_file_as_base64_from_text)
-        });
-
-        let fallback_action = clipboard_contents
-            .text
-            .or(fallback_text)
-            .map(|text| Action::Edit(Edit::Paste(Arc::new(text))))
-            .unwrap_or(fallback_action);
+            .filter(|text| !text.is_empty())
+            .and_then(read_clipboard_image_file_as_base64_from_text);
 
         let Some(image_base64) = image_base64 else {
             let task = content_handler::handle_editor_action(
@@ -1557,23 +1534,27 @@ fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-#[derive(Default)]
-struct ClipboardContents {
-    text: Option<String>,
-    image_base64_png: Option<String>,
+enum ClipboardPastePayload {
+    Text(String),
+    ImageBase64(String),
 }
 
-fn read_clipboard_contents() -> Result<ClipboardContents, String> {
+fn read_clipboard_paste_payload() -> Result<Option<ClipboardPastePayload>, String> {
     let mut clipboard =
         arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
 
-    Ok(ClipboardContents {
-        image_base64_png: read_clipboard_image_as_base64_png_from(&mut clipboard)?,
-        text: match clipboard.get_text() {
-            Ok(text) => Some(text),
-            Err(_) => None,
-        },
-    })
+    if let Ok(text) = clipboard.get_text() {
+        if !text.is_empty() {
+            if let Some(image_base64) = read_clipboard_image_file_as_base64_from_text(&text) {
+                return Ok(Some(ClipboardPastePayload::ImageBase64(image_base64)));
+            }
+
+            return Ok(Some(ClipboardPastePayload::Text(text)));
+        }
+    }
+
+    Ok(read_clipboard_image_as_base64_png_from(&mut clipboard)?
+        .map(ClipboardPastePayload::ImageBase64))
 }
 
 fn read_clipboard_image_as_base64_png_from(
