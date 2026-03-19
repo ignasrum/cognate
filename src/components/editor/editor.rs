@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
+#[cfg(test)]
 const HTML_BR_SENTINEL_CHAR: char = '\u{E000}';
 
 // Import required types and modules
@@ -59,7 +60,6 @@ pub enum Message {
     // Content management
     NoteContentSaved(Result<(), String>),
     EmbeddedImagesSaved(Result<(), String>),
-    EmbeddedImagesExported(Result<notebook::EmbeddedImagesExportSummary, String>),
     MarkdownWithAttachmentsExported(Result<notebook::MarkdownWithAttachmentsExportSummary, String>),
 
     // Visualizer
@@ -89,7 +89,6 @@ pub enum Message {
     AboutButtonClicked,
     IncreaseScale,
     DecreaseScale,
-    ExportEmbeddedImages,
     ExportMarkdownWithAttachments,
     MarkdownLinkClicked(String),
     ScaleSaved(Result<(), String>),
@@ -189,9 +188,7 @@ impl Editor {
                 Self::handle_visualizer_messages(state, message)
             }
 
-            Message::ExportEmbeddedImages
-            | Message::ExportMarkdownWithAttachments
-            | Message::EmbeddedImagesExported(_)
+            Message::ExportMarkdownWithAttachments
             | Message::MarkdownWithAttachmentsExported(_) => {
                 Self::handle_embedded_image_export_messages(state, message)
             }
@@ -684,20 +681,6 @@ impl Editor {
 
     fn handle_embedded_image_export_messages(state: &mut Self, message: Message) -> Task<Message> {
         match message {
-            Message::ExportEmbeddedImages => {
-                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
-                    return Task::none();
-                };
-
-                Task::perform(
-                    notebook::export_note_embedded_images(
-                        state.state.notebook_path().to_string(),
-                        selected_note_path,
-                        state.embedded_images.clone(),
-                    ),
-                    Message::EmbeddedImagesExported,
-                )
-            }
             Message::ExportMarkdownWithAttachments => {
                 let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
                     return Task::none();
@@ -712,47 +695,6 @@ impl Editor {
                     ),
                     Message::MarkdownWithAttachmentsExported,
                 )
-            }
-            Message::EmbeddedImagesExported(result) => {
-                match result {
-                    Ok(summary) => {
-                        let mut body = format!(
-                            "Exported {} embedded image{} to:\n{}",
-                            summary.exported_count,
-                            if summary.exported_count == 1 { "" } else { "s" },
-                            summary.export_dir
-                        );
-
-                        if summary.skipped_count > 0 {
-                            body.push_str(&format!(
-                                "\n\nSkipped {} invalid image entr{}.",
-                                summary.skipped_count,
-                                if summary.skipped_count == 1 {
-                                    "y"
-                                } else {
-                                    "ies"
-                                }
-                            ));
-                        }
-
-                        let _ = DialogBuilder::message()
-                            .set_level(MessageLevel::Info)
-                            .set_title("Images Exported")
-                            .set_text(&body)
-                            .alert()
-                            .show();
-                    }
-                    Err(error) => {
-                        let _ = DialogBuilder::message()
-                            .set_level(MessageLevel::Error)
-                            .set_title("Image Export Failed")
-                            .set_text(&error)
-                            .alert()
-                            .show();
-                    }
-                }
-
-                Task::none()
             }
             Message::MarkdownWithAttachmentsExported(result) => {
                 match result {

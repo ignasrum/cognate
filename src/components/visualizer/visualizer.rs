@@ -20,7 +20,6 @@ pub enum Message {
     UpdateNotes(Vec<NoteMetadata>),
     FocusOnNote(Option<String>),
     NoteSelectedInVisualizer(String),
-    ToggleLabel(String),
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +41,6 @@ struct GraphEdge {
 struct GraphCache {
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
-    label_counts: Vec<(String, usize)>,
     max_shared_labels_per_edge: usize,
 }
 
@@ -543,12 +541,10 @@ impl Visualizer {
             .collect();
         normalized_notes.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let mut label_counts_map: HashMap<String, usize> = HashMap::new();
         let mut distinct_labels: HashSet<String> = HashSet::new();
 
         for (_, labels) in &normalized_notes {
             for label in labels {
-                *label_counts_map.entry(label.clone()).or_insert(0) += 1;
                 distinct_labels.insert(label.clone());
             }
         }
@@ -623,18 +619,9 @@ impl Visualizer {
             node.degree = degree;
         }
 
-        let mut label_counts: Vec<(String, usize)> = label_counts_map.into_iter().collect();
-        label_counts.sort_by(|left, right| {
-            right
-                .1
-                .cmp(&left.1)
-                .then_with(|| left.0.to_lowercase().cmp(&right.0.to_lowercase()))
-        });
-
         GraphCache {
             nodes,
             edges,
-            label_counts,
             max_shared_labels_per_edge,
         }
     }
@@ -699,10 +686,6 @@ impl Visualizer {
                 Task::none()
             }
             Message::NoteSelectedInVisualizer(_) => Task::none(),
-            Message::ToggleLabel(label) => {
-                let _ = label;
-                Task::none()
-            }
         }
     }
 
@@ -795,11 +778,13 @@ impl Visualizer {
     pub(crate) fn debug_graph_stats(&self) -> (usize, usize, usize) {
         self.refresh_graph_cache_if_needed();
         let cache = self.graph_cache.borrow();
-        (
-            cache.nodes.len(),
-            cache.edges.len(),
-            cache.label_counts.len(),
-        )
+        let unique_label_count = cache
+            .nodes
+            .iter()
+            .flat_map(|node| node.labels.iter().cloned())
+            .collect::<HashSet<_>>()
+            .len();
+        (cache.nodes.len(), cache.edges.len(), unique_label_count)
     }
 }
 

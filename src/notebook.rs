@@ -11,7 +11,6 @@ use time::format_description::well_known::Rfc3339;
 const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
 const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
 const EMBEDDED_IMAGES_FILE: &str = "embedded_images.json";
-const EXPORTED_IMAGES_DIR: &str = "exported_images";
 const EXPORTED_MARKDOWN_DIR: &str = "exported_markdown";
 const EXPORTED_MARKDOWN_ATTACHMENTS_DIR: &str = "images";
 
@@ -40,13 +39,6 @@ pub struct NoteSearchResult {
 struct EmbeddedImagesStore {
     #[serde(default)]
     images: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmbeddedImagesExportSummary {
-    pub export_dir: String,
-    pub exported_count: usize,
-    pub skipped_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -705,48 +697,6 @@ pub async fn save_note_embedded_images(
     })?;
 
     Ok(())
-}
-
-pub async fn export_note_embedded_images(
-    notebook_path: String,
-    rel_note_path: String,
-    images: HashMap<String, String>,
-) -> Result<EmbeddedImagesExportSummary, String> {
-    validate_notebook_relative_path(&rel_note_path, "relative path")?;
-
-    if images.is_empty() {
-        return Err("This note does not contain embedded images to export.".to_string());
-    }
-
-    let note_dir = Path::new(&notebook_path).join(&rel_note_path);
-    if !note_dir.exists() {
-        return Err(format!(
-            "Cannot export images because note '{}' does not exist on disk.",
-            rel_note_path
-        ));
-    }
-
-    let export_dir = note_dir.join(EXPORTED_IMAGES_DIR);
-    fs::create_dir_all(&export_dir).map_err(|err| {
-        format!(
-            "Failed to create export directory '{}': {}",
-            export_dir.display(),
-            err
-        )
-    })?;
-
-    let export_result = export_embedded_images_to_directory(&export_dir, &images)?;
-    if export_result.exported_count == 0 {
-        return Err(
-            "No images could be exported. Embedded image data appears to be invalid.".to_string(),
-        );
-    }
-
-    Ok(EmbeddedImagesExportSummary {
-        export_dir: export_dir.to_string_lossy().to_string(),
-        exported_count: export_result.exported_count,
-        skipped_count: export_result.skipped_count,
-    })
 }
 
 pub async fn export_note_markdown_with_attachments(

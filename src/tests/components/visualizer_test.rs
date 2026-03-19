@@ -33,9 +33,6 @@ mod tests {
 
         let _ = visualizer.update(Message::FocusOnNote(Some("x/n2".to_string())));
         assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
-
-        let _ = visualizer.update(Message::ToggleLabel("work".to_string()));
-        assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
     }
 
     #[test]
@@ -46,7 +43,6 @@ mod tests {
         }
 
         let _ = visualizer.update(Message::UpdateNotes(sample_notes()));
-        let _ = visualizer.update(Message::ToggleLabel("work".to_string()));
         {
             let _populated_view = visualizer.view();
         }

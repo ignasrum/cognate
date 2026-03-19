@@ -209,7 +209,7 @@ mod tests {
             &mut explorer,
             &mut state,
             &mut undo,
-            visualizer::Message::ToggleLabel("tag".to_string()),
+            visualizer::Message::FocusOnNote(Some("folder/note".to_string())),
         );
         let _ = note_actions::handle_visualizer_message(
             &mut visualizer,

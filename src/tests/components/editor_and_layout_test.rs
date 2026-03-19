@@ -81,7 +81,7 @@ mod tests {
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(
                 "folder".to_string(),
             )),
-            EditorMessage::VisualizerMsg(visualizer::Message::ToggleLabel("label".to_string())),
+            EditorMessage::VisualizerMsg(visualizer::Message::FocusOnNote(None)),
             EditorMessage::InitiateFolderRename("folder".to_string()),
             EditorMessage::NoteCreated(Err("create failed".to_string())),
             EditorMessage::NoteMoved(Ok("new/path".to_string()), "old/path".to_string()),

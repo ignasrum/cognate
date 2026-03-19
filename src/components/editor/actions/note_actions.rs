@@ -184,9 +184,6 @@ pub fn handle_visualizer_message(
         visualizer::Message::FocusOnNote(_) => {
             // Focus changes are visual-only and do not require editor actions.
         }
-        visualizer::Message::ToggleLabel(_) => {
-            // No additional editor commands needed when a label is toggled in the visualizer
-        }
         visualizer::Message::NoteSelectedInVisualizer(note_path) => {
             #[cfg(debug_assertions)]
             eprintln!(
