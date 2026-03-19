@@ -3,6 +3,7 @@ use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Cursor as EditorCursor, Edit, Position as EditorPosition};
 use iced::{Element, Subscription};
+use native_dialog::{DialogBuilder, MessageLevel};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,6 +59,8 @@ pub enum Message {
     // Content management
     NoteContentSaved(Result<(), String>),
     EmbeddedImagesSaved(Result<(), String>),
+    EmbeddedImagesExported(Result<notebook::EmbeddedImagesExportSummary, String>),
+    MarkdownWithAttachmentsExported(Result<notebook::MarkdownWithAttachmentsExportSummary, String>),
 
     // Visualizer
     ToggleVisualizer,
@@ -86,6 +89,8 @@ pub enum Message {
     AboutButtonClicked,
     IncreaseScale,
     DecreaseScale,
+    ExportEmbeddedImages,
+    ExportMarkdownWithAttachments,
     MarkdownLinkClicked(String),
     ScaleSaved(Result<(), String>),
 }
@@ -182,6 +187,13 @@ impl Editor {
 
             Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
                 Self::handle_visualizer_messages(state, message)
+            }
+
+            Message::ExportEmbeddedImages
+            | Message::ExportMarkdownWithAttachments
+            | Message::EmbeddedImagesExported(_)
+            | Message::MarkdownWithAttachmentsExported(_) => {
+                Self::handle_embedded_image_export_messages(state, message)
             }
 
             Message::NewNote
@@ -664,6 +676,137 @@ impl Editor {
                 visualizer_message,
             ),
             _ => unreachable!("visualizer handler received invalid message"),
+        }
+    }
+
+    fn handle_embedded_image_export_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
+            Message::ExportEmbeddedImages => {
+                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                    return Task::none();
+                };
+
+                Task::perform(
+                    notebook::export_note_embedded_images(
+                        state.state.notebook_path().to_string(),
+                        selected_note_path,
+                        state.embedded_images.clone(),
+                    ),
+                    Message::EmbeddedImagesExported,
+                )
+            }
+            Message::ExportMarkdownWithAttachments => {
+                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                    return Task::none();
+                };
+
+                Task::perform(
+                    notebook::export_note_markdown_with_attachments(
+                        state.state.notebook_path().to_string(),
+                        selected_note_path,
+                        state.markdown_text.clone(),
+                        state.embedded_images.clone(),
+                    ),
+                    Message::MarkdownWithAttachmentsExported,
+                )
+            }
+            Message::EmbeddedImagesExported(result) => {
+                match result {
+                    Ok(summary) => {
+                        let mut body = format!(
+                            "Exported {} embedded image{} to:\n{}",
+                            summary.exported_count,
+                            if summary.exported_count == 1 { "" } else { "s" },
+                            summary.export_dir
+                        );
+
+                        if summary.skipped_count > 0 {
+                            body.push_str(&format!(
+                                "\n\nSkipped {} invalid image entr{}.",
+                                summary.skipped_count,
+                                if summary.skipped_count == 1 {
+                                    "y"
+                                } else {
+                                    "ies"
+                                }
+                            ));
+                        }
+
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Info)
+                            .set_title("Images Exported")
+                            .set_text(&body)
+                            .alert()
+                            .show();
+                    }
+                    Err(error) => {
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Image Export Failed")
+                            .set_text(&error)
+                            .alert()
+                            .show();
+                    }
+                }
+
+                Task::none()
+            }
+            Message::MarkdownWithAttachmentsExported(result) => {
+                match result {
+                    Ok(summary) => {
+                        let mut body = format!(
+                            "Exported markdown file:\n{}\n\nAttachments directory:\n{}",
+                            summary.markdown_path, summary.attachments_dir
+                        );
+
+                        if summary.exported_count > 0 {
+                            body.push_str(&format!(
+                                "\n\nExported {} attachment{} and rewrote {} image reference{}.",
+                                summary.exported_count,
+                                if summary.exported_count == 1 { "" } else { "s" },
+                                summary.rewritten_reference_count,
+                                if summary.rewritten_reference_count == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ));
+                        } else {
+                            body.push_str("\n\nNo embedded images were found to export.");
+                        }
+
+                        if summary.skipped_count > 0 {
+                            body.push_str(&format!(
+                                "\nSkipped {} invalid image entr{}.",
+                                summary.skipped_count,
+                                if summary.skipped_count == 1 {
+                                    "y"
+                                } else {
+                                    "ies"
+                                }
+                            ));
+                        }
+
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Info)
+                            .set_title("Markdown Exported")
+                            .set_text(&body)
+                            .alert()
+                            .show();
+                    }
+                    Err(error) => {
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Markdown Export Failed")
+                            .set_text(&error)
+                            .alert()
+                            .show();
+                    }
+                }
+
+                Task::none()
+            }
+            _ => unreachable!("embedded-image-export handler received invalid message"),
         }
     }
 
@@ -1218,7 +1361,8 @@ fn cursor_preview_character_range(
         return Some((cursor_char_index, 1));
     };
 
-    let selection_byte_index = position_to_byte_index(markdown, selection_position)?.min(markdown.len());
+    let selection_byte_index =
+        position_to_byte_index(markdown, selection_position)?.min(markdown.len());
 
     if selection_byte_index == cursor_byte_index {
         return Some((cursor_char_index, 1));
@@ -1274,14 +1418,20 @@ fn preview_rendered_char_count_until_byte(preview_markdown: &str, byte_boundary:
                     if range.end <= clamped_boundary {
                         count + text.chars().count()
                     } else {
-                        count + preview_markdown[range.start..clamped_boundary].chars().count()
+                        count
+                            + preview_markdown[range.start..clamped_boundary]
+                                .chars()
+                                .count()
                     }
                 }
                 pulldown_cmark::Event::Code(code) => {
                     if range.end <= clamped_boundary {
                         count + code.chars().count()
                     } else {
-                        count + preview_markdown[range.start..clamped_boundary].chars().count()
+                        count
+                            + preview_markdown[range.start..clamped_boundary]
+                                .chars()
+                                .count()
                     }
                 }
                 pulldown_cmark::Event::SoftBreak | pulldown_cmark::Event::HardBreak => {
@@ -1748,8 +1898,7 @@ mod image_tag_tests {
         cursor_preview_character_index, cursor_preview_character_range, extract_embedded_image_ids,
         html_line_breaks_replacement, is_probably_image_file, normalize_html_line_break_tags,
         parse_clipboard_image_file_paths, parse_file_uri_to_path, paste_text_from_action,
-        percent_decode,
-        preview_line_from_cursor_byte,
+        percent_decode, preview_line_from_cursor_byte,
         read_clipboard_image_file_as_base64_from_text, read_image_file_as_base64,
     };
     use base64::Engine;
@@ -1910,7 +2059,10 @@ mod image_tag_tests {
     fn cursor_preview_character_range_matches_selected_text_length() {
         let markdown = "hello world";
         let cursor = EditorCursor {
-            position: EditorPosition { line: 0, column: 11 },
+            position: EditorPosition {
+                line: 0,
+                column: 11,
+            },
             selection: Some(EditorPosition { line: 0, column: 6 }),
         };
 

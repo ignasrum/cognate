@@ -284,6 +284,11 @@ pub fn generate_layout<'a>(
                         .on_press(Message::DeleteNote),
                 );
                 top_bar = top_bar.push(button("Move Note").padding(5).on_press(Message::MoveNote));
+                top_bar = top_bar.push(
+                    button("Export Markdown")
+                        .padding(5)
+                        .on_press(Message::ExportMarkdownWithAttachments),
+                );
             }
 
             top_bar = top_bar.push(

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::notebook::{self, NoteMetadata};
+    use base64::Engine;
     use std::fs;
     use std::future::Future;
     use std::path::{Path, PathBuf};
@@ -724,6 +725,228 @@ mod tests {
                 "renamed/note_a".to_string(),
                 "renamed/sub/note_b".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn export_note_embedded_images_writes_files_with_detected_extensions() {
+        let notebook_dir = TestNotebookDir::new("export_embedded_images");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "with/images",
+            &mut notes,
+        ))
+        .expect("Failed to create note for image export");
+
+        let png_bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+        let jpg_bytes = vec![0xFF, 0xD8, 0xFF, 0xDB, 0x00];
+
+        let mut images = std::collections::HashMap::new();
+        images.insert(
+            "img_one".to_string(),
+            base64::engine::general_purpose::STANDARD.encode(png_bytes),
+        );
+        images.insert(
+            "img/two".to_string(),
+            base64::engine::general_purpose::STANDARD.encode(jpg_bytes),
+        );
+
+        let summary = block_on(notebook::export_note_embedded_images(
+            notebook_dir.as_str().to_string(),
+            "with/images".to_string(),
+            images,
+        ))
+        .expect("export_note_embedded_images should succeed");
+
+        assert_eq!(summary.exported_count, 2);
+        assert_eq!(summary.skipped_count, 0);
+
+        let export_dir = Path::new(&summary.export_dir);
+        assert!(export_dir.exists(), "Expected export directory to exist");
+        assert!(
+            export_dir.join("img_one.png").exists(),
+            "Expected PNG image export file"
+        );
+        assert!(
+            export_dir.join("img_two.jpg").exists(),
+            "Expected JPEG image export file with sanitized id"
+        );
+    }
+
+    #[test]
+    fn export_note_embedded_images_returns_error_for_empty_store() {
+        let notebook_dir = TestNotebookDir::new("export_embedded_images_empty");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "empty/images",
+            &mut notes,
+        ))
+        .expect("Failed to create note for empty-export test");
+
+        let result = block_on(notebook::export_note_embedded_images(
+            notebook_dir.as_str().to_string(),
+            "empty/images".to_string(),
+            std::collections::HashMap::new(),
+        ));
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("expected empty-store export to fail")
+                .contains("does not contain embedded images"),
+            "Expected a helpful error for empty embedded-image store"
+        );
+    }
+
+    #[test]
+    fn export_note_markdown_with_attachments_rewrites_embedded_image_tags() {
+        let notebook_dir = TestNotebookDir::new("export_markdown_with_attachments");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "docs/note",
+            &mut notes,
+        ))
+        .expect("Failed to create note for markdown export");
+
+        let markdown = "before ![image:img_one] and ![image:img/two] and ![image:missing] after";
+        let png_bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+        let jpg_bytes = vec![0xFF, 0xD8, 0xFF, 0xDB, 0x00];
+
+        let mut images = std::collections::HashMap::new();
+        images.insert(
+            "img_one".to_string(),
+            base64::engine::general_purpose::STANDARD.encode(png_bytes),
+        );
+        images.insert(
+            "img/two".to_string(),
+            base64::engine::general_purpose::STANDARD.encode(jpg_bytes),
+        );
+
+        let summary = block_on(notebook::export_note_markdown_with_attachments(
+            notebook_dir.as_str().to_string(),
+            "docs/note".to_string(),
+            markdown.to_string(),
+            images,
+        ))
+        .expect("export_note_markdown_with_attachments should succeed");
+
+        assert_eq!(summary.exported_count, 2);
+        assert_eq!(summary.skipped_count, 0);
+        assert_eq!(summary.rewritten_reference_count, 2);
+
+        let markdown_path = Path::new(&summary.markdown_path);
+        assert!(
+            markdown_path.exists(),
+            "Expected exported markdown file to exist"
+        );
+
+        let exported_markdown =
+            fs::read_to_string(markdown_path).expect("Failed to read exported markdown");
+        assert!(
+            exported_markdown.contains("![image:img_one](images/img_one.png)"),
+            "Expected exported markdown to rewrite first embedded image tag"
+        );
+        assert!(
+            exported_markdown.contains("![image:img/two](images/img_two.jpg)"),
+            "Expected exported markdown to rewrite second embedded image tag with sanitized file name"
+        );
+        assert!(
+            exported_markdown.contains("![image:missing]"),
+            "Expected unresolved embedded image tag to remain unchanged"
+        );
+
+        let attachments_dir = Path::new(&summary.attachments_dir);
+        assert!(
+            attachments_dir.exists(),
+            "Expected attachments directory to be created"
+        );
+        assert!(
+            attachments_dir.join("img_one.png").exists(),
+            "Expected first image attachment file to exist"
+        );
+        assert!(
+            attachments_dir.join("img_two.jpg").exists(),
+            "Expected second image attachment file to exist"
+        );
+    }
+
+    #[test]
+    fn export_note_markdown_with_attachments_exports_markdown_even_without_images() {
+        let notebook_dir = TestNotebookDir::new("export_markdown_without_images");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "docs/plain",
+            &mut notes,
+        ))
+        .expect("Failed to create note for markdown-only export");
+
+        let markdown = "# Plain Note\n\nNo embedded images here.";
+
+        let summary = block_on(notebook::export_note_markdown_with_attachments(
+            notebook_dir.as_str().to_string(),
+            "docs/plain".to_string(),
+            markdown.to_string(),
+            std::collections::HashMap::new(),
+        ))
+        .expect("markdown-only export should succeed");
+
+        assert_eq!(summary.exported_count, 0);
+        assert_eq!(summary.skipped_count, 0);
+        assert_eq!(summary.rewritten_reference_count, 0);
+
+        let exported_markdown = fs::read_to_string(Path::new(&summary.markdown_path))
+            .expect("Failed to read exported markdown file");
+        assert_eq!(exported_markdown, markdown);
+    }
+
+    #[test]
+    fn export_note_markdown_with_attachments_keeps_existing_markdown_image_links() {
+        let notebook_dir = TestNotebookDir::new("export_markdown_preserves_existing_links");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "docs/existing-link",
+            &mut notes,
+        ))
+        .expect("Failed to create note for existing-link export");
+
+        let markdown = "![image:already](./existing.png)\n![image:embedded_id]";
+
+        let mut images = std::collections::HashMap::new();
+        images.insert(
+            "embedded_id".to_string(),
+            base64::engine::general_purpose::STANDARD
+                .encode(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+        );
+
+        let summary = block_on(notebook::export_note_markdown_with_attachments(
+            notebook_dir.as_str().to_string(),
+            "docs/existing-link".to_string(),
+            markdown.to_string(),
+            images,
+        ))
+        .expect("export should succeed");
+
+        assert_eq!(summary.rewritten_reference_count, 1);
+
+        let exported_markdown = fs::read_to_string(Path::new(&summary.markdown_path))
+            .expect("Failed to read exported markdown");
+        assert!(
+            exported_markdown.contains("![image:already](./existing.png)"),
+            "Expected existing markdown image links to remain unchanged"
+        );
+        assert!(
+            exported_markdown.contains("![image:embedded_id](images/embedded_id.png)"),
+            "Expected embedded image placeholders to be rewritten"
         );
     }
 }
