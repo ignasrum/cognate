@@ -6,6 +6,18 @@ use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::notebook;
 
+fn should_debounce_undo_for_edit(edit: &Edit) -> bool {
+    matches!(
+        edit,
+        Edit::Insert(_)
+            | Edit::Backspace
+            | Edit::Delete
+            | Edit::Enter
+            | Edit::Indent
+            | Edit::Unindent
+    )
+}
+
 // Handler for tab key press
 pub fn handle_tab_key(
     content: &mut Content,
@@ -87,9 +99,17 @@ pub fn handle_editor_action(
         #[cfg(debug_assertions)]
         eprintln!("Editor: Performing EditorAction: {:?}", action);
 
-        if matches!(action, Action::Edit(_)) {
+        if let Action::Edit(edit) = &action {
             // Save the current state to history before applying an actual text edit.
-            undo_manager.add_to_history(selected_path, markdown_text.clone(), content.cursor());
+            if should_debounce_undo_for_edit(edit) {
+                undo_manager.add_to_history_debounced(
+                    selected_path,
+                    markdown_text.clone(),
+                    content.cursor(),
+                );
+            } else {
+                undo_manager.add_to_history(selected_path, markdown_text.clone(), content.cursor());
+            }
             content.perform(action);
             *markdown_text = content.text();
 

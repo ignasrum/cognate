@@ -4,12 +4,18 @@ mod tests {
     use crate::components::editor::text_management::content_handler;
     use crate::components::editor::text_management::undo_manager::{self, UndoManager};
     use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
+    use std::thread::sleep;
+    use std::time::Duration;
 
     fn cursor(line: usize, column: usize) -> Cursor {
         Cursor {
             position: Position { line, column },
             selection: None,
         }
+    }
+
+    fn wait_for_undo_debounce_window() {
+        sleep(Duration::from_millis(160));
     }
 
     #[test]
@@ -104,6 +110,97 @@ mod tests {
         );
         assert_ne!(markdown, "loaded");
         assert!(undo.get_previous_content("note/a").is_some());
+    }
+
+    #[test]
+    fn rapid_typing_is_grouped_into_single_undo_snapshot() {
+        let mut state = EditorState::new();
+        state.set_notebook_path("dummy".to_string());
+        state.set_selected_note_path(Some("note/u".to_string()));
+
+        let mut undo = UndoManager::new();
+        undo.initialize_history("note/u");
+
+        let mut content = Content::with_text("");
+        let mut markdown = String::new();
+
+        let _ = content_handler::handle_editor_action(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            Action::Edit(Edit::Insert('a')),
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+        let _ = content_handler::handle_editor_action(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            Action::Edit(Edit::Insert('b')),
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+
+        assert_eq!(markdown, "ab");
+
+        let _ = undo_manager::handle_undo(
+            &mut undo,
+            &mut content,
+            &mut markdown,
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+
+        assert_eq!(markdown, "");
+    }
+
+    #[test]
+    fn typing_after_pause_creates_new_undo_snapshot() {
+        let mut state = EditorState::new();
+        state.set_notebook_path("dummy".to_string());
+        state.set_selected_note_path(Some("note/u".to_string()));
+
+        let mut undo = UndoManager::new();
+        undo.initialize_history("note/u");
+
+        let mut content = Content::with_text("");
+        let mut markdown = String::new();
+
+        let _ = content_handler::handle_editor_action(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            Action::Edit(Edit::Insert('a')),
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+        wait_for_undo_debounce_window();
+        let _ = content_handler::handle_editor_action(
+            &mut content,
+            &mut markdown,
+            &mut undo,
+            Action::Edit(Edit::Insert('b')),
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+
+        assert_eq!(markdown, "ab");
+
+        let _ = undo_manager::handle_undo(
+            &mut undo,
+            &mut content,
+            &mut markdown,
+            state.selected_note_path(),
+            state.notebook_path(),
+            &state,
+        );
+
+        assert_eq!(markdown, "a");
     }
 
     #[test]

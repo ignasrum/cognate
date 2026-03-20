@@ -3,6 +3,7 @@ use iced::{
     widget::text_editor::{Content, Cursor, Position},
 };
 use std::collections::HashMap; // Use Task instead of Command
+use std::time::{Duration, Instant};
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
@@ -12,6 +13,7 @@ pub struct UndoManager {
     undo_histories: HashMap<String, Vec<UndoSnapshot>>, // Store previous states for undo per note
     undo_indices: HashMap<String, usize>,               // Track position in undo history per note
     redo_histories: HashMap<String, Vec<UndoSnapshot>>, // Store redo states per note
+    last_edit_timestamps: HashMap<String, Instant>,     // Debounce rapid edit snapshots per note
 }
 
 #[derive(Clone)]
@@ -57,12 +59,18 @@ fn cursor_at_end(content: &str) -> Cursor {
     }
 }
 
+#[cfg(test)]
+const EDIT_UNDO_DEBOUNCE_WINDOW: Duration = Duration::from_millis(120);
+#[cfg(not(test))]
+const EDIT_UNDO_DEBOUNCE_WINDOW: Duration = Duration::from_millis(750);
+
 impl UndoManager {
     pub fn new() -> Self {
         Self {
             undo_histories: HashMap::new(),
             undo_indices: HashMap::new(),
             redo_histories: HashMap::new(),
+            last_edit_timestamps: HashMap::new(),
         }
     }
 
@@ -79,6 +87,7 @@ impl UndoManager {
 
         self.undo_indices
             .insert(note_path.to_string(), history_index);
+        self.last_edit_timestamps.remove(note_path);
 
         #[cfg(debug_assertions)]
         eprintln!(
@@ -130,7 +139,33 @@ impl UndoManager {
         );
     }
 
+    pub fn add_to_history_debounced(&mut self, note_path: &str, content: String, cursor: Cursor) {
+        let now = Instant::now();
+        let should_create_snapshot = match self.last_edit_timestamps.get(note_path).copied() {
+            Some(last_edit) => {
+                now.saturating_duration_since(last_edit) >= EDIT_UNDO_DEBOUNCE_WINDOW
+            }
+            None => true,
+        };
+
+        self.last_edit_timestamps.insert(note_path.to_string(), now);
+
+        // Any new edit invalidates redo states, even if the edit is folded into
+        // the current debounced typing batch.
+        self.redo_histories.remove(note_path);
+
+        if should_create_snapshot {
+            self.add_to_history(note_path, content, cursor);
+        }
+    }
+
+    pub fn reset_edit_debounce(&mut self, note_path: &str) {
+        self.last_edit_timestamps.remove(note_path);
+    }
+
     pub fn handle_initial_content(&mut self, note_path: &str, content: &str) {
+        self.last_edit_timestamps.remove(note_path);
+
         // Add underscore to unused variable
         let _history_exists = self.undo_histories.contains_key(note_path);
         let history = self
@@ -280,12 +315,18 @@ impl UndoManager {
                 old_path, new_path
             );
         }
+
+        if let Some(timestamp) = self.last_edit_timestamps.remove(old_path) {
+            self.last_edit_timestamps
+                .insert(new_path.to_string(), timestamp);
+        }
     }
 
     pub fn remove_history(&mut self, note_path: &str) {
         self.undo_histories.remove(note_path);
         self.undo_indices.remove(note_path);
         self.redo_histories.remove(note_path);
+        self.last_edit_timestamps.remove(note_path);
         #[cfg(debug_assertions)]
         eprintln!("Removed undo history and index for note '{}'", note_path);
     }
@@ -325,6 +366,7 @@ pub fn handle_undo(
                 *content = Content::with_text(&previous_snapshot.content);
                 content.move_to(clamp_cursor_to_content(content, previous_snapshot.cursor));
                 *markdown_text = previous_snapshot.content.clone();
+                undo_manager.reset_edit_debounce(note_path);
 
                 // Save the content after undo
                 let notebook_path_clone = notebook_path.to_string();
@@ -383,6 +425,7 @@ pub fn handle_redo(
                 *content = Content::with_text(&next_snapshot.content);
                 content.move_to(clamp_cursor_to_content(content, next_snapshot.cursor));
                 *markdown_text = next_snapshot.content.clone();
+                undo_manager.reset_edit_debounce(note_path);
 
                 let notebook_path_clone = notebook_path.to_string();
                 let note_path_clone = note_path.clone();
