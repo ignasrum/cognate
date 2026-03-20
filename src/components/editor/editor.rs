@@ -1102,8 +1102,10 @@ impl Editor {
         iced::event::listen_with(|event, _status, _shell| {
             match event {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    // Handle Ctrl+A for Select All
-                    if modifiers.control()
+                    // Handle primary command shortcuts:
+                    // - macOS: Cmd
+                    // - other platforms: Ctrl
+                    if modifiers.command()
                         && let Key::Character(c) = &key
                     {
                         if c == "a" || c == "A" {
