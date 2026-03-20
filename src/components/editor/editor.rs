@@ -1070,10 +1070,12 @@ impl Editor {
 
     // Keep view method as is, but fix the state reference
     pub fn view(state: &Self) -> Element<'_, Message> {
+        let selected_text = state.content.selection();
         let preview_indicator_char_range = if state.state.selected_note_path().is_some() {
             cursor_preview_character_range(
                 &state.markdown_text,
                 state.content.cursor(),
+                selected_text.as_deref(),
                 &state.embedded_images,
             )
         } else {
@@ -1281,12 +1283,39 @@ fn position_to_byte_index(markdown: &str, position: EditorPosition) -> Option<us
     Some(line_start + column_offset)
 }
 
+fn position_to_byte_index_clamped_for_preview(markdown: &str, position: EditorPosition) -> usize {
+    let mut line_start = 0usize;
+    let mut current_line = 0usize;
+
+    while current_line < position.line {
+        let Some(next_newline) = markdown[line_start..].find('\n') else {
+            return markdown.len();
+        };
+
+        line_start += next_newline + 1;
+        current_line += 1;
+    }
+
+    let line_end = markdown[line_start..]
+        .find('\n')
+        .map(|offset| line_start + offset)
+        .unwrap_or(markdown.len());
+
+    let mut clamped_index = line_start.saturating_add(position.column).min(line_end);
+
+    while clamped_index > line_start && !markdown.is_char_boundary(clamped_index) {
+        clamped_index -= 1;
+    }
+
+    clamped_index
+}
+
 fn cursor_preview_character_index(
     markdown: &str,
     cursor: EditorCursor,
     images: &HashMap<String, String>,
 ) -> Option<usize> {
-    let cursor_byte_index = position_to_byte_index(markdown, cursor.position)?.min(markdown.len());
+    let cursor_byte_index = position_to_byte_index_clamped_for_preview(markdown, cursor.position);
     Some(adjusted_preview_character_index_at_byte(
         markdown,
         cursor_byte_index,
@@ -1294,29 +1323,87 @@ fn cursor_preview_character_index(
     ))
 }
 
+fn selection_byte_range_from_selected_text(
+    markdown: &str,
+    selected_text: Option<&str>,
+    cursor_byte_index: usize,
+) -> Option<(usize, usize)> {
+    let selected_text = selected_text?;
+    if selected_text.is_empty() || selected_text.len() > markdown.len() {
+        return None;
+    }
+
+    if selected_text == markdown {
+        return Some((0, markdown.len()));
+    }
+
+    let mut best_match: Option<(usize, usize, usize, bool)> = None;
+    let mut search_start = 0usize;
+
+    while let Some(relative_match) = markdown[search_start..].find(selected_text) {
+        let match_start = search_start + relative_match;
+        let match_end = match_start + selected_text.len();
+        let contains_cursor = cursor_byte_index >= match_start && cursor_byte_index <= match_end;
+        let distance = if contains_cursor {
+            0
+        } else if cursor_byte_index < match_start {
+            match_start - cursor_byte_index
+        } else {
+            cursor_byte_index.saturating_sub(match_end)
+        };
+
+        let replace = match best_match {
+            None => true,
+            Some((_, _, best_distance, best_contains_cursor)) => {
+                distance < best_distance
+                    || (distance == best_distance && contains_cursor && !best_contains_cursor)
+            }
+        };
+
+        if replace {
+            best_match = Some((match_start, match_end, distance, contains_cursor));
+        }
+
+        search_start = match_start + 1;
+        if search_start > markdown.len() {
+            break;
+        }
+    }
+
+    best_match.map(|(start, end, _, _)| (start, end))
+}
+
 fn cursor_preview_character_range(
     markdown: &str,
     cursor: EditorCursor,
+    selected_text: Option<&str>,
     images: &HashMap<String, String>,
 ) -> Option<(usize, usize)> {
-    let cursor_char_index = cursor_preview_character_index(markdown, cursor, images)?;
-    let cursor_byte_index = position_to_byte_index(markdown, cursor.position)?.min(markdown.len());
+    let cursor_byte_index = position_to_byte_index_clamped_for_preview(markdown, cursor.position);
+    let cursor_char_index =
+        adjusted_preview_character_index_at_byte(markdown, cursor_byte_index, images);
 
-    let Some(selection_position) = cursor.selection else {
+    let cursor_range = cursor.selection.and_then(|selection_position| {
+        let selection_byte_index =
+            position_to_byte_index_clamped_for_preview(markdown, selection_position);
+
+        if selection_byte_index == cursor_byte_index {
+            None
+        } else if cursor_byte_index <= selection_byte_index {
+            Some((cursor_byte_index, selection_byte_index))
+        } else {
+            Some((selection_byte_index, cursor_byte_index))
+        }
+    });
+
+    let (selection_start, selection_end) = cursor_range
+        .or_else(|| {
+            selection_byte_range_from_selected_text(markdown, selected_text, cursor_byte_index)
+        })
+        .unwrap_or((cursor_byte_index, cursor_byte_index));
+
+    if selection_start == selection_end {
         return Some((cursor_char_index, 1));
-    };
-
-    let selection_byte_index =
-        position_to_byte_index(markdown, selection_position)?.min(markdown.len());
-
-    if selection_byte_index == cursor_byte_index {
-        return Some((cursor_char_index, 1));
-    }
-
-    let (selection_start, selection_end) = if cursor_byte_index <= selection_byte_index {
-        (cursor_byte_index, selection_byte_index)
-    } else {
-        (selection_byte_index, cursor_byte_index)
     };
 
     let preview_start = adjusted_preview_character_index_at_byte(markdown, selection_start, images);
@@ -1996,7 +2083,7 @@ mod image_tag_tests {
             selection: None,
         };
 
-        let range = cursor_preview_character_range(markdown, cursor, &HashMap::new());
+        let range = cursor_preview_character_range(markdown, cursor, None, &HashMap::new());
         assert_eq!(range, Some((2, 1)));
     }
 
@@ -2011,8 +2098,34 @@ mod image_tag_tests {
             selection: Some(EditorPosition { line: 0, column: 6 }),
         };
 
-        let range = cursor_preview_character_range(markdown, cursor, &HashMap::new());
+        let range = cursor_preview_character_range(markdown, cursor, None, &HashMap::new());
         assert_eq!(range, Some((6, 5)));
+    }
+
+    #[test]
+    fn cursor_preview_character_range_uses_selected_text_for_word_selection() {
+        let markdown = "hello world";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 0, column: 7 },
+            selection: Some(EditorPosition { line: 0, column: 7 }),
+        };
+
+        let range =
+            cursor_preview_character_range(markdown, cursor, Some("world"), &HashMap::new());
+        assert_eq!(range, Some((6, 5)));
+    }
+
+    #[test]
+    fn cursor_preview_character_range_clamps_virtual_end_position_for_select_all() {
+        let markdown = "hello";
+        let cursor = EditorCursor {
+            position: EditorPosition { line: 1, column: 0 },
+            selection: Some(EditorPosition { line: 0, column: 0 }),
+        };
+
+        let range =
+            cursor_preview_character_range(markdown, cursor, Some("hello"), &HashMap::new());
+        assert_eq!(range, Some((0, 5)));
     }
 
     #[test]

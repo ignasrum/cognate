@@ -1,5 +1,5 @@
 use iced::task::Task;
-use iced::widget::text_editor::{Action, Content, Edit, Motion}; // Use Task instead of Command
+use iced::widget::text_editor::{Action, Content, Edit}; // Use Task instead of Command
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
@@ -60,10 +60,9 @@ pub fn handle_select_all(content: &mut Content, state: &EditorState) -> Task<Mes
         #[cfg(debug_assertions)]
         eprintln!("Editor: Handling SelectAll message.");
 
-        // Perform the SelectAll action
-        // First move cursor to start, then select to end
-        content.perform(Action::Move(Motion::DocumentStart));
-        content.perform(Action::Select(Motion::DocumentEnd));
+        // Use the built-in SelectAll action so selection semantics stay
+        // consistent with keyboard shortcuts and double-click word selection.
+        content.perform(Action::SelectAll);
     }
     Task::none()
 }
