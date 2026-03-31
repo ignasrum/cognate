@@ -7,6 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 use std::hash::{Hash, Hasher};
+use std::time::Instant;
 
 const DEFAULT_CAMERA_YAW: f32 = 0.0;
 const DEFAULT_CAMERA_PITCH: f32 = -0.15;
@@ -14,6 +15,8 @@ const DEFAULT_CAMERA_ZOOM: f32 = 1.0;
 const MIN_CAMERA_ZOOM: f32 = 0.55;
 const MAX_CAMERA_ZOOM: f32 = 4.0;
 const MAX_LABEL_LENGTH: usize = 32;
+const MAX_DOUBLE_CLICK_INTERVAL_MS: u128 = 300;
+const MAX_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -73,6 +76,7 @@ struct GraphCanvasState {
     drag_origin_yaw: f32,
     drag_origin_pitch: f32,
     hovered_node_index: Option<usize>,
+    last_node_click: Option<(usize, Point, Instant)>,
     applied_focus_version: u64,
 }
 
@@ -86,6 +90,7 @@ impl Default for GraphCanvasState {
             drag_origin_yaw: DEFAULT_CAMERA_YAW,
             drag_origin_pitch: DEFAULT_CAMERA_PITCH,
             hovered_node_index: None,
+            last_node_click: None,
             applied_focus_version: 0,
         }
     }
@@ -239,14 +244,28 @@ impl canvas::Program<Message> for GraphProgram {
                 if let Some(hit_index) = self.hit_test(state, bounds, cursor_position)
                     && let Some(node) = self.nodes.get(hit_index)
                 {
-                    return Some(
-                        iced::widget::Action::publish(Message::NoteSelectedInVisualizer(
-                            node.note_path.clone(),
-                        ))
-                        .and_capture(),
+                    let now = Instant::now();
+                    let is_double_click = state.last_node_click.as_ref().is_some_and(
+                        |(last_index, last_position, last_clicked_at)| {
+                            *last_index == hit_index
+                                && last_position.distance(cursor_position)
+                                    <= MAX_DOUBLE_CLICK_DISTANCE
+                                && now.duration_since(*last_clicked_at).as_millis()
+                                    <= MAX_DOUBLE_CLICK_INTERVAL_MS
+                        },
                     );
+                    state.last_node_click = Some((hit_index, cursor_position, now));
+
+                    let message = if is_double_click {
+                        Message::NoteSelectedInVisualizer(node.note_path.clone())
+                    } else {
+                        Message::FocusOnNote(Some(node.note_path.clone()))
+                    };
+
+                    return Some(iced::widget::Action::publish(message).and_capture());
                 }
 
+                state.last_node_click = None;
                 state.drag_anchor = Some(cursor_position);
                 state.drag_origin_yaw = state.yaw;
                 state.drag_origin_pitch = state.pitch;
@@ -727,7 +746,7 @@ impl Visualizer {
             )
             .push(
                 Text::new(
-                    "Click a node to open it. Drag to orbit. Scroll to zoom. Edges mean shared labels.",
+                    "Click a node to center it. Double-click to open it. Drag to orbit. Scroll to zoom. Edges mean shared labels.",
                 )
                 .size(14)
                 .style(|_theme: &Theme| iced::widget::text::Style {
@@ -772,6 +791,10 @@ impl Visualizer {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    pub fn focused_note_path(&self) -> Option<&String> {
+        self.focus_target_note.as_ref()
     }
 
     #[cfg(test)]
