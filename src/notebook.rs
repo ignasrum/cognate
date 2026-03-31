@@ -1,14 +1,20 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
 const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
+#[cfg(test)]
+const SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_millis(150);
+#[cfg(not(test))]
+const SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +35,26 @@ pub struct NotebookMetadata {
 pub struct NoteSearchResult {
     pub rel_path: String,
     pub snippet: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct IndexedNoteContent {
+    content: String,
+    content_lower: String,
+    modified_time: Option<SystemTime>,
+}
+
+#[derive(Debug, Default)]
+struct NotebookSearchIndex {
+    notes_by_path: HashMap<String, IndexedNoteContent>,
+    last_external_refresh: Option<Instant>,
+}
+
+static SEARCH_INDEXES_BY_NOTEBOOK: OnceLock<Mutex<HashMap<String, NotebookSearchIndex>>> =
+    OnceLock::new();
+
+fn search_indexes() -> &'static Mutex<HashMap<String, NotebookSearchIndex>> {
+    SEARCH_INDEXES_BY_NOTEBOOK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub fn current_timestamp_rfc3339() -> String {
@@ -82,6 +108,97 @@ fn find_matching_content_snippet(content: &str, normalized_query: &str) -> Optio
     None
 }
 
+fn note_file_modified_time(note_file_path: &Path) -> Option<SystemTime> {
+    fs::metadata(note_file_path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+}
+
+fn read_note_content_for_index(notebook_path: &str, rel_path: &str) -> IndexedNoteContent {
+    let note_file_path = Path::new(notebook_path).join(rel_path).join("note.md");
+    let content = fs::read_to_string(&note_file_path).unwrap_or_default();
+    let modified_time = note_file_modified_time(&note_file_path);
+
+    IndexedNoteContent {
+        content_lower: content.to_lowercase(),
+        content,
+        modified_time,
+    }
+}
+
+fn cache_upsert_search_index_note_content(
+    notebook_path: &str,
+    rel_path: &str,
+    content: &str,
+    modified_time: Option<SystemTime>,
+) {
+    let mut search_indexes = search_indexes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let index = search_indexes
+        .entry(notebook_path.to_string())
+        .or_default();
+
+    index.notes_by_path.insert(
+        rel_path.to_string(),
+        IndexedNoteContent {
+            content: content.to_string(),
+            content_lower: content.to_lowercase(),
+            modified_time,
+        },
+    );
+}
+
+fn cache_remove_search_index_entries(notebook_path: &str, rel_path: &str) {
+    let mut search_indexes = search_indexes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(index) = search_indexes.get_mut(notebook_path) else {
+        return;
+    };
+
+    let prefix = format!("{rel_path}/");
+    index
+        .notes_by_path
+        .retain(|path, _| path != rel_path && !path.starts_with(&prefix));
+}
+
+fn cache_rename_search_index_entries(notebook_path: &str, from_rel_path: &str, to_rel_path: &str) {
+    let mut search_indexes = search_indexes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(index) = search_indexes.get_mut(notebook_path) else {
+        return;
+    };
+
+    let from_prefix = format!("{from_rel_path}/");
+    let to_prefix = format!("{to_rel_path}/");
+    let existing_paths: Vec<String> = index.notes_by_path.keys().cloned().collect();
+    let mut remapped_entries = Vec::new();
+
+    for existing_path in existing_paths {
+        if existing_path == from_rel_path {
+            remapped_entries.push((existing_path, to_rel_path.to_string()));
+        } else if existing_path.starts_with(&from_prefix) {
+            let suffix = existing_path[from_prefix.len()..].to_string();
+            remapped_entries.push((existing_path, format!("{to_prefix}{suffix}")));
+        }
+    }
+
+    for (old_path, new_path) in remapped_entries {
+        if let Some(entry) = index.notes_by_path.remove(&old_path) {
+            index.notes_by_path.insert(new_path, entry);
+        }
+    }
+}
+
+fn should_refresh_search_index_from_filesystem(last_refresh: Option<Instant>) -> bool {
+    match last_refresh {
+        Some(last) => last.elapsed() >= SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
+        None => true,
+    }
+}
+
 pub async fn search_notes(
     notebook_path: String,
     notes: Vec<NoteMetadata>,
@@ -92,9 +209,47 @@ pub async fn search_notes(
         return Vec::new();
     }
 
+    let mut search_indexes = search_indexes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let index = search_indexes.entry(notebook_path.clone()).or_default();
+
+    let note_paths: HashSet<&str> = notes.iter().map(|note| note.rel_path.as_str()).collect();
+    index
+        .notes_by_path
+        .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
+
+    for note in &notes {
+        if !index.notes_by_path.contains_key(&note.rel_path) {
+            index.notes_by_path.insert(
+                note.rel_path.clone(),
+                read_note_content_for_index(&notebook_path, &note.rel_path),
+            );
+        }
+    }
+
+    if should_refresh_search_index_from_filesystem(index.last_external_refresh) {
+        for note in &notes {
+            let note_file_path = Path::new(&notebook_path).join(&note.rel_path).join("note.md");
+            let modified_time = note_file_modified_time(&note_file_path);
+            let should_reload = index
+                .notes_by_path
+                .get(&note.rel_path)
+                .map_or(true, |indexed| indexed.modified_time != modified_time);
+
+            if should_reload {
+                index.notes_by_path.insert(
+                    note.rel_path.clone(),
+                    read_note_content_for_index(&notebook_path, &note.rel_path),
+                );
+            }
+        }
+        index.last_external_refresh = Some(Instant::now());
+    }
+
     let mut results = Vec::new();
 
-    for note in notes {
+    for note in &notes {
         let rel_path_match = note.rel_path.to_lowercase().contains(&normalized_query);
         let label_match = note
             .labels
@@ -102,12 +257,12 @@ pub async fn search_notes(
             .find(|label| label.to_lowercase().contains(&normalized_query))
             .cloned();
 
-        let note_file_path = Path::new(&notebook_path)
-            .join(&note.rel_path)
-            .join("note.md");
-        let content_match = fs::read_to_string(note_file_path)
-            .ok()
-            .and_then(|content| find_matching_content_snippet(&content, &normalized_query));
+        let content_match = index.notes_by_path.get(&note.rel_path).and_then(|indexed| {
+            if !indexed.content_lower.contains(&normalized_query) {
+                return None;
+            }
+            find_matching_content_snippet(&indexed.content, &normalized_query)
+        });
 
         if rel_path_match || label_match.is_some() || content_match.is_some() {
             let snippet = if let Some(content_snippet) = content_match {
@@ -122,7 +277,7 @@ pub async fn search_notes(
             };
 
             results.push(NoteSearchResult {
-                rel_path: note.rel_path,
+                rel_path: note.rel_path.clone(),
                 snippet,
             });
         }
@@ -576,10 +731,22 @@ pub fn save_note_content_sync(
     };
 
     if existing_content.as_deref() == Some(content) {
+        cache_upsert_search_index_note_content(
+            notebook_path,
+            rel_note_path,
+            content,
+            note_file_modified_time(&full_note_path),
+        );
         return Ok(());
     }
 
     fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))?;
+    cache_upsert_search_index_note_content(
+        notebook_path,
+        rel_note_path,
+        content,
+        note_file_modified_time(&full_note_path),
+    );
 
     Ok(())
 }
@@ -674,6 +841,12 @@ pub async fn create_new_note(
 
     #[cfg(debug_assertions)]
     eprintln!("New note created successfully: {}", rel_path);
+    cache_upsert_search_index_note_content(
+        notebook_path,
+        rel_path,
+        "",
+        note_file_modified_time(&note_file_path),
+    );
     Ok(new_note_metadata)
 }
 
@@ -809,6 +982,7 @@ pub async fn delete_note(
     }
 
     remove_empty_parent_directories(full_notebook_path, &note_dir_path);
+    cache_remove_search_index_entries(notebook_path, rel_path);
 
     #[cfg(debug_assertions)]
     eprintln!("Deletion process completed for: {}", rel_path);
@@ -985,6 +1159,8 @@ pub async fn move_note(
         }
         return Err(metadata_error);
     }
+
+    cache_rename_search_index_entries(notebook_path, current_rel_path, new_rel_path);
 
     #[cfg(debug_assertions)]
     eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
