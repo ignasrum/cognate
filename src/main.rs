@@ -55,6 +55,7 @@ pub fn main() -> iced::Result {
     .title("Cognate")
     .theme(app_theme.clone())
     .scale_factor(Editor::scale_factor)
+    .exit_on_close_request(false)
     .subscription(Editor::subscription);
 
     app.run()

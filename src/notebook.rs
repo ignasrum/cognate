@@ -543,8 +543,16 @@ pub async fn save_note_content(
     rel_note_path: String,
     content: String,
 ) -> Result<(), String> {
+    save_note_content_sync(&notebook_path, &rel_note_path, &content)
+}
+
+pub fn save_note_content_sync(
+    notebook_path: &str,
+    rel_note_path: &str,
+    content: &str,
+) -> Result<(), String> {
     let full_note_path = Path::new(&notebook_path)
-        .join(&rel_note_path)
+        .join(rel_note_path)
         .join("note.md");
     #[cfg(debug_assertions)]
     eprintln!("Attempting to save note to: {}", full_note_path.display());
@@ -567,27 +575,11 @@ pub async fn save_note_content(
         }
     };
 
-    if existing_content.as_deref() == Some(content.as_str()) {
+    if existing_content.as_deref() == Some(content) {
         return Ok(());
     }
 
     fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))?;
-
-    let mut notes = load_notes_metadata(notebook_path.clone()).await;
-    let mut metadata_changed = false;
-    let updated_at = current_timestamp_rfc3339();
-
-    if let Some(note) = notes.iter_mut().find(|n| n.rel_path == rel_note_path)
-        && note.last_updated.as_deref() != Some(updated_at.as_str())
-    {
-        note.last_updated = Some(updated_at);
-        metadata_changed = true;
-    }
-
-    if metadata_changed {
-        save_metadata(&notebook_path, &notes)
-            .map_err(|e| format!("Failed to save metadata after content update: {}", e))?;
-    }
 
     Ok(())
 }

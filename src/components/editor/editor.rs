@@ -2,14 +2,19 @@ use iced::event::Event;
 use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Cursor as EditorCursor, Edit, Position as EditorPosition};
-use iced::{Element, Subscription};
+use iced::{Element, Subscription, window};
+use native_dialog::{DialogBuilder, MessageLevel};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
 const EMBEDDED_IMAGE_DIR: &str = "images";
+#[cfg(test)]
+const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(20);
+#[cfg(not(test))]
+const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(1200);
 #[cfg(test)]
 const HTML_BR_SENTINEL_CHAR: char = '\u{E000}';
 
@@ -59,6 +64,10 @@ pub enum Message {
 
     // Content management
     NoteContentSaved(Result<(), String>),
+    DebouncedMetadataSaveElapsed(u64),
+    DebouncedMetadataSaveCompleted(u64, Result<(), String>),
+    WindowCloseRequested(window::Id),
+    ShutdownFlushCompleted(window::Id, Result<(), String>),
 
     // Visualizer
     ToggleVisualizer,
@@ -105,6 +114,11 @@ pub struct Editor {
     pending_embedded_image_deletion_ids: HashSet<String>,
     pending_embedded_image_delete_action: Option<Action>,
     embedded_image_prompt_note_path: Option<String>,
+    content_note_path: Option<String>,
+    metadata_save_generation: u64,
+    metadata_save_in_flight: bool,
+    metadata_save_reschedule_after_in_flight: bool,
+    shutdown_in_progress: bool,
 
     // Undo/redo management
     undo_manager: UndoManager,
@@ -129,6 +143,11 @@ impl Editor {
             pending_embedded_image_deletion_ids: HashSet::new(),
             pending_embedded_image_delete_action: None,
             embedded_image_prompt_note_path: None,
+            content_note_path: None,
+            metadata_save_generation: 0,
+            metadata_save_in_flight: false,
+            metadata_save_reschedule_after_in_flight: false,
+            shutdown_in_progress: false,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
@@ -176,6 +195,15 @@ impl Editor {
             | Message::SearchCompleted(_)
             | Message::ClearSearch => Self::handle_search_messages(state, message),
 
+            Message::DebouncedMetadataSaveElapsed(_)
+            | Message::DebouncedMetadataSaveCompleted(_, _) => {
+                Self::handle_debounced_metadata_messages(state, message)
+            }
+
+            Message::WindowCloseRequested(_) | Message::ShutdownFlushCompleted(_, _) => {
+                Self::handle_shutdown_messages(state, message)
+            }
+
             Message::MetadataSaved(_) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
                 Self::handle_save_feedback_messages(message)
             }
@@ -220,11 +248,13 @@ impl Editor {
                 );
 
                 if state.markdown_text != previous_markdown {
-                    state.touch_selected_note_last_updated();
+                    let metadata_save_task =
+                        state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
+                        metadata_save_task,
                         state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
@@ -247,10 +277,13 @@ impl Editor {
                     &state.state,
                 );
                 if state.markdown_text != previous_markdown {
+                    let metadata_save_task =
+                        state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                     return Task::batch(vec![
                         task,
+                        metadata_save_task,
                         state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
@@ -268,10 +301,13 @@ impl Editor {
                     &state.state,
                 );
                 if state.markdown_text != previous_markdown {
+                    let metadata_save_task =
+                        state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                     return Task::batch(vec![
                         task,
+                        metadata_save_task,
                         state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
@@ -306,11 +342,13 @@ impl Editor {
                 );
 
                 if state.markdown_text != previous_markdown {
-                    state.touch_selected_note_last_updated();
+                    let metadata_save_task =
+                        state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
+                        metadata_save_task,
                         state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
@@ -322,6 +360,7 @@ impl Editor {
                 if state.state.selected_note_path() != Some(&note_path) {
                     return Task::none();
                 }
+                state.content_note_path = Some(note_path.clone());
                 state.embedded_images = images;
                 let previous_markdown = state.markdown_text.clone();
                 let task = content_handler::handle_loaded_note_content(
@@ -392,7 +431,8 @@ impl Editor {
                     .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
                 state.markdown_text = state.content.text();
                 state.prune_embedded_images_for_current_markdown();
-                state.touch_selected_note_last_updated();
+                let metadata_save_task =
+                    state.touch_selected_note_last_updated_and_schedule_save_task();
                 state.sync_markdown_preview();
 
                 let notebook_path = state.state.notebook_path().to_string();
@@ -407,6 +447,7 @@ impl Editor {
 
                 Task::batch(vec![
                     save_content_task,
+                    metadata_save_task,
                     state.scroll_preview_to_cursor_task(),
                 ])
             }
@@ -423,11 +464,13 @@ impl Editor {
                 );
 
                 if state.markdown_text != previous_markdown {
-                    state.touch_selected_note_last_updated();
+                    let metadata_save_task =
+                        state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
                     state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
+                        metadata_save_task,
                         state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
@@ -506,7 +549,7 @@ impl Editor {
             .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
         state.markdown_text = state.content.text();
         state.prune_embedded_images_for_current_markdown();
-        state.touch_selected_note_last_updated();
+        let metadata_save_task = state.touch_selected_note_last_updated_and_schedule_save_task();
         state.sync_markdown_preview();
 
         let notebook_path = state.state.notebook_path().to_string();
@@ -519,6 +562,7 @@ impl Editor {
 
         Task::batch(vec![
             save_content_task,
+            metadata_save_task,
             state.scroll_preview_to_cursor_task(),
         ])
     }
@@ -546,6 +590,9 @@ impl Editor {
         };
 
         if state.markdown_text != previous_markdown {
+            if state.state.selected_note_path().is_none() {
+                state.content_note_path = None;
+            }
             state.prune_embedded_images_for_current_markdown();
             state.sync_markdown_preview();
             return Task::batch(vec![
@@ -618,6 +665,99 @@ impl Editor {
                 Task::none()
             }
             _ => unreachable!("search handler received invalid message"),
+        }
+    }
+
+    fn handle_debounced_metadata_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
+            Message::DebouncedMetadataSaveElapsed(generation) => {
+                if generation != state.metadata_save_generation {
+                    return Task::none();
+                }
+
+                if state.metadata_save_in_flight {
+                    state.metadata_save_reschedule_after_in_flight = true;
+                    return Task::none();
+                }
+
+                state.metadata_save_in_flight = true;
+                state.metadata_save_reschedule_after_in_flight = false;
+                state.persist_metadata_snapshot_task(generation)
+            }
+            Message::DebouncedMetadataSaveCompleted(saved_generation, result) => {
+                state.metadata_save_in_flight = false;
+
+                if let Err(_err) = &result {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Error saving debounced metadata: {}", _err);
+                } else {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Debounced metadata saved successfully.");
+                }
+
+                let should_save_latest =
+                    state.metadata_save_reschedule_after_in_flight
+                        || saved_generation < state.metadata_save_generation;
+                state.metadata_save_reschedule_after_in_flight = false;
+
+                if should_save_latest {
+                    state.metadata_save_in_flight = true;
+                    return state.persist_metadata_snapshot_task(state.metadata_save_generation);
+                }
+
+                Task::none()
+            }
+            _ => unreachable!("debounced-metadata handler received invalid message"),
+        }
+    }
+
+    fn handle_shutdown_messages(state: &mut Self, message: Message) -> Task<Message> {
+        match message {
+            Message::WindowCloseRequested(window_id) => {
+                if state.shutdown_in_progress {
+                    return Task::none();
+                }
+
+                state.shutdown_in_progress = true;
+
+                let notebook_path = state.state.notebook_path().to_string();
+                let content_note_path = state.content_note_path.clone();
+                let markdown_text = state.markdown_text.clone();
+                let notes = state.note_explorer.notes.clone();
+
+                Task::perform(
+                    async move {
+                        let result = flush_editor_state_for_shutdown(
+                            &notebook_path,
+                            content_note_path,
+                            &markdown_text,
+                            &notes,
+                        );
+                        (window_id, result)
+                    },
+                    |(window_id, result)| Message::ShutdownFlushCompleted(window_id, result),
+                )
+            }
+            Message::ShutdownFlushCompleted(window_id, result) => {
+                state.shutdown_in_progress = false;
+
+                match result {
+                    Ok(()) => window::close(window_id),
+                    Err(error) => {
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Failed to Save Before Exit")
+                            .set_text(format!(
+                                "Cognate could not safely save your latest changes before exit:\n\n{}",
+                                error
+                            ))
+                            .alert()
+                            .show();
+                        Task::none()
+                    }
+                }
+            }
+            _ => unreachable!("shutdown handler received invalid message"),
         }
     }
 
@@ -756,6 +896,10 @@ impl Editor {
             _ => unreachable!("note-lifecycle handler received invalid message"),
         };
 
+        if state.state.selected_note_path().is_none() {
+            state.content_note_path = None;
+        }
+
         if state.markdown_text != previous_markdown {
             if state.state.selected_note_path().is_none() {
                 state.embedded_images.clear();
@@ -763,6 +907,7 @@ impl Editor {
                 state.pending_embedded_image_deletion_ids.clear();
                 state.pending_embedded_image_delete_action = None;
                 state.embedded_image_prompt_note_path = None;
+                state.content_note_path = None;
                 state.state.hide_embedded_image_delete_dialog();
             } else {
                 state.prune_embedded_images_for_current_markdown();
@@ -854,8 +999,9 @@ impl Editor {
                 &self.state,
             );
 
+            let mut metadata_save_task = Task::none();
             if self.markdown_text != previous_markdown {
-                self.touch_selected_note_last_updated();
+                metadata_save_task = self.touch_selected_note_last_updated_and_schedule_save_task();
             }
 
             for image_id in std::mem::take(&mut self.pending_embedded_image_deletion_ids) {
@@ -870,7 +1016,10 @@ impl Editor {
             }
 
             self.sync_markdown_preview();
-            return self.with_preview_scroll_task(save_task);
+            return Task::batch(vec![
+                self.with_preview_scroll_task(save_task),
+                metadata_save_task,
+            ]);
         }
 
         self.pending_embedded_image_deletion_ids.clear();
@@ -907,6 +1056,44 @@ impl Editor {
 
     fn persist_embedded_images_task(&self) -> Task<Message> {
         Task::none()
+    }
+
+    fn schedule_debounced_metadata_save_task(&mut self) -> Task<Message> {
+        self.metadata_save_generation = self.metadata_save_generation.wrapping_add(1);
+        let generation = self.metadata_save_generation;
+
+        Task::perform(
+            async move {
+                std::thread::sleep(METADATA_SAVE_DEBOUNCE_WINDOW);
+                generation
+            },
+            Message::DebouncedMetadataSaveElapsed,
+        )
+    }
+
+    fn persist_metadata_snapshot_task(&self, generation: u64) -> Task<Message> {
+        if self.state.notebook_path().trim().is_empty() {
+            return Task::none();
+        }
+
+        let notebook_path = self.state.notebook_path().to_string();
+        let notes = self.note_explorer.notes.clone();
+
+        Task::perform(
+            async move {
+                let result = notebook::save_metadata(&notebook_path, &notes).map_err(|e| e.to_string());
+                (generation, result)
+            },
+            |(generation, result)| Message::DebouncedMetadataSaveCompleted(generation, result),
+        )
+    }
+
+    fn touch_selected_note_last_updated_and_schedule_save_task(&mut self) -> Task<Message> {
+        if self.touch_selected_note_last_updated() {
+            self.schedule_debounced_metadata_save_task()
+        } else {
+            Task::none()
+        }
     }
 
     fn persist_scale_task(&self) -> Task<Message> {
@@ -1004,7 +1191,7 @@ impl Editor {
         }
     }
 
-    fn touch_selected_note_last_updated(&mut self) {
+    fn touch_selected_note_last_updated(&mut self) -> bool {
         if let Some(selected_path) = self.state.selected_note_path().cloned()
             && let Some(note) = self
                 .note_explorer
@@ -1013,7 +1200,10 @@ impl Editor {
                 .find(|note| note.rel_path == selected_path)
         {
             note.last_updated = Some(notebook::current_timestamp_rfc3339());
+            return true;
         }
+
+        false
     }
 
     // Keep view method as is, but fix the state reference
@@ -1047,8 +1237,7 @@ impl Editor {
 
     // Keep subscription method as is
     pub fn subscription(_state: &Self) -> Subscription<Message> {
-        iced::event::listen_with(|event, _status, _shell| {
-            match event {
+        let keyboard_subscription = iced::event::listen_with(|event, _status, _shell| match event {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     // Handle primary command shortcuts:
                     // - macOS: Cmd
@@ -1075,8 +1264,12 @@ impl Editor {
                     None
                 }
                 _ => None,
-            }
-        })
+            });
+
+        let close_request_subscription =
+            window::close_requests().map(Message::WindowCloseRequested);
+
+        Subscription::batch(vec![keyboard_subscription, close_request_subscription])
     }
 
     #[cfg(test)]
@@ -1101,12 +1294,34 @@ impl Default for Editor {
             pending_embedded_image_deletion_ids: HashSet::new(),
             pending_embedded_image_delete_action: None,
             embedded_image_prompt_note_path: None,
+            content_note_path: None,
+            metadata_save_generation: 0,
+            metadata_save_in_flight: false,
+            metadata_save_reschedule_after_in_flight: false,
+            shutdown_in_progress: false,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(String::new()),
             visualizer: visualizer::Visualizer::new(),
         }
     }
+}
+
+fn flush_editor_state_for_shutdown(
+    notebook_path: &str,
+    content_note_path: Option<String>,
+    markdown_text: &str,
+    notes: &[NoteMetadata],
+) -> Result<(), String> {
+    if notebook_path.trim().is_empty() {
+        return Ok(());
+    }
+
+    if let Some(note_path) = content_note_path {
+        notebook::save_note_content_sync(notebook_path, &note_path, markdown_text)?;
+    }
+
+    notebook::save_metadata(notebook_path, notes).map_err(|error| error.to_string())
 }
 
 fn generate_embedded_image_id() -> String {

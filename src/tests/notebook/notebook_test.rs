@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn save_note_content_creates_parent_directories_and_persists_text() {
+    fn save_note_content_creates_parent_directories_and_persists_text_without_metadata_rewrite() {
         let notebook_dir = TestNotebookDir::new("save_content");
         let mut notes: Vec<NoteMetadata> = Vec::new();
 
@@ -462,18 +462,10 @@ mod tests {
             notebook_dir.as_str().to_string(),
         ));
         assert_eq!(loaded.len(), 1);
-        assert_ne!(
+        assert_eq!(
             loaded[0].last_updated.as_deref(),
             Some("2000-01-01T00:00:00Z"),
-            "save_note_content should refresh last_updated metadata"
-        );
-        assert!(
-            !loaded[0]
-                .last_updated
-                .as_deref()
-                .unwrap_or("")
-                .contains('.'),
-            "last_updated should not include subsecond precision"
+            "save_note_content should not rewrite metadata"
         );
     }
 
