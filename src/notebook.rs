@@ -15,6 +15,14 @@ const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
 const SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_millis(150);
 #[cfg(not(test))]
 const SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const SEARCH_INDEX_IDLE_EVICTION_INTERVAL: Duration = Duration::from_millis(300);
+#[cfg(not(test))]
+const SEARCH_INDEX_IDLE_EVICTION_INTERVAL: Duration = Duration::from_secs(15 * 60);
+#[cfg(test)]
+const SEARCH_INDEX_MAX_CACHED_NOTEBOOKS: usize = 4;
+#[cfg(not(test))]
+const SEARCH_INDEX_MAX_CACHED_NOTEBOOKS: usize = 24;
 
 // These structs are now defined once in this common module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,10 +52,21 @@ struct IndexedNoteContent {
     modified_time: Option<SystemTime>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct NotebookSearchIndex {
     notes_by_path: HashMap<String, IndexedNoteContent>,
     last_external_refresh: Option<Instant>,
+    last_accessed_at: Instant,
+}
+
+impl Default for NotebookSearchIndex {
+    fn default() -> Self {
+        Self {
+            notes_by_path: HashMap::new(),
+            last_external_refresh: None,
+            last_accessed_at: Instant::now(),
+        }
+    }
 }
 
 static SEARCH_INDEXES_BY_NOTEBOOK: OnceLock<Mutex<HashMap<String, NotebookSearchIndex>>> =
@@ -55,6 +74,41 @@ static SEARCH_INDEXES_BY_NOTEBOOK: OnceLock<Mutex<HashMap<String, NotebookSearch
 
 fn search_indexes() -> &'static Mutex<HashMap<String, NotebookSearchIndex>> {
     SEARCH_INDEXES_BY_NOTEBOOK.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn prune_search_indexes(search_indexes: &mut HashMap<String, NotebookSearchIndex>) {
+    let now = Instant::now();
+    search_indexes.retain(|_, index| {
+        now.duration_since(index.last_accessed_at) < SEARCH_INDEX_IDLE_EVICTION_INTERVAL
+    });
+
+    if search_indexes.len() <= SEARCH_INDEX_MAX_CACHED_NOTEBOOKS {
+        return;
+    }
+
+    let mut by_last_access: Vec<(String, Instant)> = search_indexes
+        .iter()
+        .map(|(path, index)| (path.clone(), index.last_accessed_at))
+        .collect();
+    by_last_access.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+
+    let remove_count = by_last_access
+        .len()
+        .saturating_sub(SEARCH_INDEX_MAX_CACHED_NOTEBOOKS);
+    for (path, _) in by_last_access.into_iter().take(remove_count) {
+        search_indexes.remove(&path);
+    }
+}
+
+fn touch_search_index(index: &mut NotebookSearchIndex) {
+    index.last_accessed_at = Instant::now();
+}
+
+pub fn clear_search_index_for_notebook(notebook_path: &str) {
+    let mut search_indexes = search_indexes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    search_indexes.remove(notebook_path);
 }
 
 pub fn current_timestamp_rfc3339() -> String {
@@ -136,7 +190,9 @@ fn cache_upsert_search_index_note_content(
     let mut search_indexes = search_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_search_indexes(&mut search_indexes);
     let index = search_indexes.entry(notebook_path.to_string()).or_default();
+    touch_search_index(index);
 
     index.notes_by_path.insert(
         rel_path.to_string(),
@@ -152,23 +208,33 @@ fn cache_remove_search_index_entries(notebook_path: &str, rel_path: &str) {
     let mut search_indexes = search_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(index) = search_indexes.get_mut(notebook_path) else {
-        return;
-    };
+    prune_search_indexes(&mut search_indexes);
 
-    let prefix = format!("{rel_path}/");
-    index
-        .notes_by_path
-        .retain(|path, _| path != rel_path && !path.starts_with(&prefix));
+    let mut remove_notebook_index = false;
+    if let Some(index) = search_indexes.get_mut(notebook_path) {
+        touch_search_index(index);
+
+        let prefix = format!("{rel_path}/");
+        index
+            .notes_by_path
+            .retain(|path, _| path != rel_path && !path.starts_with(&prefix));
+        remove_notebook_index = index.notes_by_path.is_empty();
+    }
+
+    if remove_notebook_index {
+        search_indexes.remove(notebook_path);
+    }
 }
 
 fn cache_rename_search_index_entries(notebook_path: &str, from_rel_path: &str, to_rel_path: &str) {
     let mut search_indexes = search_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_search_indexes(&mut search_indexes);
     let Some(index) = search_indexes.get_mut(notebook_path) else {
         return;
     };
+    touch_search_index(index);
 
     let from_prefix = format!("{from_rel_path}/");
     let to_prefix = format!("{to_rel_path}/");
@@ -213,7 +279,9 @@ pub async fn search_notes(
         let mut search_indexes = search_indexes()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        prune_search_indexes(&mut search_indexes);
         let index = search_indexes.entry(notebook_path.clone()).or_default();
+        touch_search_index(index);
         index
             .notes_by_path
             .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
@@ -264,7 +332,9 @@ pub async fn search_notes(
         let mut search_indexes = search_indexes()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        prune_search_indexes(&mut search_indexes);
         let index = search_indexes.entry(notebook_path.clone()).or_default();
+        touch_search_index(index);
         index
             .notes_by_path
             .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
@@ -1217,4 +1287,82 @@ pub async fn move_note(
     eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
     // Return the new relative path of the item that was moved/renamed
     Ok(new_rel_path.to_string())
+}
+
+#[cfg(test)]
+mod search_index_eviction_tests {
+    use super::*;
+
+    #[test]
+    fn prune_search_indexes_removes_idle_notebooks() {
+        let now = Instant::now();
+        let stale_last_access = now
+            .checked_sub(SEARCH_INDEX_IDLE_EVICTION_INTERVAL + Duration::from_millis(1))
+            .unwrap_or(now);
+
+        let mut indexes = HashMap::new();
+        indexes.insert(
+            "stale".to_string(),
+            NotebookSearchIndex {
+                notes_by_path: HashMap::new(),
+                last_external_refresh: None,
+                last_accessed_at: stale_last_access,
+            },
+        );
+        indexes.insert(
+            "active".to_string(),
+            NotebookSearchIndex {
+                notes_by_path: HashMap::new(),
+                last_external_refresh: None,
+                last_accessed_at: now,
+            },
+        );
+
+        prune_search_indexes(&mut indexes);
+
+        assert!(
+            !indexes.contains_key("stale"),
+            "Expected stale notebook index to be evicted"
+        );
+        assert!(
+            indexes.contains_key("active"),
+            "Expected active notebook index to remain cached"
+        );
+    }
+
+    #[test]
+    fn prune_search_indexes_enforces_max_cached_notebooks() {
+        let now = Instant::now();
+        let total_notebooks = SEARCH_INDEX_MAX_CACHED_NOTEBOOKS + 2;
+        let mut indexes = HashMap::new();
+
+        for i in 0..total_notebooks {
+            let age = Duration::from_millis((total_notebooks - i) as u64);
+            let last_accessed_at = now.checked_sub(age).unwrap_or(now);
+            indexes.insert(
+                format!("notebook_{i}"),
+                NotebookSearchIndex {
+                    notes_by_path: HashMap::new(),
+                    last_external_refresh: None,
+                    last_accessed_at,
+                },
+            );
+        }
+
+        prune_search_indexes(&mut indexes);
+
+        assert_eq!(
+            indexes.len(),
+            SEARCH_INDEX_MAX_CACHED_NOTEBOOKS,
+            "Expected cache size to be capped at SEARCH_INDEX_MAX_CACHED_NOTEBOOKS"
+        );
+        assert!(
+            !indexes.contains_key("notebook_0"),
+            "Expected oldest notebook index to be evicted first"
+        );
+        assert!(
+            !indexes.contains_key("notebook_1"),
+            "Expected second-oldest notebook index to be evicted when over capacity"
+        );
+    }
 }
