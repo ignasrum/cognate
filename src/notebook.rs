@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -39,8 +39,8 @@ pub struct NoteSearchResult {
 
 #[derive(Debug, Clone, Default)]
 struct IndexedNoteContent {
-    content: String,
-    content_lower: String,
+    content: Arc<str>,
+    content_lower: Arc<str>,
     modified_time: Option<SystemTime>,
 }
 
@@ -117,11 +117,12 @@ fn note_file_modified_time(note_file_path: &Path) -> Option<SystemTime> {
 fn read_note_content_for_index(notebook_path: &str, rel_path: &str) -> IndexedNoteContent {
     let note_file_path = Path::new(notebook_path).join(rel_path).join("note.md");
     let content = fs::read_to_string(&note_file_path).unwrap_or_default();
+    let content_lower = content.to_lowercase();
     let modified_time = note_file_modified_time(&note_file_path);
 
     IndexedNoteContent {
-        content_lower: content.to_lowercase(),
-        content,
+        content_lower: Arc::from(content_lower),
+        content: Arc::from(content),
         modified_time,
     }
 }
@@ -135,15 +136,13 @@ fn cache_upsert_search_index_note_content(
     let mut search_indexes = search_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let index = search_indexes
-        .entry(notebook_path.to_string())
-        .or_default();
+    let index = search_indexes.entry(notebook_path.to_string()).or_default();
 
     index.notes_by_path.insert(
         rel_path.to_string(),
         IndexedNoteContent {
-            content: content.to_string(),
-            content_lower: content.to_lowercase(),
+            content: Arc::from(content.to_string()),
+            content_lower: Arc::from(content.to_lowercase()),
             modified_time,
         },
     );
@@ -209,43 +208,93 @@ pub async fn search_notes(
         return Vec::new();
     }
 
-    let mut search_indexes = search_indexes()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let index = search_indexes.entry(notebook_path.clone()).or_default();
-
     let note_paths: HashSet<&str> = notes.iter().map(|note| note.rel_path.as_str()).collect();
-    index
-        .notes_by_path
-        .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
+    let (missing_paths, refresh_candidates, should_refresh) = {
+        let mut search_indexes = search_indexes()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let index = search_indexes.entry(notebook_path.clone()).or_default();
+        index
+            .notes_by_path
+            .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
 
-    for note in &notes {
-        if !index.notes_by_path.contains_key(&note.rel_path) {
-            index.notes_by_path.insert(
-                note.rel_path.clone(),
-                read_note_content_for_index(&notebook_path, &note.rel_path),
-            );
-        }
-    }
+        let should_refresh =
+            should_refresh_search_index_from_filesystem(index.last_external_refresh);
+        let mut missing_paths = Vec::new();
+        let mut refresh_candidates = Vec::new();
 
-    if should_refresh_search_index_from_filesystem(index.last_external_refresh) {
         for note in &notes {
-            let note_file_path = Path::new(&notebook_path).join(&note.rel_path).join("note.md");
-            let modified_time = note_file_modified_time(&note_file_path);
-            let should_reload = index
-                .notes_by_path
-                .get(&note.rel_path)
-                .map_or(true, |indexed| indexed.modified_time != modified_time);
-
-            if should_reload {
-                index.notes_by_path.insert(
-                    note.rel_path.clone(),
-                    read_note_content_for_index(&notebook_path, &note.rel_path),
-                );
+            if let Some(indexed) = index.notes_by_path.get(&note.rel_path) {
+                if should_refresh {
+                    refresh_candidates.push((note.rel_path.clone(), indexed.modified_time));
+                }
+            } else {
+                missing_paths.push(note.rel_path.clone());
             }
         }
-        index.last_external_refresh = Some(Instant::now());
+
+        (missing_paths, refresh_candidates, should_refresh)
+    };
+
+    let mut missing_entries = Vec::with_capacity(missing_paths.len());
+    for rel_path in missing_paths {
+        missing_entries.push((
+            rel_path.clone(),
+            read_note_content_for_index(&notebook_path, &rel_path),
+        ));
     }
+
+    let mut refreshed_entries = Vec::new();
+    if should_refresh {
+        for (rel_path, previous_modified_time) in refresh_candidates {
+            let note_file_path = Path::new(&notebook_path).join(&rel_path).join("note.md");
+            let modified_time = note_file_modified_time(&note_file_path);
+
+            if previous_modified_time != modified_time {
+                refreshed_entries.push((
+                    rel_path.clone(),
+                    previous_modified_time,
+                    read_note_content_for_index(&notebook_path, &rel_path),
+                ));
+            }
+        }
+    }
+
+    let content_snapshot_by_path = {
+        let mut search_indexes = search_indexes()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let index = search_indexes.entry(notebook_path.clone()).or_default();
+        index
+            .notes_by_path
+            .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
+
+        for (rel_path, indexed_note) in missing_entries {
+            index.notes_by_path.entry(rel_path).or_insert(indexed_note);
+        }
+
+        for (rel_path, expected_previous_modified_time, indexed_note) in refreshed_entries {
+            let should_apply = index.notes_by_path.get(&rel_path).map_or(true, |existing| {
+                existing.modified_time == expected_previous_modified_time
+            });
+
+            if should_apply {
+                index.notes_by_path.insert(rel_path, indexed_note);
+            }
+        }
+
+        if should_refresh {
+            index.last_external_refresh = Some(Instant::now());
+        }
+
+        let mut snapshot = HashMap::with_capacity(notes.len());
+        for note in &notes {
+            if let Some(indexed) = index.notes_by_path.get(&note.rel_path) {
+                snapshot.insert(note.rel_path.clone(), indexed.clone());
+            }
+        }
+        snapshot
+    };
 
     let mut results = Vec::new();
 
@@ -257,12 +306,14 @@ pub async fn search_notes(
             .find(|label| label.to_lowercase().contains(&normalized_query))
             .cloned();
 
-        let content_match = index.notes_by_path.get(&note.rel_path).and_then(|indexed| {
-            if !indexed.content_lower.contains(&normalized_query) {
-                return None;
-            }
-            find_matching_content_snippet(&indexed.content, &normalized_query)
-        });
+        let content_match = content_snapshot_by_path
+            .get(&note.rel_path)
+            .and_then(|indexed| {
+                if !indexed.content_lower.contains(&normalized_query) {
+                    return None;
+                }
+                find_matching_content_snippet(indexed.content.as_ref(), &normalized_query)
+            });
 
         if rel_path_match || label_match.is_some() || content_match.is_some() {
             let snippet = if let Some(content_snippet) = content_match {

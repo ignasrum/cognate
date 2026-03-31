@@ -695,9 +695,8 @@ impl Editor {
                     eprintln!("Debounced metadata saved successfully.");
                 }
 
-                let should_save_latest =
-                    state.metadata_save_reschedule_after_in_flight
-                        || saved_generation < state.metadata_save_generation;
+                let should_save_latest = state.metadata_save_reschedule_after_in_flight
+                    || saved_generation < state.metadata_save_generation;
                 state.metadata_save_reschedule_after_in_flight = false;
 
                 if should_save_latest {
@@ -1081,7 +1080,8 @@ impl Editor {
 
         Task::perform(
             async move {
-                let result = notebook::save_metadata(&notebook_path, &notes).map_err(|e| e.to_string());
+                let result =
+                    notebook::save_metadata(&notebook_path, &notes).map_err(|e| e.to_string());
                 (generation, result)
             },
             |(generation, result)| Message::DebouncedMetadataSaveCompleted(generation, result),
@@ -1237,7 +1237,8 @@ impl Editor {
 
     // Keep subscription method as is
     pub fn subscription(_state: &Self) -> Subscription<Message> {
-        let keyboard_subscription = iced::event::listen_with(|event, _status, _shell| match event {
+        let keyboard_subscription =
+            iced::event::listen_with(|event, _status, _shell| match event {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     // Handle primary command shortcuts:
                     // - macOS: Cmd
