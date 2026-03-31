@@ -664,9 +664,13 @@ impl Editor {
                     let _ = state.visualizer.update(visualizer::Message::FocusOnNote(
                         state.state.selected_note_path().cloned(),
                     ));
+                    Task::none()
+                } else {
+                    note_actions::get_select_note_command(
+                        state.state.selected_note_path(),
+                        &state.note_explorer.notes,
+                    )
                 }
-
-                Task::none()
             }
             Message::VisualizerMsg(visualizer_message) => note_actions::handle_visualizer_message(
                 &mut state.visualizer,

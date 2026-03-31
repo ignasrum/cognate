@@ -253,36 +253,25 @@ pub fn generate_layout<'a>(
     // Add notebook specific buttons
     if !state.notebook_path().is_empty() {
         if !is_dialog_open && !state.show_visualizer() {
-            let visualizer_button_text = if state.show_visualizer() {
-                "Back"
-            } else {
-                "Show Visualizer"
-            };
             top_bar = top_bar.push(
-                button(visualizer_button_text)
+                button("Show Visualizer")
                     .padding(5)
                     .on_press(Message::ToggleVisualizer),
             );
         } else if state.show_visualizer() && !is_dialog_open {
-            top_bar = top_bar.push(
-                button("Back")
-                    .padding(5)
-                    .on_press(Message::ToggleVisualizer),
-            );
-
-            let open_note_target = visualizer_component
-                .focused_note_path()
-                .or(state.selected_note_path());
-            let open_note_button = if let Some(note_path) = open_note_target {
-                button("Open Note")
-                    .padding(5)
-                    .on_press(Message::VisualizerMsg(
-                        visualizer::Message::NoteSelectedInVisualizer(note_path.clone()),
-                    ))
+            let hide_visualizer_action = if let Some(note_path) = state.selected_note_path() {
+                Message::VisualizerMsg(visualizer::Message::NoteSelectedInVisualizer(
+                    note_path.clone(),
+                ))
             } else {
-                button("Open Note").padding(5)
+                Message::ToggleVisualizer
             };
-            top_bar = top_bar.push(open_note_button);
+
+            top_bar = top_bar.push(
+                button("Hide Visualizer")
+                    .padding(5)
+                    .on_press(hide_visualizer_action),
+            );
         }
 
         if !state.show_visualizer()

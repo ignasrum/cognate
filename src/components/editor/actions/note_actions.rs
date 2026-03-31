@@ -181,8 +181,16 @@ pub fn handle_visualizer_message(
         visualizer::Message::UpdateNotes(_) => {
             // No additional editor commands needed when visualizer just updates notes
         }
-        visualizer::Message::FocusOnNote(_) => {
-            // Focus changes are visual-only and do not require editor actions.
+        visualizer::Message::FocusOnNote(note_path) => {
+            if let Some(note_path) = note_path {
+                commands_to_return.push(handle_note_selection_internal(
+                    note_explorer,
+                    undo_manager,
+                    state,
+                    note_path,
+                    false,
+                ));
+            }
         }
         visualizer::Message::NoteSelectedInVisualizer(note_path) => {
             #[cfg(debug_assertions)]

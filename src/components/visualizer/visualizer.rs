@@ -885,10 +885,6 @@ impl Visualizer {
             .into()
     }
 
-    pub fn focused_note_path(&self) -> Option<&String> {
-        self.focus_target_note.as_ref()
-    }
-
     #[cfg(test)]
     pub(crate) fn debug_graph_stats(&self) -> (usize, usize, usize) {
         self.refresh_graph_cache_if_needed();
