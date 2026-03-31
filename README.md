@@ -12,8 +12,7 @@ Cognate is a simple note taking application built with the Iced GUI library for 
     - Delete existing notes.
     - Move and rename notes and folders within the notebook.
 - **Labeling:** Add and remove labels to individual notes for better organization.
-- **Embedded Image Export:** Export embedded note images to files in a note-local `exported_images` folder.
-- **Markdown + Attachment Export:** Export a standalone markdown copy and image attachments with rewritten local image links.
+- **Native Markdown Images:** Pasted images are stored as files and linked directly in `note.md`.
 - **Visualizer:** View your notes grouped by their labels.
 - **Configuration:** Customize the application theme, notebook path, and UI scale via a `config.json` file.
 

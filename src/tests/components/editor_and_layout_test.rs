@@ -6,7 +6,7 @@ mod tests {
     use crate::components::note_explorer;
     use crate::components::visualizer;
     use crate::configuration::Configuration;
-    use crate::notebook::{MarkdownWithAttachmentsExportSummary, NoteMetadata};
+    use crate::notebook::NoteMetadata;
     use iced::widget::text_editor::Content;
 
     #[test]
@@ -52,25 +52,12 @@ mod tests {
             EditorMessage::MoveNoteInputChanged("moved/path".to_string()),
             EditorMessage::ConfirmMoveNote,
             EditorMessage::CancelMoveNote,
-            EditorMessage::ExportMarkdownWithAttachments,
             EditorMessage::NoteMoved(Err("move failed".to_string()), "old/path".to_string()),
             EditorMessage::NoteDeleted(Err("delete failed".to_string()), "to/delete".to_string()),
             EditorMessage::MetadataSaved(Ok(())),
             EditorMessage::MetadataSaved(Err("meta failed".to_string())),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err("save failed".to_string())),
-            EditorMessage::MarkdownWithAttachmentsExported(Err(
-                "markdown export failed".to_string()
-            )),
-            EditorMessage::MarkdownWithAttachmentsExported(Ok(
-                MarkdownWithAttachmentsExportSummary {
-                    markdown_path: "/tmp/exported_markdown/note.md".to_string(),
-                    attachments_dir: "/tmp/exported_markdown/images".to_string(),
-                    exported_count: 1,
-                    skipped_count: 0,
-                    rewritten_reference_count: 1,
-                },
-            )),
             EditorMessage::LoadedNoteContent(
                 "folder/note".to_string(),
                 "body".to_string(),

@@ -36,6 +36,13 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
         title: &'a str,
         _alt: &markdown::Text,
     ) -> Element<'a, Message> {
+        if let Some(image_handle) = self.image_handles.get(url.as_str()) {
+            return image(image_handle.clone())
+                .width(Length::Fill)
+                .content_fit(iced::ContentFit::Contain)
+                .into();
+        }
+
         if let Some(image_id) = url.strip_prefix("cognate-image://")
             && let Some(image_handle) = self.image_handles.get(image_id)
         {
@@ -287,11 +294,6 @@ pub fn generate_layout<'a>(
                         .on_press(Message::DeleteNote),
                 );
                 top_bar = top_bar.push(button("Move Note").padding(5).on_press(Message::MoveNote));
-                top_bar = top_bar.push(
-                    button("Export Markdown")
-                        .padding(5)
-                        .on_press(Message::ExportMarkdownWithAttachments),
-                );
             }
 
             top_bar = top_bar.push(

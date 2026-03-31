@@ -1,6 +1,7 @@
 use iced::task::Task; // Use Task instead of Command
 use iced::widget::text_editor::Content;
 use native_dialog::{DialogBuilder, MessageLevel};
+use std::collections::HashMap;
 
 // Use root-level imports that avoid circular references
 use crate::components::editor::Message;
@@ -64,8 +65,12 @@ fn handle_note_selection_internal(
                         String::new()
                     }
                 };
-                let loaded_images =
-                    notebook::load_note_embedded_images(&notebook_path, &selected_note_path);
+                let legacy_images_path = format!(
+                    "{}/{}/embedded_images.json",
+                    notebook_path, selected_note_path
+                );
+                let _ = std::fs::remove_file(legacy_images_path);
+                let loaded_images = HashMap::new();
 
                 (selected_note_path, loaded_content, loaded_images)
             },

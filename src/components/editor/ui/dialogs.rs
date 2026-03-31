@@ -93,7 +93,7 @@ pub fn move_note_dialog<'a>(
 pub fn confirm_embedded_image_delete_dialog<'a>(count: usize) -> Element<'a, Message> {
     let noun = if count == 1 { "image" } else { "images" };
     let prompt = format!(
-        "Delete {count} embedded {noun} from this note?\nThis removes image data from embedded_images.json."
+        "Delete {count} {noun} from this note?\nThis also deletes the corresponding image file(s)."
     );
 
     Column::new()

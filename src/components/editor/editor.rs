@@ -3,13 +3,13 @@ use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Cursor as EditorCursor, Edit, Position as EditorPosition};
 use iced::{Element, Subscription};
-use native_dialog::{DialogBuilder, MessageLevel};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
+const EMBEDDED_IMAGE_DIR: &str = "images";
 #[cfg(test)]
 const HTML_BR_SENTINEL_CHAR: char = '\u{E000}';
 
@@ -59,8 +59,6 @@ pub enum Message {
 
     // Content management
     NoteContentSaved(Result<(), String>),
-    EmbeddedImagesSaved(Result<(), String>),
-    MarkdownWithAttachmentsExported(Result<notebook::MarkdownWithAttachmentsExportSummary, String>),
 
     // Visualizer
     ToggleVisualizer,
@@ -89,7 +87,6 @@ pub enum Message {
     AboutButtonClicked,
     IncreaseScale,
     DecreaseScale,
-    ExportMarkdownWithAttachments,
     MarkdownLinkClicked(String),
     ScaleSaved(Result<(), String>),
 }
@@ -179,18 +176,12 @@ impl Editor {
             | Message::SearchCompleted(_)
             | Message::ClearSearch => Self::handle_search_messages(state, message),
 
-            Message::MetadataSaved(_)
-            | Message::NoteContentSaved(_)
-            | Message::EmbeddedImagesSaved(_)
-            | Message::ScaleSaved(_) => Self::handle_save_feedback_messages(message),
+            Message::MetadataSaved(_) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
+                Self::handle_save_feedback_messages(message)
+            }
 
             Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
                 Self::handle_visualizer_messages(state, message)
-            }
-
-            Message::ExportMarkdownWithAttachments
-            | Message::MarkdownWithAttachmentsExported(_) => {
-                Self::handle_embedded_image_export_messages(state, message)
             }
 
             Message::NewNote
@@ -383,13 +374,23 @@ impl Editor {
                     state.content.cursor(),
                 );
 
-                let image_id = generate_embedded_image_id();
-                let tag = format!("![image:{}]", image_id);
+                let image_tag = match save_base64_image_for_note(
+                    state.state.notebook_path(),
+                    &selected_note_path,
+                    &image_base64,
+                ) {
+                    Ok(relative_path) => format!("![image]({relative_path})"),
+                    Err(_err) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to persist pasted image: {}", _err);
+                        return Task::none();
+                    }
+                };
+
                 state
                     .content
-                    .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
+                    .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
                 state.markdown_text = state.content.text();
-                state.embedded_images.insert(image_id, image_base64);
                 state.prune_embedded_images_for_current_markdown();
                 state.touch_selected_note_last_updated();
                 state.sync_markdown_preview();
@@ -406,7 +407,6 @@ impl Editor {
 
                 Task::batch(vec![
                     save_content_task,
-                    state.persist_embedded_images_task(),
                     state.scroll_preview_to_cursor_task(),
                 ])
             }
@@ -488,13 +488,23 @@ impl Editor {
             state.content.cursor(),
         );
 
-        let image_id = generate_embedded_image_id();
-        let tag = format!("![image:{}]", image_id);
+        let image_tag = match save_base64_image_for_note(
+            state.state.notebook_path(),
+            &selected_note_path,
+            &image_base64,
+        ) {
+            Ok(relative_path) => format!("![image]({relative_path})"),
+            Err(_err) => {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to persist pasted image: {}", _err);
+                return Task::none();
+            }
+        };
+
         state
             .content
-            .perform(Action::Edit(Edit::Paste(Arc::new(tag))));
+            .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
         state.markdown_text = state.content.text();
-        state.embedded_images.insert(image_id, image_base64);
         state.prune_embedded_images_for_current_markdown();
         state.touch_selected_note_last_updated();
         state.sync_markdown_preview();
@@ -509,7 +519,6 @@ impl Editor {
 
         Task::batch(vec![
             save_content_task,
-            state.persist_embedded_images_task(),
             state.scroll_preview_to_cursor_task(),
         ])
     }
@@ -634,13 +643,6 @@ impl Editor {
                 }
                 Task::none()
             }
-            Message::EmbeddedImagesSaved(result) => {
-                if let Err(_err) = result {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Error saving embedded images: {}", _err);
-                }
-                Task::none()
-            }
             Message::ScaleSaved(result) => {
                 if let Err(_err) = result {
                     #[cfg(debug_assertions)]
@@ -680,82 +682,6 @@ impl Editor {
                 visualizer_message,
             ),
             _ => unreachable!("visualizer handler received invalid message"),
-        }
-    }
-
-    fn handle_embedded_image_export_messages(state: &mut Self, message: Message) -> Task<Message> {
-        match message {
-            Message::ExportMarkdownWithAttachments => {
-                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
-                    return Task::none();
-                };
-
-                Task::perform(
-                    notebook::export_note_markdown_with_attachments(
-                        state.state.notebook_path().to_string(),
-                        selected_note_path,
-                        state.markdown_text.clone(),
-                        state.embedded_images.clone(),
-                    ),
-                    Message::MarkdownWithAttachmentsExported,
-                )
-            }
-            Message::MarkdownWithAttachmentsExported(result) => {
-                match result {
-                    Ok(summary) => {
-                        let mut body = format!(
-                            "Exported markdown file:\n{}\n\nAttachments directory:\n{}",
-                            summary.markdown_path, summary.attachments_dir
-                        );
-
-                        if summary.exported_count > 0 {
-                            body.push_str(&format!(
-                                "\n\nExported {} attachment{} and rewrote {} image reference{}.",
-                                summary.exported_count,
-                                if summary.exported_count == 1 { "" } else { "s" },
-                                summary.rewritten_reference_count,
-                                if summary.rewritten_reference_count == 1 {
-                                    ""
-                                } else {
-                                    "s"
-                                }
-                            ));
-                        } else {
-                            body.push_str("\n\nNo embedded images were found to export.");
-                        }
-
-                        if summary.skipped_count > 0 {
-                            body.push_str(&format!(
-                                "\nSkipped {} invalid image entr{}.",
-                                summary.skipped_count,
-                                if summary.skipped_count == 1 {
-                                    "y"
-                                } else {
-                                    "ies"
-                                }
-                            ));
-                        }
-
-                        let _ = DialogBuilder::message()
-                            .set_level(MessageLevel::Info)
-                            .set_title("Markdown Exported")
-                            .set_text(&body)
-                            .alert()
-                            .show();
-                    }
-                    Err(error) => {
-                        let _ = DialogBuilder::message()
-                            .set_level(MessageLevel::Error)
-                            .set_title("Markdown Export Failed")
-                            .set_text(&error)
-                            .alert()
-                            .show();
-                    }
-                }
-
-                Task::none()
-            }
-            _ => unreachable!("embedded-image-export handler received invalid message"),
         }
     }
 
@@ -882,6 +808,7 @@ impl Editor {
     }
 
     fn sync_markdown_preview(&mut self) {
+        self.refresh_embedded_images_for_current_markdown();
         self.sync_embedded_image_handles();
         let preview_markdown =
             build_markdown_preview_content(&self.markdown_text, &self.embedded_images);
@@ -896,6 +823,8 @@ impl Editor {
             self.state.hide_embedded_image_delete_dialog();
             self.embedded_image_prompt_note_path = current_note_path;
         }
+
+        self.refresh_embedded_images_for_current_markdown();
     }
 
     fn handle_confirm_delete_embedded_images(&mut self, confirmed: bool) -> Task<Message> {
@@ -930,7 +859,13 @@ impl Editor {
             }
 
             for image_id in std::mem::take(&mut self.pending_embedded_image_deletion_ids) {
-                self.embedded_images.remove(&image_id);
+                if let Some(image_path) = self.embedded_images.remove(&image_id)
+                    && let Err(_err) = std::fs::remove_file(&image_path)
+                    && _err.kind() != std::io::ErrorKind::NotFound
+                {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to delete image file '{}': {}", image_path, _err);
+                }
                 self.embedded_image_handles.remove(&image_id);
             }
 
@@ -971,19 +906,7 @@ impl Editor {
     }
 
     fn persist_embedded_images_task(&self) -> Task<Message> {
-        if let Some(selected_note_path) = self.state.selected_note_path() {
-            let notebook_path = self.state.notebook_path().to_string();
-            let note_path = selected_note_path.clone();
-            let images = self.embedded_images.clone();
-            Task::perform(
-                async move {
-                    notebook::save_note_embedded_images(notebook_path, note_path, images).await
-                },
-                Message::EmbeddedImagesSaved,
-            )
-        } else {
-            Task::none()
-        }
+        Task::none()
     }
 
     fn persist_scale_task(&self) -> Task<Message> {
@@ -1046,16 +969,37 @@ impl Editor {
         self.embedded_image_handles
             .retain(|image_id, _| self.embedded_images.contains_key(image_id));
 
-        for (image_id, base64_png) in &self.embedded_images {
+        for (image_id, image_path) in &self.embedded_images {
             if self.embedded_image_handles.contains_key(image_id) {
                 continue;
             }
 
-            if let Some(png_bytes) = decode_base64_png_to_bytes(base64_png) {
+            if let Ok(image_bytes) = std::fs::read(image_path) {
                 self.embedded_image_handles.insert(
                     image_id.clone(),
-                    iced::widget::image::Handle::from_bytes(png_bytes),
+                    iced::widget::image::Handle::from_bytes(image_bytes),
                 );
+            }
+        }
+    }
+
+    fn refresh_embedded_images_for_current_markdown(&mut self) {
+        self.embedded_images.clear();
+
+        let Some(selected_note_path) = self.state.selected_note_path() else {
+            return;
+        };
+
+        if self.state.notebook_path().is_empty() {
+            return;
+        }
+
+        let note_dir = Path::new(self.state.notebook_path()).join(selected_note_path);
+
+        for image_ref in extract_embedded_image_ids(&self.markdown_text) {
+            if let Some(image_path) = resolve_embedded_image_reference(&note_dir, &image_ref) {
+                self.embedded_images
+                    .insert(image_ref, image_path.to_string_lossy().into_owned());
             }
         }
     }
@@ -1173,24 +1117,69 @@ fn generate_embedded_image_id() -> String {
     format!("img_{timestamp_nanos:x}")
 }
 
+fn save_base64_image_for_note(
+    notebook_path: &str,
+    rel_note_path: &str,
+    base64_image: &str,
+) -> Result<String, String> {
+    let image_bytes = decode_base64_image_to_bytes(base64_image)
+        .ok_or_else(|| "Failed to decode image data from clipboard.".to_string())?;
+    let extension = image_extension_from_bytes(&image_bytes).unwrap_or("png");
+    let image_id = generate_embedded_image_id();
+    let file_name = format!("{image_id}.{extension}");
+
+    let note_dir = Path::new(notebook_path).join(rel_note_path);
+    let images_dir = note_dir.join(EMBEDDED_IMAGE_DIR);
+    std::fs::create_dir_all(&images_dir).map_err(|err| {
+        format!(
+            "Failed to create image directory '{}': {}",
+            images_dir.display(),
+            err
+        )
+    })?;
+
+    let image_path = images_dir.join(&file_name);
+    std::fs::write(&image_path, image_bytes).map_err(|err| {
+        format!(
+            "Failed to write image file '{}': {}",
+            image_path.display(),
+            err
+        )
+    })?;
+
+    Ok(format!("{}/{}", EMBEDDED_IMAGE_DIR, file_name))
+}
+
+fn image_extension_from_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("png");
+    }
+
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+
+    None
+}
+
 fn extract_embedded_image_ids(markdown: &str) -> HashSet<String> {
-    let marker = "![image:";
     let mut referenced = HashSet::new();
-    let mut cursor = 0usize;
 
-    while let Some(relative_start) = markdown[cursor..].find(marker) {
-        let start = cursor + relative_start + marker.len();
-        let Some(relative_end) = markdown[start..].find(']') else {
-            break;
-        };
-
-        let end = start + relative_end;
-        let image_id = markdown[start..end].trim();
-        if !image_id.is_empty() {
-            referenced.insert(image_id.to_string());
+    for event in pulldown_cmark::Parser::new_ext(markdown, markdown_parser_options()) {
+        if let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { dest_url, .. }) = event {
+            let image_ref = dest_url.as_ref().trim();
+            if !image_ref.is_empty() {
+                referenced.insert(image_ref.to_string());
+            }
         }
-
-        cursor = end + 1;
     }
 
     referenced
@@ -1575,41 +1564,23 @@ fn next_char_boundary(text: &str, index: usize) -> Option<usize> {
     Some(index + ch.len_utf8())
 }
 
+fn resolve_embedded_image_reference(note_dir: &Path, image_ref: &str) -> Option<PathBuf> {
+    let normalized_ref = image_ref.trim().replace('\\', "/");
+    if normalized_ref.is_empty() || normalized_ref.contains("://") || normalized_ref.contains("..")
+    {
+        return None;
+    }
+
+    if !normalized_ref.starts_with(&format!("{}/", EMBEDDED_IMAGE_DIR)) {
+        return None;
+    }
+
+    Some(note_dir.join(normalized_ref))
+}
+
 fn build_markdown_preview_content(markdown: &str, images: &HashMap<String, String>) -> String {
-    let marker = "![image:";
-    let mut cursor = 0usize;
-    let mut rendered = String::with_capacity(markdown.len());
-
-    while let Some(relative_start) = markdown[cursor..].find(marker) {
-        let start = cursor + relative_start;
-        rendered.push_str(&markdown[cursor..start]);
-
-        let image_id_start = start + marker.len();
-        let Some(relative_end) = markdown[image_id_start..].find(']') else {
-            rendered.push_str(&markdown[start..]);
-            cursor = markdown.len();
-            break;
-        };
-
-        let image_id_end = image_id_start + relative_end;
-        let image_id = markdown[image_id_start..image_id_end].trim();
-
-        if images.contains_key(image_id) {
-            rendered.push_str("![image](cognate-image://");
-            rendered.push_str(image_id);
-            rendered.push(')');
-        } else {
-            rendered.push_str(&markdown[start..=image_id_end]);
-        }
-
-        cursor = image_id_end + 1;
-    }
-
-    if cursor < markdown.len() {
-        rendered.push_str(&markdown[cursor..]);
-    }
-
-    normalize_html_line_break_tags(&rendered)
+    let _ = images;
+    normalize_html_line_break_tags(markdown)
 }
 
 fn normalize_html_line_break_tags(markdown: &str) -> String {
@@ -1715,7 +1686,7 @@ fn markdown_parser_options() -> pulldown_cmark::Options {
         | pulldown_cmark::Options::ENABLE_TASKLISTS
 }
 
-fn decode_base64_png_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
+fn decode_base64_image_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
         .decode(base64_data)
@@ -1950,24 +1921,25 @@ mod image_tag_tests {
 
     #[test]
     fn extract_embedded_image_ids_parses_all_tags() {
-        let markdown = "A ![image:img_one] and ![image:img_two].";
+        let markdown = "A ![first](images/img_one.png) and ![second](images/img_two.jpg).";
         let ids = extract_embedded_image_ids(markdown);
 
-        let expected: HashSet<String> = ["img_one".to_string(), "img_two".to_string()]
-            .into_iter()
-            .collect();
+        let expected: HashSet<String> = [
+            "images/img_one.png".to_string(),
+            "images/img_two.jpg".to_string(),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(ids, expected);
     }
 
     #[test]
-    fn build_markdown_preview_content_replaces_known_tags() {
-        let markdown = "before ![image:img_one] after ![image:missing]";
-        let mut images = HashMap::new();
-        images.insert("img_one".to_string(), "AAAABBBB".to_string());
+    fn build_markdown_preview_content_keeps_standard_markdown_images() {
+        let markdown = "before ![image](images/img_one.png) after";
+        let images = HashMap::new();
 
         let rendered = build_markdown_preview_content(markdown, &images);
-        assert!(rendered.contains("cognate-image://img_one"));
-        assert!(rendered.contains("![image:missing]"));
+        assert_eq!(rendered, markdown);
     }
 
     #[test]
