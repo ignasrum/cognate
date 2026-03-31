@@ -17,6 +17,7 @@ const MAX_CAMERA_ZOOM: f32 = 4.0;
 const MAX_LABEL_LENGTH: usize = 32;
 const MAX_DOUBLE_CLICK_INTERVAL_MS: u128 = 300;
 const MAX_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const CAMERA_TRANSITION_DURATION_MS: f32 = 320.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -67,6 +68,17 @@ struct GraphProgram {
     focus_version: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CameraTransition {
+    from_yaw: f32,
+    from_pitch: f32,
+    from_zoom: f32,
+    to_yaw: f32,
+    to_pitch: f32,
+    to_zoom: f32,
+    started_at: Instant,
+}
+
 #[derive(Debug)]
 struct GraphCanvasState {
     yaw: f32,
@@ -77,6 +89,11 @@ struct GraphCanvasState {
     drag_origin_pitch: f32,
     hovered_node_index: Option<usize>,
     last_node_click: Option<(usize, Point, Instant)>,
+    camera_transition: Option<CameraTransition>,
+    center_note_path: Option<String>,
+    center_transition_from_note: Option<String>,
+    center_transition_to_note: Option<String>,
+    center_transition_blend: f32,
     applied_focus_version: u64,
 }
 
@@ -91,6 +108,11 @@ impl Default for GraphCanvasState {
             drag_origin_pitch: DEFAULT_CAMERA_PITCH,
             hovered_node_index: None,
             last_node_click: None,
+            camera_transition: None,
+            center_note_path: None,
+            center_transition_from_note: None,
+            center_transition_to_note: None,
+            center_transition_blend: 1.0,
             applied_focus_version: 0,
         }
     }
@@ -106,50 +128,75 @@ impl GraphProgram {
         let center = Point::new(bounds.width * 0.5, bounds.height * 0.52);
         let orbit_scale = bounds.width.min(bounds.height) * 0.34 * state.zoom;
         let camera_distance = 2.8;
-        let selected_index = self.selected_note_path.as_ref().and_then(|selected_path| {
-            self.nodes
-                .iter()
-                .position(|node| &node.note_path == selected_path)
-        });
-        let selected_rotated_offset = selected_index
-            .and_then(|index| self.nodes.get(index))
-            .map(|node| rotate_3d(node.position, state.yaw, state.pitch))
-            .unwrap_or([0.0, 0.0, 0.0]);
 
         let mut rotated_points: Vec<[f32; 3]> = self
             .nodes
             .iter()
-            .map(|node| {
-                let raw_rotated = rotate_3d(node.position, state.yaw, state.pitch);
-                [
-                    raw_rotated[0] - selected_rotated_offset[0],
-                    raw_rotated[1] - selected_rotated_offset[1],
-                    raw_rotated[2] - selected_rotated_offset[2],
-                ]
-            })
+            .map(|node| rotate_3d(node.position, state.yaw, state.pitch))
             .collect();
 
-        if let Some(selected_index) = selected_index {
-            let max_other_z = rotated_points
+        let fallback_center_path = state
+            .center_note_path
+            .as_deref()
+            .or(self.selected_note_path.as_deref());
+        let from_center_path = state
+            .center_transition_from_note
+            .as_deref()
+            .or(fallback_center_path);
+        let to_center_path = state
+            .center_transition_to_note
+            .as_deref()
+            .or(fallback_center_path);
+        let blend = state.center_transition_blend.clamp(0.0, 1.0);
+        let transition_is_active =
+            state.center_transition_from_note != state.center_transition_to_note;
+
+        let center_offset = match (
+            rotated_point_for_note_path(&self.nodes, &rotated_points, from_center_path),
+            rotated_point_for_note_path(&self.nodes, &rotated_points, to_center_path),
+        ) {
+            (Some(from), Some(to)) if transition_is_active => lerp_3d(from, to, blend),
+            (Some(_), Some(to)) => to,
+            (Some(from), None) => from,
+            (None, Some(to)) => to,
+            (None, None) => [0.0, 0.0, 0.0],
+        };
+
+        for point in &mut rotated_points {
+            point[0] -= center_offset[0];
+            point[1] -= center_offset[1];
+            point[2] -= center_offset[2];
+        }
+
+        let focus_point = match (
+            rotated_point_for_note_path(&self.nodes, &rotated_points, from_center_path),
+            rotated_point_for_note_path(&self.nodes, &rotated_points, to_center_path),
+        ) {
+            (Some(from), Some(to)) if transition_is_active => Some(lerp_3d(from, to, blend)),
+            (Some(_), Some(to)) => Some(to),
+            (Some(from), None) => Some(from),
+            (None, Some(to)) => Some(to),
+            (None, None) => None,
+        };
+
+        if let Some(focus_point) = focus_point {
+            let max_z = rotated_points
                 .iter()
-                .enumerate()
-                .filter_map(|(index, point)| (index != selected_index).then_some(point[2]))
+                .map(|point| point[2])
                 .fold(f32::NEG_INFINITY, f32::max);
 
-            let preferred_selected_z: f32 = camera_distance - 0.95;
-            let target_selected_z = if max_other_z.is_finite() {
-                preferred_selected_z
-                    .max(max_other_z + 0.2)
+            let preferred_focus_z: f32 = camera_distance - 0.95;
+            let target_focus_z = if max_z.is_finite() {
+                preferred_focus_z
+                    .max(max_z + 0.2)
                     .min(camera_distance - 0.65)
             } else {
-                preferred_selected_z
+                preferred_focus_z
             };
 
-            if let Some(selected_point) = rotated_points.get(selected_index).copied() {
-                let z_shift = target_selected_z - selected_point[2];
-                for point in &mut rotated_points {
-                    point[2] += z_shift;
-                }
+            let z_shift = target_focus_z - focus_point[2];
+            for point in &mut rotated_points {
+                point[2] += z_shift;
             }
         }
 
@@ -222,16 +269,57 @@ impl canvas::Program<Message> for GraphProgram {
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::Action<Message>> {
         match event {
-            canvas::Event::Window(iced::window::Event::RedrawRequested(_)) => {
+            canvas::Event::Window(iced::window::Event::RedrawRequested(now)) => {
                 if state.applied_focus_version != self.focus_version {
-                    state.yaw = self.focus_yaw;
-                    state.pitch = self.focus_pitch;
-                    state.zoom = self.focus_zoom;
                     state.drag_anchor = None;
                     state.drag_origin_yaw = state.yaw;
                     state.drag_origin_pitch = state.pitch;
                     state.hovered_node_index = None;
                     state.applied_focus_version = self.focus_version;
+
+                    if state.center_note_path.is_none() {
+                        state.center_note_path = self.selected_note_path.clone();
+                    }
+                    state.center_transition_from_note = state.center_note_path.clone();
+                    state.center_transition_to_note = self.selected_note_path.clone();
+                    state.center_transition_blend =
+                        if state.center_transition_from_note == state.center_transition_to_note {
+                            1.0
+                        } else {
+                            0.0
+                        };
+
+                    state.camera_transition = Some(CameraTransition {
+                        from_yaw: state.yaw,
+                        from_pitch: state.pitch,
+                        from_zoom: state.zoom,
+                        to_yaw: self.focus_yaw,
+                        to_pitch: self.focus_pitch,
+                        to_zoom: self.focus_zoom,
+                        started_at: *now,
+                    });
+                }
+
+                if let Some(transition) = state.camera_transition {
+                    let elapsed_ms =
+                        now.duration_since(transition.started_at).as_secs_f32() * 1000.0;
+                    let progress = (elapsed_ms / CAMERA_TRANSITION_DURATION_MS).clamp(0.0, 1.0);
+                    let eased = ease_in_out_cubic(progress);
+
+                    state.yaw = lerp_angle(transition.from_yaw, transition.to_yaw, eased);
+                    state.pitch = lerp_angle(transition.from_pitch, transition.to_pitch, eased);
+                    state.zoom = lerp(transition.from_zoom, transition.to_zoom, eased);
+                    state.center_transition_blend = eased;
+
+                    if progress < 1.0 {
+                        return Some(iced::widget::Action::request_redraw());
+                    }
+
+                    state.yaw = transition.to_yaw;
+                    state.pitch = transition.to_pitch;
+                    state.zoom = transition.to_zoom;
+                    state.camera_transition = None;
+                    finalize_center_transition(state);
                 }
 
                 None
@@ -266,6 +354,8 @@ impl canvas::Program<Message> for GraphProgram {
                 }
 
                 state.last_node_click = None;
+                state.camera_transition = None;
+                finalize_center_transition(state);
                 state.drag_anchor = Some(cursor_position);
                 state.drag_origin_yaw = state.yaw;
                 state.drag_origin_pitch = state.pitch;
@@ -326,6 +416,8 @@ impl canvas::Program<Message> for GraphProgram {
                 } else {
                     state.zoom
                 };
+                state.camera_transition = None;
+                finalize_center_transition(state);
                 state.zoom = next_zoom.clamp(MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
                 Some(iced::widget::Action::request_redraw().and_capture())
             }
@@ -885,6 +977,42 @@ fn wrap_angle(angle: f32) -> f32 {
     (angle + PI).rem_euclid(two_pi) - PI
 }
 
+fn finalize_center_transition(state: &mut GraphCanvasState) {
+    if state.center_transition_to_note.is_some() {
+        state.center_note_path = state.center_transition_to_note.clone();
+    }
+
+    state.center_transition_from_note = None;
+    state.center_transition_to_note = None;
+    state.center_transition_blend = 1.0;
+}
+
+fn lerp(start: f32, end: f32, t: f32) -> f32 {
+    start + (end - start) * t
+}
+
+fn lerp_3d(start: [f32; 3], end: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        lerp(start[0], end[0], t),
+        lerp(start[1], end[1], t),
+        lerp(start[2], end[2], t),
+    ]
+}
+
+fn lerp_angle(start: f32, end: f32, t: f32) -> f32 {
+    let delta = wrap_angle(end - start);
+    wrap_angle(start + delta * t)
+}
+
+fn ease_in_out_cubic(t: f32) -> f32 {
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        let p = -2.0 * t + 2.0;
+        1.0 - (p * p * p) / 2.0
+    }
+}
+
 fn normalize_3d(point: [f32; 3]) -> [f32; 3] {
     let magnitude = (point[0] * point[0] + point[1] * point[1] + point[2] * point[2]).sqrt();
     if magnitude <= f32::EPSILON {
@@ -896,6 +1024,18 @@ fn normalize_3d(point: [f32; 3]) -> [f32; 3] {
             point[2] / magnitude,
         ]
     }
+}
+
+fn rotated_point_for_note_path(
+    nodes: &[GraphNode],
+    rotated_points: &[[f32; 3]],
+    note_path: Option<&str>,
+) -> Option<[f32; 3]> {
+    let path = note_path?;
+    nodes
+        .iter()
+        .position(|node| node.note_path == path)
+        .and_then(|index| rotated_points.get(index).copied())
 }
 
 fn add_3d(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
