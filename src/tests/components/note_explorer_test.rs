@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::components::note_explorer::{Message, NoteExplorer};
-    use crate::notebook::{MetadataLoadResult, NoteMetadata};
+    use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
 
     fn sample_notes() -> Vec<NoteMetadata> {
         vec![
@@ -86,5 +86,34 @@ mod tests {
         {
             let _populated_view = explorer.view(Some(&selected));
         }
+    }
+
+    #[test]
+    fn startup_error_does_not_clear_existing_notes_state() {
+        let mut explorer = NoteExplorer::new("dummy".to_string());
+        let _ = explorer.update(Message::NotesLoaded(Ok(MetadataLoadResult {
+            notes: sample_notes(),
+            warning: None,
+        })));
+        let before_error_paths: Vec<String> = explorer
+            .notes
+            .iter()
+            .map(|note| note.rel_path.clone())
+            .collect();
+
+        let _ = explorer.update(Message::NotesLoaded(Err(NotebookError::recovery(
+            "load metadata",
+            "corrupted metadata on startup",
+        ))));
+
+        let after_error_paths: Vec<String> = explorer
+            .notes
+            .iter()
+            .map(|note| note.rel_path.clone())
+            .collect();
+        assert_eq!(
+            after_error_paths, before_error_paths,
+            "Metadata load errors should not wipe previously loaded note state"
+        );
     }
 }

@@ -160,6 +160,22 @@ mod tests {
     }
 
     #[test]
+    fn create_new_note_allows_double_dot_within_component_names() {
+        let notebook_dir = TestNotebookDir::new("component_double_dot");
+        let mut notes: Vec<NoteMetadata> = Vec::new();
+
+        let created = block_on(notebook::create_new_note(
+            notebook_dir.as_str(),
+            "release..notes/v1",
+            &mut notes,
+        ))
+        .expect("Component-based validation should allow '..' inside normal path components");
+
+        assert_eq!(created.rel_path, "release..notes/v1");
+        assert_note_md_exists(&notebook_dir, "release..notes/v1");
+    }
+
+    #[test]
     fn delete_note_removes_file_and_metadata() {
         let notebook_dir = TestNotebookDir::new("delete_note");
         let mut notes: Vec<NoteMetadata> = Vec::new();
@@ -528,6 +544,34 @@ mod tests {
     }
 
     #[test]
+    fn load_notes_metadata_errors_when_primary_and_backup_are_corrupted() {
+        let notebook_dir = TestNotebookDir::new("invalid_metadata_and_backup");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json"),
+            "{ invalid_primary_json ",
+        )
+        .expect("Failed to write corrupted primary metadata");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json.bak"),
+            "{ invalid_backup_json ",
+        )
+        .expect("Failed to write corrupted backup metadata");
+
+        let load_result = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ));
+
+        assert!(load_result.is_err());
+        let error = load_result.expect_err("Expected metadata recovery to fail");
+        assert_eq!(error.kind(), NotebookErrorKind::Recovery);
+        assert!(
+            error.to_string().contains("Backup") || error.to_string().contains("backup"),
+            "Expected backup parse/read failure to be surfaced, got: {}",
+            error
+        );
+    }
+
+    #[test]
     fn load_notes_metadata_backfills_missing_last_updated() {
         let notebook_dir = TestNotebookDir::new("backfill_last_updated");
         let note_dir = Path::new(notebook_dir.as_str()).join("legacy/note");
@@ -848,6 +892,73 @@ mod tests {
                 .contains("Rollback failed while restoring filesystem state"),
             "Expected explicit rollback failure message, got: {}",
             error
+        );
+
+        let staged_entries: Vec<PathBuf> = fs::read_dir(notebook_dir.as_str())
+            .expect("Failed to scan notebook directory")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with(".cognate_txn_delete_"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(
+            !staged_entries.is_empty(),
+            "Expected failed rollback to leave a staged delete entry for manual recovery"
+        );
+    }
+
+    #[test]
+    fn move_note_surfaces_failed_rollback_when_rollback_rename_fails() {
+        let notebook_dir = TestNotebookDir::new("move_rollback_failure_surface");
+        let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
+            rel_path: "rollback/source".to_string(),
+            labels: Vec::new(),
+            last_updated: None,
+        }];
+
+        let source_dir = Path::new(notebook_dir.as_str()).join("rollback/source");
+        fs::create_dir_all(&source_dir).expect("Failed to create source note directory");
+        fs::write(source_dir.join("note.md"), "rollback failure")
+            .expect("Failed to write source note file");
+        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to create metadata trap directory");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join(".cognate_fail_move_rollback"),
+            "fail",
+        )
+        .expect("Failed to create move-rollback failure marker");
+
+        let move_result = block_on(notebook::move_note(
+            notebook_dir.as_str(),
+            "rollback/source",
+            "rollback/destination",
+            &mut notes,
+        ));
+
+        assert!(move_result.is_err());
+        let error = move_result.expect_err("Expected move to fail");
+        assert_eq!(error.kind(), NotebookErrorKind::Recovery);
+        assert!(
+            error
+                .to_string()
+                .contains("Rollback failed while restoring filesystem state"),
+            "Expected explicit rollback failure message, got: {}",
+            error
+        );
+
+        assert!(
+            Path::new(notebook_dir.as_str())
+                .join("rollback/source")
+                .join("note.md")
+                .exists()
+                || Path::new(notebook_dir.as_str())
+                    .join("rollback/destination")
+                    .join("note.md")
+                    .exists(),
+            "Failed move rollback should leave recoverable note data on disk"
         );
     }
 }

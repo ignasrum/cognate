@@ -841,6 +841,42 @@ impl Editor {
             .find(|note| note.rel_path == rel_path)
             .and_then(|note| note.last_updated.clone())
     }
+
+    #[cfg(test)]
+    pub(crate) fn debug_selected_note_path(&self) -> Option<String> {
+        self.state.selected_note_path().cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_markdown_text(&self) -> String {
+        self.markdown_text.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_metadata_state(&self) -> (u64, bool, bool) {
+        (
+            self.metadata_save_generation,
+            self.metadata_save_in_flight,
+            self.metadata_save_reschedule_after_in_flight,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_shutdown_in_progress(&self) -> bool {
+        self.shutdown_in_progress
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_shutdown_payload(
+        &self,
+    ) -> (String, Option<String>, String, Vec<NoteMetadata>) {
+        (
+            self.state.notebook_path().to_string(),
+            self.content_note_path.clone(),
+            self.markdown_text.clone(),
+            self.note_explorer.notes.clone(),
+        )
+    }
 }
 
 // Keep Default impl for Editor
