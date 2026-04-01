@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::json::reader::read_json_file;
+    use serde_json::Value;
 
     #[test]
     fn test_read_json_file() {
@@ -10,7 +11,7 @@ mod tests {
         std::fs::write(test_file_path, json_data).expect("Failed to create test file");
 
         // Read the JSON file
-        let result = read_json_file(test_file_path);
+        let result = read_json_file::<Value>(test_file_path);
 
         // Assert that the result is Ok
         assert!(result.is_ok());
@@ -28,7 +29,7 @@ mod tests {
     #[test]
     fn test_read_json_file_not_found() {
         // This path should correctly indicate a non-existent file relative to the project root
-        let result = read_json_file("non_existent_file.json");
+        let result = read_json_file::<Value>("non_existent_file.json");
         assert!(result.is_err());
     }
 
@@ -40,7 +41,7 @@ mod tests {
         std::fs::write(test_file_path, invalid_json_data).expect("Failed to create test file");
 
         // Read the JSON file
-        let result = read_json_file(test_file_path);
+        let result = read_json_file::<Value>(test_file_path);
 
         // Assert that the result is Err
         assert!(result.is_err());

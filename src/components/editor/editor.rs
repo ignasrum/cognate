@@ -1,11 +1,9 @@
 use iced::event::Event;
-use iced::futures::channel::mpsc;
 use iced::keyboard::Key;
 use iced::task::Task;
-use iced::widget::text_editor::{Action, Edit};
+use iced::widget::text_editor::Action;
 use iced::{Element, Subscription, window};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, mpsc as std_mpsc};
+use std::collections::HashSet;
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
@@ -17,13 +15,21 @@ mod embedded_images;
 #[cfg(test)]
 #[path = "core/image_tag_tests.rs"]
 mod image_tag_tests;
+#[path = "message.rs"]
+mod message;
+#[path = "metadata_debounce.rs"]
+mod metadata_debounce;
 #[path = "core/persistence.rs"]
 mod persistence;
 #[path = "core/preview.rs"]
 mod preview;
 #[path = "reducer.rs"]
 mod reducer;
-#[path = "update_handlers.rs"]
+#[path = "selection_handlers.rs"]
+mod selection_handlers;
+#[path = "text_handlers.rs"]
+mod text_handlers;
+#[path = "update_handlers/mod.rs"]
 mod update_handlers;
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
@@ -33,12 +39,9 @@ const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(20);
 #[cfg(not(test))]
 const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(1200);
 
-use self::clipboard::{
-    ClipboardPastePayload, paste_text_from_action, read_clipboard_image_file_as_base64_from_text,
-    read_clipboard_paste_payload,
-};
 use self::embedded_image_service::EmbeddedImageWorkflow;
-use self::embedded_images::save_base64_image_for_note;
+pub use self::message::Message;
+use self::metadata_debounce::MetadataDebounceScheduler;
 use self::persistence::round_scale_step;
 use self::preview::{
     build_markdown_preview_content, cursor_preview_character_index, cursor_preview_character_range,
@@ -46,148 +49,20 @@ use self::preview::{
 };
 
 // Import required types and modules
-use crate::components::editor::actions::{label_actions, note_actions};
+use crate::components::editor::actions::note_actions;
 use crate::components::editor::note_coordinator;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::content_handler;
-use crate::components::editor::text_management::undo_manager;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::ui::layout;
 use crate::configuration::{Configuration, save_scale_to_config};
-use crate::notebook::{self, NoteMetadata, NotebookError};
+use crate::notebook;
 
 // Import re-exported components
 use crate::components::note_explorer;
 use crate::components::note_explorer::NoteExplorer;
 use crate::components::visualizer;
 use crate::components::visualizer::Visualizer;
-
-// Define the Message enum in this module
-#[derive(Debug, Clone)]
-pub enum Message {
-    // Text editing operations
-    EditorAction(iced::widget::text_editor::Action),
-    PasteFromClipboard,
-    LoadedNoteContent(String, String, HashMap<String, String>),
-    HandleTabKey,
-    SelectAll,
-    Undo,
-    Redo,
-
-    // Note explorer interaction
-    NoteExplorerMsg(note_explorer::Message),
-    NoteSelected(String),
-
-    // Label management
-    NewLabelInputChanged(String),
-    AddLabel,
-    RemoveLabel(String),
-    MetadataSaved(Result<(), NotebookError>),
-
-    // Search
-    SearchQueryChanged(String),
-    RunSearch,
-    SearchCompleted(u64, Vec<notebook::NoteSearchResult>),
-    ClearSearch,
-
-    // Content management
-    NoteContentSaved(Result<(), NotebookError>),
-    DebouncedMetadataSaveElapsed(u64),
-    DebouncedMetadataSaveCompleted(u64, Result<(), NotebookError>),
-    WindowCloseRequested(window::Id),
-    ShutdownFlushCompleted(window::Id, Result<(), NotebookError>),
-
-    // Visualizer
-    ToggleVisualizer,
-    VisualizerMsg(visualizer::Message),
-
-    // Note operations
-    NewNote,
-    NewNoteInputChanged(String),
-    CreateNote,
-    NoteCreated(Result<NoteMetadata, NotebookError>),
-    CancelNewNote,
-    DeleteNote,
-    ConfirmDeleteNote(bool),
-    ConfirmDeleteEmbeddedImages(bool),
-    NoteDeleted(Result<(), NotebookError>, String),
-    MoveNote,
-    MoveNoteInputChanged(String),
-    ConfirmMoveNote,
-    CancelMoveNote,
-    NoteMoved(Result<String, NotebookError>, String),
-
-    // Folder operations
-    InitiateFolderRename(String),
-
-    // UI interactions
-    AboutButtonClicked,
-    IncreaseScale,
-    DecreaseScale,
-    MarkdownLinkClicked(String),
-    ScaleSaved(Result<(), String>),
-}
-
-#[derive(Debug, Clone)]
-struct MetadataDebounceScheduler {
-    schedule_sender: std_mpsc::Sender<u64>,
-}
-
-impl MetadataDebounceScheduler {
-    fn new(window: Duration) -> (Self, mpsc::UnboundedReceiver<u64>) {
-        let (schedule_sender, schedule_receiver) = std_mpsc::channel::<u64>();
-        let (elapsed_sender, elapsed_receiver) = mpsc::unbounded::<u64>();
-
-        if let Err(error) = std::thread::Builder::new()
-            .name("cognate-metadata-debounce".to_string())
-            .spawn(move || Self::run_worker(window, schedule_receiver, elapsed_sender))
-        {
-            #[cfg(debug_assertions)]
-            eprintln!("Failed to start metadata debounce worker: {}", error);
-        }
-
-        (Self { schedule_sender }, elapsed_receiver)
-    }
-
-    fn schedule(&self, generation: u64) {
-        let _ = self.schedule_sender.send(generation);
-    }
-
-    fn run_worker(
-        window: Duration,
-        schedule_receiver: std_mpsc::Receiver<u64>,
-        elapsed_sender: mpsc::UnboundedSender<u64>,
-    ) {
-        let mut pending_generation = match schedule_receiver.recv() {
-            Ok(generation) => generation,
-            Err(_) => return,
-        };
-        let mut deadline = std::time::Instant::now() + window;
-
-        loop {
-            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
-
-            match schedule_receiver.recv_timeout(timeout) {
-                Ok(generation) => {
-                    pending_generation = generation;
-                    deadline = std::time::Instant::now() + window;
-                }
-                Err(std_mpsc::RecvTimeoutError::Timeout) => {
-                    if elapsed_sender.unbounded_send(pending_generation).is_err() {
-                        return;
-                    }
-
-                    pending_generation = match schedule_receiver.recv() {
-                        Ok(generation) => generation,
-                        Err(_) => return,
-                    };
-                    deadline = std::time::Instant::now() + window;
-                }
-                Err(std_mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-        }
-    }
-}
 
 // Define the Editor struct
 pub struct Editor {
@@ -268,368 +143,6 @@ impl Editor {
     // Update method delegates to focused reducers by message domain.
     pub fn update(state: &mut Self, message: Message) -> Task<Message> {
         reducer::route_message(state, message)
-    }
-
-    fn handle_text_messages(state: &mut Self, message: Message) -> Task<Message> {
-        match message {
-            Message::HandleTabKey => {
-                let previous_markdown = state.markdown_text.clone();
-                let save_task = content_handler::handle_tab_key(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
-
-                if state.markdown_text != previous_markdown {
-                    let metadata_save_task =
-                        state.touch_selected_note_last_updated_and_schedule_save_task();
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                    return Task::batch(vec![
-                        save_task,
-                        metadata_save_task,
-                        state.scroll_preview_to_cursor_task(),
-                    ]);
-                }
-
-                state.with_preview_scroll_task(save_task)
-            }
-            Message::SelectAll => {
-                let task = content_handler::handle_select_all(&mut state.content, &state.state);
-                state.with_preview_scroll_task(task)
-            }
-            Message::Undo => {
-                let previous_markdown = state.markdown_text.clone();
-                let task = undo_manager::handle_undo(
-                    &mut state.undo_manager,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
-                if state.markdown_text != previous_markdown {
-                    let metadata_save_task =
-                        state.touch_selected_note_last_updated_and_schedule_save_task();
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                    return Task::batch(vec![
-                        task,
-                        metadata_save_task,
-                        state.scroll_preview_to_cursor_task(),
-                    ]);
-                }
-                state.with_preview_scroll_task(task)
-            }
-            Message::Redo => {
-                let previous_markdown = state.markdown_text.clone();
-                let task = undo_manager::handle_redo(
-                    &mut state.undo_manager,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
-                if state.markdown_text != previous_markdown {
-                    let metadata_save_task =
-                        state.touch_selected_note_last_updated_and_schedule_save_task();
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                    return Task::batch(vec![
-                        task,
-                        metadata_save_task,
-                        state.scroll_preview_to_cursor_task(),
-                    ]);
-                }
-                state.with_preview_scroll_task(task)
-            }
-            Message::PasteFromClipboard => Self::handle_paste_from_clipboard_shortcut(state),
-            Message::EditorAction(action) => {
-                if matches!(action, Action::Edit(Edit::Paste(_))) {
-                    return Self::handle_paste_action(state, action);
-                }
-
-                let dereferenced_image_ids = state.dereferenced_embedded_images_for_action(&action);
-                if !dereferenced_image_ids.is_empty() {
-                    state
-                        .embedded_image_workflow
-                        .stage_pending_deletion(dereferenced_image_ids, action);
-                    state.state.show_embedded_image_delete_dialog(
-                        state.embedded_image_workflow.pending_deletion_count(),
-                    );
-                    return Task::none();
-                }
-
-                let previous_markdown = state.markdown_text.clone();
-                let save_task = content_handler::handle_editor_action(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    action,
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
-
-                if state.markdown_text != previous_markdown {
-                    let metadata_save_task =
-                        state.touch_selected_note_last_updated_and_schedule_save_task();
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                    return Task::batch(vec![
-                        save_task,
-                        metadata_save_task,
-                        state.scroll_preview_to_cursor_task(),
-                    ]);
-                }
-
-                state.with_preview_scroll_task(save_task)
-            }
-            Message::LoadedNoteContent(note_path, new_content, images) => {
-                if state.state.selected_note_path() != Some(&note_path) {
-                    return Task::none();
-                }
-                state.content_note_path = Some(note_path.clone());
-                state.embedded_image_workflow.set_loaded_images(images);
-                let previous_markdown = state.markdown_text.clone();
-                let task = content_handler::handle_loaded_note_content(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    &mut state.state,
-                    note_path,
-                    new_content,
-                );
-                if state.markdown_text != previous_markdown {
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                }
-                state.with_preview_scroll_task(task)
-            }
-            _ => unreachable!("text handler received non-text message"),
-        }
-    }
-
-    fn handle_paste_from_clipboard_shortcut(state: &mut Self) -> Task<Message> {
-        if state.state.selected_note_path().is_none()
-            || state.state.show_visualizer()
-            || state.state.show_move_note_input()
-            || state.state.show_new_note_input()
-            || state.state.show_embedded_image_delete_confirmation()
-            || state.state.show_about_info()
-        {
-            return Task::none();
-        }
-
-        let clipboard_payload = match read_clipboard_paste_payload() {
-            Ok(payload) => payload,
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read clipboard data: {}", _err);
-                None
-            }
-        };
-
-        match clipboard_payload {
-            Some(ClipboardPastePayload::ImageBase64(image_base64)) => {
-                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
-                    return Task::none();
-                };
-
-                state.undo_manager.add_to_history(
-                    &selected_note_path,
-                    state.markdown_text.clone(),
-                    state.content.cursor(),
-                );
-
-                let image_tag = match save_base64_image_for_note(
-                    state.state.notebook_path(),
-                    &selected_note_path,
-                    &image_base64,
-                ) {
-                    Ok(relative_path) => format!("![image]({relative_path})"),
-                    Err(_err) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to persist pasted image: {}", _err);
-                        return Task::none();
-                    }
-                };
-
-                state
-                    .content
-                    .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
-                state.markdown_text = state.content.text();
-                state.prune_embedded_images_for_current_markdown();
-                let metadata_save_task =
-                    state.touch_selected_note_last_updated_and_schedule_save_task();
-                state.sync_markdown_preview();
-
-                let notebook_path = state.state.notebook_path().to_string();
-                let note_path = selected_note_path;
-                let content_text = state.markdown_text.clone();
-                let save_content_task = Task::perform(
-                    async move {
-                        notebook::save_note_content(notebook_path, note_path, content_text).await
-                    },
-                    Message::NoteContentSaved,
-                );
-
-                Task::batch(vec![
-                    save_content_task,
-                    metadata_save_task,
-                    state.scroll_preview_to_cursor_task(),
-                ])
-            }
-            Some(ClipboardPastePayload::Text(text_to_paste)) => {
-                let previous_markdown = state.markdown_text.clone();
-                let save_task = content_handler::handle_editor_action(
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    &mut state.undo_manager,
-                    Action::Edit(Edit::Paste(Arc::new(text_to_paste))),
-                    state.state.selected_note_path(),
-                    state.state.notebook_path(),
-                    &state.state,
-                );
-
-                if state.markdown_text != previous_markdown {
-                    let metadata_save_task =
-                        state.touch_selected_note_last_updated_and_schedule_save_task();
-                    state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
-                    return Task::batch(vec![
-                        save_task,
-                        metadata_save_task,
-                        state.scroll_preview_to_cursor_task(),
-                    ]);
-                }
-
-                state.with_preview_scroll_task(save_task)
-            }
-            None => Task::none(),
-        }
-    }
-
-    fn handle_paste_action(state: &mut Self, fallback_action: Action) -> Task<Message> {
-        if state.state.selected_note_path().is_none()
-            || state.state.show_visualizer()
-            || state.state.show_move_note_input()
-            || state.state.show_new_note_input()
-            || state.state.show_embedded_image_delete_confirmation()
-            || state.state.show_about_info()
-        {
-            let task = content_handler::handle_editor_action(
-                &mut state.content,
-                &mut state.markdown_text,
-                &mut state.undo_manager,
-                fallback_action,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            );
-            return state.with_preview_scroll_task(task);
-        }
-
-        let fallback_text = paste_text_from_action(&fallback_action);
-        let image_base64 = fallback_text
-            .as_deref()
-            .filter(|text| !text.is_empty())
-            .and_then(read_clipboard_image_file_as_base64_from_text);
-
-        let Some(image_base64) = image_base64 else {
-            let task = content_handler::handle_editor_action(
-                &mut state.content,
-                &mut state.markdown_text,
-                &mut state.undo_manager,
-                fallback_action,
-                state.state.selected_note_path(),
-                state.state.notebook_path(),
-                &state.state,
-            );
-            return state.with_preview_scroll_task(task);
-        };
-
-        let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
-            return Task::none();
-        };
-
-        state.undo_manager.add_to_history(
-            &selected_note_path,
-            state.markdown_text.clone(),
-            state.content.cursor(),
-        );
-
-        let image_tag = match save_base64_image_for_note(
-            state.state.notebook_path(),
-            &selected_note_path,
-            &image_base64,
-        ) {
-            Ok(relative_path) => format!("![image]({relative_path})"),
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to persist pasted image: {}", _err);
-                return Task::none();
-            }
-        };
-
-        state
-            .content
-            .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
-        state.markdown_text = state.content.text();
-        state.prune_embedded_images_for_current_markdown();
-        let metadata_save_task = state.touch_selected_note_last_updated_and_schedule_save_task();
-        state.sync_markdown_preview();
-
-        let notebook_path = state.state.notebook_path().to_string();
-        let note_path = selected_note_path;
-        let content_text = state.markdown_text.clone();
-        let save_content_task = Task::perform(
-            async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
-            Message::NoteContentSaved,
-        );
-
-        Task::batch(vec![
-            save_content_task,
-            metadata_save_task,
-            state.scroll_preview_to_cursor_task(),
-        ])
-    }
-
-    fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
-        let previous_markdown = state.markdown_text.clone();
-        let task = match message {
-            Message::NoteExplorerMsg(note_explorer_message) => {
-                note_actions::handle_note_explorer_message(
-                    &mut state.note_explorer,
-                    &mut state.visualizer,
-                    &mut state.state,
-                    &mut state.content,
-                    &mut state.markdown_text,
-                    note_explorer_message,
-                )
-            }
-            Message::NoteSelected(note_path) => note_actions::handle_note_selected(
-                &mut state.note_explorer,
-                &mut state.undo_manager,
-                &mut state.state,
-                note_path,
-            ),
-            _ => unreachable!("selection handler received invalid message"),
-        };
-
-        if state.markdown_text != previous_markdown {
-            if state.state.selected_note_path().is_none() {
-                state.content_note_path = None;
-            }
-            state.prune_embedded_images_for_current_markdown();
-            state.sync_markdown_preview();
-            return Task::batch(vec![task, state.scroll_preview_to_cursor_task()]);
-        }
-
-        task
     }
 
     fn sync_markdown_preview(&mut self) {
@@ -942,7 +455,7 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn debug_shutdown_payload(
         &self,
-    ) -> (String, Option<String>, String, Vec<NoteMetadata>) {
+    ) -> (String, Option<String>, String, Vec<notebook::NoteMetadata>) {
         (
             self.state.notebook_path().to_string(),
             self.content_note_path.clone(),

@@ -53,6 +53,22 @@ mod tests {
         ))
     }
 
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System clock error")
+            .as_nanos();
+
+        let path = std::env::temp_dir().join(format!(
+            "cognate_config_test_dir_{}_{}_{}",
+            name,
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&path).expect("Failed to create temporary config directory");
+        path
+    }
+
     #[test]
     fn read_configuration_reads_theme_and_notebook_path() {
         let config_file = TestConfigFile::new(
@@ -111,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn read_configuration_defaults_scale_when_invalid() {
+    fn read_configuration_errors_when_scale_is_invalid() {
         let config_file = TestConfigFile::new(
             "invalid_scale",
             r#"{
@@ -121,10 +137,24 @@ mod tests {
             }"#,
         );
 
-        let config =
-            read_configuration(config_file.as_str()).expect("Expected valid configuration");
+        let result = read_configuration(config_file.as_str());
 
-        assert!((config.scale - 1.0).abs() < f32::EPSILON);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_configuration_errors_when_notebook_path_has_invalid_type() {
+        let config_file = TestConfigFile::new(
+            "invalid_notebook_path_type",
+            r#"{
+                "theme": "Dark",
+                "notebook_path": 123
+            }"#,
+        );
+
+        let result = read_configuration(config_file.as_str());
+
+        assert!(result.is_err());
     }
 
     #[test]
@@ -214,5 +244,57 @@ mod tests {
             !path.exists(),
             "Invalid scales should not create or modify config files"
         );
+    }
+
+    #[test]
+    fn save_scale_to_config_preserves_existing_file_when_atomic_replace_fails() {
+        let dir = unique_temp_dir("save_scale_atomic_failure");
+        let config_path = dir.join("config.json");
+        fs::write(
+            &config_path,
+            r#"{
+                "theme": "Dark",
+                "notebook_path": "/tmp/my_notebook",
+                "scale": 1.0
+            }
+"#,
+        )
+        .expect("Failed to seed config file");
+        fs::write(
+            dir.join(".cognate_fail_config_atomic_rename"),
+            "simulate rename failure",
+        )
+        .expect("Failed to create rename-failure marker");
+
+        let result = save_scale_to_config(
+            config_path
+                .to_str()
+                .expect("Temporary config path must be valid UTF-8"),
+            1.5,
+        );
+
+        assert!(result.is_err());
+
+        let stored =
+            fs::read_to_string(&config_path).expect("Expected original config file to survive");
+        let json: Value = serde_json::from_str(&stored).expect("Expected original JSON to remain");
+        assert_eq!(json["scale"].as_f64(), Some(1.0));
+
+        let temp_entries = fs::read_dir(&dir)
+            .expect("Expected temp config directory to be readable")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".config.json.cognate_tmp_")
+            })
+            .count();
+        assert_eq!(
+            temp_entries, 0,
+            "Temporary config files should be cleaned up"
+        );
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

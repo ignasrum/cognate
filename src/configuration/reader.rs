@@ -2,6 +2,11 @@ use crate::json::reader::read_json_file;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Configuration {
@@ -12,54 +17,109 @@ pub struct Configuration {
     pub version: String,
 }
 
-// Removed the now-unnecessary read_cargo_toml function
+#[derive(Debug, Deserialize)]
+struct RawConfiguration {
+    theme: String,
+    #[serde(default)]
+    notebook_path: Option<String>,
+    #[serde(default)]
+    scale: Option<f32>,
+}
+
+#[cfg(test)]
+const FAIL_CONFIG_ATOMIC_RENAME_MARKER: &str = ".cognate_fail_config_atomic_rename";
+
+fn config_directory(config_path: &Path) -> &Path {
+    config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn invalid_config(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    Box::new(std::io::Error::new(ErrorKind::InvalidData, message.into()))
+}
+
+fn build_atomic_temp_path(target_path: &Path) -> PathBuf {
+    let directory = config_directory(target_path);
+    let target_name = target_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("cognate_config");
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+
+    directory.join(format!(
+        ".{}.cognate_tmp_{}_{}",
+        target_name,
+        process::id(),
+        timestamp_nanos
+    ))
+}
+
+fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    #[cfg(test)]
+    if config_directory(to)
+        .join(FAIL_CONFIG_ATOMIC_RENAME_MARKER)
+        .exists()
+    {
+        return Err(std::io::Error::other(format!(
+            "Simulated config atomic rename failure for '{}'",
+            to.display()
+        )));
+    }
+
+    fs::rename(from, to)
+}
+
+fn write_string_atomically(target_path: &Path, content: &str) -> Result<(), String> {
+    let directory = config_directory(target_path);
+    fs::create_dir_all(directory)
+        .map_err(|err| format!("Failed to create config directory: {}", err))?;
+
+    let temp_path = build_atomic_temp_path(target_path);
+    fs::write(&temp_path, content)
+        .map_err(|err| format!("Failed to write temporary config file: {}", err))?;
+
+    if let Err(err) = atomic_rename(&temp_path, target_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!("Failed to atomically replace config file: {}", err));
+    }
+
+    Ok(())
+}
 
 pub fn read_configuration(file_path: &str) -> Result<Configuration, Box<dyn std::error::Error>> {
     // Get the version at compile time
     let version = env!("CARGO_PKG_VERSION").to_string();
 
-    let json_value: Value = read_json_file(file_path)?;
+    let raw: RawConfiguration = read_json_file(file_path)?;
 
-    // Extract the theme value
-    let theme = json_value["theme"]
-        .as_str()
-        .ok_or("Theme not found or not a string in config.json")?
-        .to_string();
+    if raw.theme.trim().is_empty() {
+        return Err(invalid_config(
+            "Theme in config.json must be a non-empty string.",
+        ));
+    }
 
-    // Extract the notebook_path value
-    let notebook_path = json_value["notebook_path"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            eprintln!(
-                "Warning: 'notebook_path' not found or not a string in config.json. Starting without a notebook."
-            );
-            String::new() // Default to empty string if not found
-        });
-
-    // Extract optional scale value (must be > 0), defaulting to 1.0
-    let scale = match json_value.get("scale") {
+    let scale = match raw.scale {
         None => 1.0,
-        Some(raw_scale) => {
-            if let Some(scale) = raw_scale.as_f64()
-                && scale > 0.0
-            {
-                scale as f32
-            } else {
-                eprintln!(
-                    "Warning: 'scale' must be a positive number in config.json. Using default scale 1.0."
-                );
-                1.0
-            }
+        Some(scale) if scale.is_finite() && scale > 0.0 => scale,
+        Some(scale) => {
+            return Err(invalid_config(format!(
+                "Scale in config.json must be a positive finite number, got '{}'.",
+                scale
+            )));
         }
     };
 
     Ok(Configuration {
-        theme,
-        notebook_path,
+        theme: raw.theme,
+        notebook_path: raw.notebook_path.unwrap_or_default(),
         scale,
         config_path: file_path.to_string(),
-        version, // Include the embedded version
+        version,
     })
 }
 
@@ -82,17 +142,9 @@ pub fn save_scale_to_config(file_path: &str, scale: f32) -> Result<(), String> {
 
     json_value["scale"] = serde_json::json!(scale);
 
-    if let Some(parent) = config_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create config directory: {}", err))?;
-    }
-
     let serialized = serde_json::to_string_pretty(&json_value)
         .map_err(|err| format!("Failed to serialize config JSON: {}", err))?;
-    std::fs::write(config_path, format!("{serialized}\n"))
-        .map_err(|err| format!("Failed to write config file: {}", err))?;
+    write_string_atomically(config_path, &format!("{serialized}\n"))?;
 
     Ok(())
 }
