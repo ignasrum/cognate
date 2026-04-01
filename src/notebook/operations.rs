@@ -3,42 +3,43 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::NoteMetadata;
 use super::search::{
     cache_remove_search_index_entries, cache_rename_search_index_entries,
     cache_upsert_search_index_note_content, note_file_modified_time,
 };
 use super::storage::{current_timestamp_rfc3339, save_metadata, write_text_file_atomically};
+use super::{NoteMetadata, NotebookError, NotebookErrorKind, NotebookRelativePath};
 
 const FAIL_DELETE_ROLLBACK_MARKER: &str = ".cognate_fail_delete_rollback";
 const FAIL_MOVE_ROLLBACK_MARKER: &str = ".cognate_fail_move_rollback";
 
-fn validate_notebook_relative_path(rel_path: &str, path_kind: &str) -> Result<(), String> {
-    if rel_path.is_empty()
-        || rel_path == "."
-        || rel_path == ".."
-        || rel_path.starts_with('/')
-        || rel_path.contains("..")
-    {
-        return Err(format!(
-            "Invalid {} '{}'. Paths cannot be empty, '.', '..', start with '/', or contain '..'.",
-            path_kind, rel_path
-        ));
+fn contextualize_error(
+    error: NotebookError,
+    context: &'static str,
+    detail_prefix: impl Into<String>,
+) -> NotebookError {
+    let detail = format!("{}: {}", detail_prefix.into(), error.ui_message());
+    match error.kind() {
+        NotebookErrorKind::Validation => NotebookError::validation(context, detail),
+        NotebookErrorKind::Storage => NotebookError::storage(context, detail),
+        NotebookErrorKind::Recovery => NotebookError::recovery(context, detail),
     }
-    Ok(())
 }
 
 fn ensure_path_within_notebook_if_canonicalizable(
     notebook_path: &Path,
     target_path: &Path,
-    rel_path: &str,
+    rel_path: &NotebookRelativePath,
     outside_error_prefix: &str,
     _target_canonicalize_warning: &str,
-) -> Result<(), String> {
+) -> Result<(), NotebookError> {
     if let Ok(canonical_notebook_path) = notebook_path.canonicalize() {
         if let Ok(canonical_target_path) = target_path.canonicalize() {
             if !canonical_target_path.starts_with(&canonical_notebook_path) {
-                return Err(format!("{} '{}'", outside_error_prefix, rel_path));
+                return Err(NotebookError::validation(
+                    "path containment",
+                    format!("{} '{}'", outside_error_prefix, rel_path),
+                ));
             }
         } else {
             #[cfg(debug_assertions)]
@@ -55,8 +56,14 @@ fn ensure_path_within_notebook_if_canonicalizable(
     Ok(())
 }
 
-fn remove_note_from_metadata(notes: &mut Vec<NoteMetadata>, rel_path: &str) -> bool {
-    if let Some(index) = notes.iter().position(|note| note.rel_path == rel_path) {
+fn remove_note_from_metadata(
+    notes: &mut Vec<NoteMetadata>,
+    rel_path: &NotebookRelativePath,
+) -> bool {
+    if let Some(index) = notes
+        .iter()
+        .position(|note| note.rel_path == rel_path.as_str())
+    {
         notes.remove(index);
         true
     } else {
@@ -66,8 +73,8 @@ fn remove_note_from_metadata(notes: &mut Vec<NoteMetadata>, rel_path: &str) -> b
 
 fn update_metadata_paths_for_move(
     notes: &mut [NoteMetadata],
-    current_rel_path: &str,
-    new_rel_path: &str,
+    current_rel_path: &NotebookRelativePath,
+    new_rel_path: &NotebookRelativePath,
     is_moving_note_dir: bool,
 ) -> bool {
     let mut updated_metadata = false;
@@ -75,31 +82,22 @@ fn update_metadata_paths_for_move(
     if is_moving_note_dir {
         if let Some(note) = notes
             .iter_mut()
-            .find(|note| note.rel_path == current_rel_path)
+            .find(|note| note.rel_path == current_rel_path.as_str())
         {
-            note.rel_path = new_rel_path.to_string();
+            note.rel_path = new_rel_path.as_str().to_string();
             updated_metadata = true;
         }
     } else {
-        let old_prefix = if current_rel_path.is_empty() {
-            String::new()
-        } else {
-            format!("{}/", current_rel_path)
-        };
-
-        let new_prefix = if new_rel_path.is_empty() {
-            String::new()
-        } else {
-            format!("{}/", new_rel_path)
-        };
+        let old_prefix = format!("{}/", current_rel_path.as_str());
+        let new_prefix = format!("{}/", new_rel_path.as_str());
 
         for note in notes.iter_mut() {
             if note.rel_path.starts_with(&old_prefix) {
                 let suffix = note.rel_path.trim_start_matches(&old_prefix);
                 note.rel_path = format!("{}{}", new_prefix, suffix);
                 updated_metadata = true;
-            } else if note.rel_path == current_rel_path && !current_rel_path.is_empty() {
-                note.rel_path = new_rel_path.to_string();
+            } else if note.rel_path == current_rel_path.as_str() {
+                note.rel_path = new_rel_path.as_str().to_string();
                 updated_metadata = true;
             }
         }
@@ -113,18 +111,19 @@ fn persist_metadata_if_changed(
     notes: &[NoteMetadata],
     metadata_changed: bool,
     operation_description: &str,
-    _rel_path: &str,
-) -> Result<(), String> {
+    _rel_path: &NotebookRelativePath,
+) -> Result<(), NotebookError> {
     if metadata_changed {
-        if let Err(e) = save_metadata(notebook_path, notes) {
+        if let Err(error) = save_metadata(notebook_path, notes) {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Critical Error: Failed to save metadata after {}: {}",
-                operation_description, e
+                operation_description, error
             );
-            return Err(format!(
-                "Failed to save metadata after {}: {}",
-                operation_description, e
+            return Err(contextualize_error(
+                error,
+                "persist metadata",
+                format!("Failed to save metadata after {}", operation_description),
             ));
         }
         #[cfg(debug_assertions)]
@@ -145,14 +144,14 @@ fn persist_metadata_if_changed(
 
 fn build_transaction_staging_path(
     notebook_path: &Path,
-    rel_path: &str,
+    rel_path: &NotebookRelativePath,
     operation: &str,
 ) -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let sanitized_rel_path = rel_path.replace('/', "__");
+    let sanitized_rel_path = rel_path.sanitized_for_temp_name();
 
     notebook_path.join(format!(
         ".cognate_txn_{}_{}_{}",
@@ -216,35 +215,51 @@ fn rollback_rename(
     original_path: &Path,
     _notebook_root: &Path,
     _fail_marker: &str,
-) -> Result<(), String> {
+) -> Result<(), NotebookError> {
     #[cfg(test)]
     if _notebook_root.join(_fail_marker).exists() {
-        return Err(format!(
-            "simulated rollback rename failure from '{}' to '{}'",
-            staged_or_new_path.display(),
-            original_path.display()
+        return Err(NotebookError::recovery(
+            "rollback rename",
+            format!(
+                "simulated rollback rename failure from '{}' to '{}'",
+                staged_or_new_path.display(),
+                original_path.display()
+            ),
         ));
     }
 
-    fs::rename(staged_or_new_path, original_path).map_err(|error| error.to_string())
+    fs::rename(staged_or_new_path, original_path).map_err(|error| {
+        NotebookError::recovery(
+            "rollback rename",
+            format!(
+                "Failed to rollback filesystem rename from '{}' to '{}': {}",
+                staged_or_new_path.display(),
+                original_path.display(),
+                error
+            ),
+        )
+    })
 }
 
 pub async fn create_new_note(
     notebook_path: &str,
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
-) -> Result<NoteMetadata, String> {
+) -> Result<NoteMetadata, NotebookError> {
+    let rel_path = NotebookRelativePath::parse("relative path", rel_path)?;
     #[cfg(debug_assertions)]
-    eprintln!("Attempting to create new note with rel_path: {}", rel_path);
+    eprintln!(
+        "Attempting to create new note with rel_path: {}",
+        rel_path.as_str()
+    );
     let full_notebook_path = Path::new(notebook_path);
-    let note_dir_path = full_notebook_path.join(rel_path);
+    let note_dir_path = rel_path.join_under(full_notebook_path);
     let note_file_path = note_dir_path.join("note.md");
 
-    validate_notebook_relative_path(rel_path, "relative path")?;
     ensure_path_within_notebook_if_canonicalizable(
         full_notebook_path,
         &note_dir_path,
-        rel_path,
+        &rel_path,
         "Cannot create note outside the notebook directory:",
         &format!(
             "Warning: Could not canonicalize new note path '{}'. This is expected if the parent directory doesn't exist yet.",
@@ -252,31 +267,41 @@ pub async fn create_new_note(
         ),
     )?;
 
-    if notes.iter().any(|note| note.rel_path == rel_path) {
-        return Err(format!(
-            "A note with the path '{}' already exists in metadata.",
-            rel_path
+    if notes.iter().any(|note| note.rel_path == rel_path.as_str()) {
+        return Err(NotebookError::validation(
+            "create note",
+            format!(
+                "A note with the path '{}' already exists in metadata.",
+                rel_path
+            ),
         ));
     }
 
-    if (note_dir_path.exists() || note_file_path.exists()) && note_dir_path.exists() {
-        return Err(format!(
-            "A directory or file already exists at '{}'.",
-            rel_path
+    if note_dir_path.exists() || note_file_path.exists() {
+        return Err(NotebookError::validation(
+            "create note",
+            format!("A directory or file already exists at '{}'.", rel_path),
         ));
     }
 
-    if let Err(e) = fs::create_dir_all(&note_dir_path) {
-        return Err(format!("Failed to create directory for new note: {}", e));
+    if let Err(error) = fs::create_dir_all(&note_dir_path) {
+        return Err(NotebookError::storage(
+            "create note",
+            format!("Failed to create directory for new note: {}", error),
+        ));
     }
 
-    if let Err(e) = write_text_file_atomically(&note_file_path, "") {
+    if let Err(error) = write_text_file_atomically(&note_file_path, "") {
         let _ = fs::remove_dir_all(&note_dir_path);
-        return Err(format!("Failed to create note file: {}", e));
+        return Err(contextualize_error(
+            error,
+            "create note",
+            "Failed to create note file",
+        ));
     }
 
     let new_note_metadata = NoteMetadata {
-        rel_path: rel_path.to_string(),
+        rel_path: rel_path.as_str().to_string(),
         labels: Vec::new(),
         last_updated: Some(current_timestamp_rfc3339()),
     };
@@ -284,31 +309,36 @@ pub async fn create_new_note(
     let previous_notes = notes.clone();
     notes.push(new_note_metadata.clone());
 
-    if let Err(e) = save_metadata(notebook_path, notes) {
+    if let Err(error) = save_metadata(notebook_path, notes) {
         #[cfg(debug_assertions)]
         eprintln!(
             "Critical Error: Failed to save metadata after creating note: {}",
-            e
+            error
         );
         *notes = previous_notes;
         let cleanup_result = fs::remove_dir_all(&note_dir_path);
         if let Err(cleanup_error) = cleanup_result {
-            return Err(format!(
-                "Failed to save metadata after creating note: {}. Rollback cleanup failed: {}",
-                e, cleanup_error
+            return Err(NotebookError::recovery(
+                "create note rollback",
+                format!(
+                    "Failed to save metadata after creating note: {}. Rollback cleanup failed: {}",
+                    error.ui_message(),
+                    cleanup_error
+                ),
             ));
         }
-        return Err(format!(
-            "Failed to save metadata after creating note: {}",
-            e
+        return Err(contextualize_error(
+            error,
+            "create note",
+            "Failed to save metadata after creating note",
         ));
     }
 
     #[cfg(debug_assertions)]
-    eprintln!("New note created successfully: {}", rel_path);
+    eprintln!("New note created successfully: {}", rel_path.as_str());
     cache_upsert_search_index_note_content(
         notebook_path,
-        rel_path,
+        rel_path.as_str(),
         "",
         note_file_modified_time(&note_file_path),
     );
@@ -319,28 +349,33 @@ pub async fn delete_note(
     notebook_path: &str,
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
-) -> Result<(), String> {
+) -> Result<(), NotebookError> {
+    let rel_path = NotebookRelativePath::parse("relative path", rel_path)?;
     #[cfg(debug_assertions)]
-    eprintln!("Attempting to delete note with rel_path: {}", rel_path);
+    eprintln!(
+        "Attempting to delete note with rel_path: {}",
+        rel_path.as_str()
+    );
 
-    validate_notebook_relative_path(rel_path, "relative path")?;
-
-    let note_dir_path = Path::new(notebook_path).join(rel_path);
     let full_notebook_path = Path::new(notebook_path);
+    let note_dir_path = rel_path.join_under(full_notebook_path);
 
     if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
         if let Ok(canonical_note_dir_path) = note_dir_path.canonicalize() {
             if !canonical_note_dir_path.starts_with(&canonical_notebook_path) {
-                return Err(format!(
-                    "Cannot delete path outside the notebook directory: '{}'",
-                    rel_path
+                return Err(NotebookError::validation(
+                    "delete note",
+                    format!(
+                        "Cannot delete path outside the notebook directory: '{}'",
+                        rel_path
+                    ),
                 ));
             }
         } else {
-            if !Path::new(notebook_path).join(rel_path).exists() {
-                return Err(format!(
-                    "Path '{}' does not exist within the notebook.",
-                    rel_path
+            if !note_dir_path.exists() {
+                return Err(NotebookError::validation(
+                    "delete note",
+                    format!("Path '{}' does not exist within the notebook.", rel_path),
                 ));
             }
             #[cfg(debug_assertions)]
@@ -350,10 +385,10 @@ pub async fn delete_note(
             );
         }
     } else {
-        if !Path::new(notebook_path).join(rel_path).exists() {
-            return Err(format!(
-                "Path '{}' does not exist within the notebook.",
-                rel_path
+        if !note_dir_path.exists() {
+            return Err(NotebookError::validation(
+                "delete note",
+                format!("Path '{}' does not exist within the notebook.", rel_path),
             ));
         }
         #[cfg(debug_assertions)]
@@ -364,13 +399,13 @@ pub async fn delete_note(
     }
 
     let previous_notes = notes.clone();
-    let metadata_changed = remove_note_from_metadata(notes, rel_path);
+    let metadata_changed = remove_note_from_metadata(notes, &rel_path);
 
     if !metadata_changed {
         #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Note with rel_path '{}' not found in metadata. Proceeding with filesystem deletion only.",
-            rel_path
+            rel_path.as_str()
         );
     }
 
@@ -378,18 +413,18 @@ pub async fn delete_note(
 
     if note_dir_path.exists() {
         let transaction_path =
-            build_transaction_staging_path(full_notebook_path, rel_path, "delete");
+            build_transaction_staging_path(full_notebook_path, &rel_path, "delete");
 
-        if let Err(e) = fs::rename(&note_dir_path, &transaction_path) {
+        if let Err(error) = fs::rename(&note_dir_path, &transaction_path) {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Error staging directory {} for deletion: {}",
                 note_dir_path.display(),
-                e
+                error
             );
-            return Err(format!(
-                "Failed to stage item for deletion on filesystem: {}",
-                e
+            return Err(NotebookError::storage(
+                "delete note",
+                format!("Failed to stage item for deletion on filesystem: {}", error),
             ));
         }
 
@@ -403,7 +438,7 @@ pub async fn delete_note(
         #[cfg(debug_assertions)]
         eprintln!(
             "Warning: Item not found on filesystem for rel_path '{}'. Metadata (if it existed) was removed.",
-            rel_path
+            rel_path.as_str()
         );
     }
 
@@ -412,7 +447,7 @@ pub async fn delete_note(
         notes,
         metadata_changed,
         "deleting item",
-        rel_path,
+        &rel_path,
     ) {
         *notes = previous_notes;
 
@@ -424,9 +459,12 @@ pub async fn delete_note(
                 FAIL_DELETE_ROLLBACK_MARKER,
             )
         {
-            return Err(format!(
-                "{} Rollback failed while restoring filesystem state: {}",
-                metadata_error, rollback_error
+            return Err(NotebookError::recovery(
+                "delete note rollback",
+                format!(
+                    "{} Rollback failed while restoring filesystem state: {}",
+                    metadata_error, rollback_error
+                ),
             ));
         }
 
@@ -445,10 +483,10 @@ pub async fn delete_note(
     }
 
     remove_empty_parent_directories(full_notebook_path, &note_dir_path);
-    cache_remove_search_index_entries(notebook_path, rel_path);
+    cache_remove_search_index_entries(notebook_path, rel_path.as_str());
 
     #[cfg(debug_assertions)]
-    eprintln!("Deletion process completed for: {}", rel_path);
+    eprintln!("Deletion process completed for: {}", rel_path.as_str());
     Ok(())
 }
 
@@ -457,46 +495,55 @@ pub async fn move_note(
     current_rel_path: &str,
     new_rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
-) -> Result<String, String> {
+) -> Result<String, NotebookError> {
+    let current_rel_path = NotebookRelativePath::parse("current relative path", current_rel_path)?;
+    let new_rel_path = NotebookRelativePath::parse("new relative path", new_rel_path)?;
     #[cfg(debug_assertions)]
     eprintln!(
         "Attempting to move/rename item from '{}' to '{}'",
-        current_rel_path, new_rel_path
+        current_rel_path.as_str(),
+        new_rel_path.as_str()
     );
 
-    let current_fs_path = Path::new(notebook_path).join(current_rel_path);
-    let new_fs_path = Path::new(notebook_path).join(new_rel_path);
     let full_notebook_path = Path::new(notebook_path);
-
-    validate_notebook_relative_path(current_rel_path, "current relative path")?;
-    validate_notebook_relative_path(new_rel_path, "new relative path")?;
+    let current_fs_path = current_rel_path.join_under(full_notebook_path);
+    let new_fs_path = new_rel_path.join_under(full_notebook_path);
 
     if !current_fs_path.exists() {
-        return Err(format!(
-            "Item at path '{}' not found on the filesystem.",
-            current_rel_path
+        return Err(NotebookError::validation(
+            "move note",
+            format!(
+                "Item at path '{}' not found on the filesystem.",
+                current_rel_path
+            ),
         ));
     }
 
     if let Ok(canonical_notebook_path) = full_notebook_path.canonicalize() {
         if let Ok(canonical_current_path) = current_fs_path.canonicalize() {
             if !canonical_current_path.starts_with(&canonical_notebook_path) {
-                return Err(format!(
-                    "Cannot move/rename item from path outside the notebook directory: '{}'",
-                    current_rel_path
+                return Err(NotebookError::validation(
+                    "move note",
+                    format!(
+                        "Cannot move/rename item from path outside the notebook directory: '{}'",
+                        current_rel_path
+                    ),
                 ));
             }
         } else {
-            return Err(format!(
-                "Failed to canonicalize current item path: '{}'",
-                current_rel_path
+            return Err(NotebookError::storage(
+                "move note",
+                format!(
+                    "Failed to canonicalize current item path: '{}'",
+                    current_rel_path
+                ),
             ));
         }
 
         ensure_path_within_notebook_if_canonicalizable(
             full_notebook_path,
             &new_fs_path,
-            new_rel_path,
+            &new_rel_path,
             "Cannot move/rename item to path outside the notebook directory:",
             &format!(
                 "Warning: Could not canonicalize new item path '{}'. Proceeding with move attempt, but this might indicate a path issue.",
@@ -516,15 +563,21 @@ pub async fn move_note(
             if let Ok(canonical_new_fs_path) = new_fs_path.canonicalize()
                 && canonical_new_fs_path.starts_with(&canonical_notebook_path)
             {
-                return Err(format!(
-                    "An item already exists at the target path '{}'.",
-                    new_rel_path
+                return Err(NotebookError::validation(
+                    "move note",
+                    format!(
+                        "An item already exists at the target path '{}'.",
+                        new_rel_path
+                    ),
                 ));
             }
         } else {
-            return Err(format!(
-                "An item already exists at the target path '{}'.",
-                new_rel_path
+            return Err(NotebookError::validation(
+                "move note",
+                format!(
+                    "An item already exists at the target path '{}'.",
+                    new_rel_path
+                ),
             ));
         }
     }
@@ -536,10 +589,13 @@ pub async fn move_note(
                 "Creating parent directories for new path: {}",
                 parent.display()
             );
-            if let Err(e) = fs::create_dir_all(parent) {
-                return Err(format!(
-                    "Failed to create parent directories for new path: {}",
-                    e
+            if let Err(error) = fs::create_dir_all(parent) {
+                return Err(NotebookError::storage(
+                    "move note",
+                    format!(
+                        "Failed to create parent directories for new path: {}",
+                        error
+                    ),
                 ));
             }
         }
@@ -549,6 +605,7 @@ pub async fn move_note(
     }
 
     let previous_notes = notes.clone();
+    let is_moving_note_dir = current_fs_path.join("note.md").exists();
 
     #[cfg(debug_assertions)]
     eprintln!(
@@ -556,22 +613,20 @@ pub async fn move_note(
         current_fs_path.display(),
         new_fs_path.display()
     );
-    if let Err(e) = fs::rename(&current_fs_path, &new_fs_path) {
-        return Err(format!(
-            "Failed to move/rename item from '{}' to '{}': {}",
-            current_rel_path, new_rel_path, e
+    if let Err(error) = fs::rename(&current_fs_path, &new_fs_path) {
+        return Err(NotebookError::storage(
+            "move note",
+            format!(
+                "Failed to move/rename item from '{}' to '{}': {}",
+                current_rel_path, new_rel_path, error
+            ),
         ));
     }
     #[cfg(debug_assertions)]
     eprintln!("Filesystem move/rename successful.");
 
-    let is_moving_note_dir = Path::new(notebook_path)
-        .join(current_rel_path)
-        .join("note.md")
-        .exists();
-
     let updated_metadata =
-        update_metadata_paths_for_move(notes, current_rel_path, new_rel_path, is_moving_note_dir);
+        update_metadata_paths_for_move(notes, &current_rel_path, &new_rel_path, is_moving_note_dir);
 
     if is_moving_note_dir {
         if updated_metadata {
@@ -581,7 +636,7 @@ pub async fn move_note(
             #[cfg(debug_assertions)]
             eprintln!(
                 "Warning: Moved note directory '{}' not found in metadata. Metadata was not updated for this item.",
-                current_rel_path
+                current_rel_path.as_str()
             );
         }
     } else if updated_metadata {
@@ -594,7 +649,7 @@ pub async fn move_note(
         notes,
         updated_metadata,
         "moving/renaming",
-        current_rel_path,
+        &current_rel_path,
     ) {
         *notes = previous_notes;
         if let Err(rollback_error) = rollback_rename(
@@ -603,17 +658,27 @@ pub async fn move_note(
             full_notebook_path,
             FAIL_MOVE_ROLLBACK_MARKER,
         ) {
-            return Err(format!(
-                "{} Rollback failed while restoring filesystem state: {}",
-                metadata_error, rollback_error
+            return Err(NotebookError::recovery(
+                "move note rollback",
+                format!(
+                    "{} Rollback failed while restoring filesystem state: {}",
+                    metadata_error, rollback_error
+                ),
             ));
         }
         return Err(metadata_error);
     }
 
-    cache_rename_search_index_entries(notebook_path, current_rel_path, new_rel_path);
+    cache_rename_search_index_entries(
+        notebook_path,
+        current_rel_path.as_str(),
+        new_rel_path.as_str(),
+    );
 
     #[cfg(debug_assertions)]
-    eprintln!("Move/Rename process completed. New path: {}", new_rel_path);
-    Ok(new_rel_path.to_string())
+    eprintln!(
+        "Move/Rename process completed. New path: {}",
+        new_rel_path.as_str()
+    );
+    Ok(new_rel_path.into_string())
 }

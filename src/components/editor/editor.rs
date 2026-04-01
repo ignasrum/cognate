@@ -53,7 +53,7 @@ use crate::components::editor::text_management::undo_manager;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::editor::ui::layout;
 use crate::configuration::{Configuration, save_scale_to_config};
-use crate::notebook::{self, NoteMetadata};
+use crate::notebook::{self, NoteMetadata, NotebookError};
 
 // Import re-exported components
 use crate::components::note_explorer;
@@ -81,7 +81,7 @@ pub enum Message {
     NewLabelInputChanged(String),
     AddLabel,
     RemoveLabel(String),
-    MetadataSaved(Result<(), String>),
+    MetadataSaved(Result<(), NotebookError>),
 
     // Search
     SearchQueryChanged(String),
@@ -90,11 +90,11 @@ pub enum Message {
     ClearSearch,
 
     // Content management
-    NoteContentSaved(Result<(), String>),
+    NoteContentSaved(Result<(), NotebookError>),
     DebouncedMetadataSaveElapsed(u64),
-    DebouncedMetadataSaveCompleted(u64, Result<(), String>),
+    DebouncedMetadataSaveCompleted(u64, Result<(), NotebookError>),
     WindowCloseRequested(window::Id),
-    ShutdownFlushCompleted(window::Id, Result<(), String>),
+    ShutdownFlushCompleted(window::Id, Result<(), NotebookError>),
 
     // Visualizer
     ToggleVisualizer,
@@ -104,17 +104,17 @@ pub enum Message {
     NewNote,
     NewNoteInputChanged(String),
     CreateNote,
-    NoteCreated(Result<NoteMetadata, String>),
+    NoteCreated(Result<NoteMetadata, NotebookError>),
     CancelNewNote,
     DeleteNote,
     ConfirmDeleteNote(bool),
     ConfirmDeleteEmbeddedImages(bool),
-    NoteDeleted(Result<(), String>, String),
+    NoteDeleted(Result<(), NotebookError>, String),
     MoveNote,
     MoveNoteInputChanged(String),
     ConfirmMoveNote,
     CancelMoveNote,
-    NoteMoved(Result<String, String>, String),
+    NoteMoved(Result<String, NotebookError>, String),
 
     // Folder operations
     InitiateFolderRename(String),

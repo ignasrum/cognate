@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::notebook::{self, NoteMetadata};
+use crate::notebook::{self, NoteMetadata, NotebookError};
 
 #[derive(Debug, Clone)]
 pub struct LoadedNotePayload {
@@ -42,8 +42,11 @@ pub async fn load_note_payload(
     }
 }
 
-pub fn save_metadata_snapshot(notebook_path: &str, notes: &[NoteMetadata]) -> Result<(), String> {
-    notebook::save_metadata(notebook_path, notes).map_err(|error| error.to_string())
+pub fn save_metadata_snapshot(
+    notebook_path: &str,
+    notes: &[NoteMetadata],
+) -> Result<(), NotebookError> {
+    notebook::save_metadata(notebook_path, notes)
 }
 
 pub fn flush_for_shutdown(
@@ -51,7 +54,7 @@ pub fn flush_for_shutdown(
     content_note_path: Option<String>,
     markdown_text: &str,
     notes: &[NoteMetadata],
-) -> Result<(), String> {
+) -> Result<(), NotebookError> {
     if notebook_path.trim().is_empty() {
         return Ok(());
     }

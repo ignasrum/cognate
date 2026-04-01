@@ -6,7 +6,7 @@ mod tests {
     use crate::components::note_explorer;
     use crate::components::visualizer;
     use crate::configuration::Configuration;
-    use crate::notebook::{MetadataLoadResult, NoteMetadata};
+    use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
     use iced::widget::text_editor::Content;
 
     #[test]
@@ -37,6 +37,7 @@ mod tests {
         let _ = Editor::view(&editor);
         let _ = Editor::subscription(&editor);
 
+        let sample_error = NotebookError::storage("test harness", "sample failure");
         let messages = vec![
             EditorMessage::AboutButtonClicked,
             EditorMessage::MarkdownLinkClicked("https://example.com".to_string()),
@@ -52,12 +53,12 @@ mod tests {
             EditorMessage::MoveNoteInputChanged("moved/path".to_string()),
             EditorMessage::ConfirmMoveNote,
             EditorMessage::CancelMoveNote,
-            EditorMessage::NoteMoved(Err("move failed".to_string()), "old/path".to_string()),
-            EditorMessage::NoteDeleted(Err("delete failed".to_string()), "to/delete".to_string()),
+            EditorMessage::NoteMoved(Err(sample_error.clone()), "old/path".to_string()),
+            EditorMessage::NoteDeleted(Err(sample_error.clone()), "to/delete".to_string()),
             EditorMessage::MetadataSaved(Ok(())),
-            EditorMessage::MetadataSaved(Err("meta failed".to_string())),
+            EditorMessage::MetadataSaved(Err(sample_error.clone())),
             EditorMessage::NoteContentSaved(Ok(())),
-            EditorMessage::NoteContentSaved(Err("save failed".to_string())),
+            EditorMessage::NoteContentSaved(Err(sample_error.clone())),
             EditorMessage::LoadedNoteContent(
                 "folder/note".to_string(),
                 "body".to_string(),
@@ -70,7 +71,7 @@ mod tests {
             )),
             EditorMessage::VisualizerMsg(visualizer::Message::FocusOnNote(None)),
             EditorMessage::InitiateFolderRename("folder".to_string()),
-            EditorMessage::NoteCreated(Err("create failed".to_string())),
+            EditorMessage::NoteCreated(Err(sample_error)),
             EditorMessage::NoteMoved(Ok("new/path".to_string()), "old/path".to_string()),
             EditorMessage::NoteDeleted(Ok(()), "to/delete".to_string()),
         ];

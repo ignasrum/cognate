@@ -11,7 +11,7 @@ use crate::components::note_explorer;
 use crate::components::note_explorer::NoteExplorer;
 use crate::components::visualizer;
 use crate::components::visualizer::Visualizer;
-use crate::notebook::{self, NoteMetadata};
+use crate::notebook::{self, NoteMetadata, NotebookError};
 
 fn report_metadata_load_issue(title: &str, detail: &str) {
     eprintln!("{}: {}", title, detail);
@@ -25,6 +25,10 @@ fn report_metadata_load_issue(title: &str, detail: &str) {
             .alert()
             .show();
     }
+}
+
+fn notebook_error_text(error: &NotebookError) -> String {
+    error.ui_message()
 }
 
 fn handle_note_selection_internal(
@@ -116,7 +120,7 @@ pub fn handle_note_explorer_message(
                     "Failed to Load Notebook Metadata",
                     &format!(
                         "Cognate could not read notebook metadata safely:\n\n{}",
-                        load_error
+                        notebook_error_text(&load_error)
                     ),
                 );
             }
@@ -278,7 +282,7 @@ pub fn handle_create_note(
 
 // Handle note created
 pub fn handle_note_created(
-    result: Result<NoteMetadata, String>,
+    result: Result<NoteMetadata, NotebookError>,
     note_explorer: &mut NoteExplorer,
 ) -> Task<Message> {
     match result {
@@ -298,7 +302,7 @@ pub fn handle_note_created(
             #[cfg(debug_assertions)]
             eprintln!("Failed to create note: {}", _err);
             // Clone _err to be used in the async move block
-            let error_message = _err.clone();
+            let error_message = notebook_error_text(&_err);
             Task::perform(
                 async move {
                     let _ = DialogBuilder::message()
@@ -379,7 +383,7 @@ pub fn handle_confirm_delete_note(
 
 // Handle note deleted
 pub fn handle_note_deleted(
-    result: Result<(), String>,
+    result: Result<(), NotebookError>,
     deleted_path: String,
     state: &mut EditorState,
     content: &mut Content,
@@ -409,7 +413,7 @@ pub fn handle_note_deleted(
             #[cfg(debug_assertions)]
             eprintln!("Failed to delete note: {}", _err);
             // Clone _err to be used in the async move block
-            let error_message = _err.clone();
+            let error_message = notebook_error_text(&_err);
 
             Task::perform(
                 async move {
@@ -484,7 +488,7 @@ pub fn handle_confirm_move_note(
 
 // Handle note moved
 pub fn handle_note_moved(
-    result: Result<String, String>,
+    result: Result<String, NotebookError>,
     old_path: String,
     _state: &mut EditorState,
     undo_manager: &mut UndoManager,
@@ -507,7 +511,7 @@ pub fn handle_note_moved(
             eprintln!("Failed to move/rename item: {}", _err);
 
             // Clone _err to be used in the async move block
-            let error_message = _err.clone();
+            let error_message = notebook_error_text(&_err);
 
             Task::perform(
                 async move {

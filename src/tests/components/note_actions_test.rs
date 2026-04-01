@@ -8,7 +8,7 @@ mod tests {
     use crate::components::note_explorer::NoteExplorer;
     use crate::components::visualizer;
     use crate::components::visualizer::Visualizer;
-    use crate::notebook::{MetadataLoadResult, NoteMetadata};
+    use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
     use iced::widget::text_editor::{Content, Cursor, Position};
 
     fn note(path: &str, labels: &[&str]) -> NoteMetadata {
@@ -17,6 +17,10 @@ mod tests {
             labels: labels.iter().map(|s| s.to_string()).collect(),
             last_updated: None,
         }
+    }
+
+    fn sample_error() -> NotebookError {
+        NotebookError::storage("test harness", "simulated failure")
     }
 
     fn setup_state_with_notebook() -> EditorState {
@@ -63,7 +67,7 @@ mod tests {
     fn note_created_and_deleted_handlers_cover_success_and_error_paths() {
         let mut explorer = NoteExplorer::new("dummy".to_string());
         let _ = note_actions::handle_note_created(Ok(note("created/path", &[])), &mut explorer);
-        let _ = note_actions::handle_note_created(Err("create failed".to_string()), &mut explorer);
+        let _ = note_actions::handle_note_created(Err(sample_error()), &mut explorer);
 
         let mut state = setup_state_with_notebook();
         let mut content = Content::with_text("hello");
@@ -87,7 +91,7 @@ mod tests {
         assert!(markdown.is_empty());
 
         let _ = note_actions::handle_note_deleted(
-            Err("delete failed".to_string()),
+            Err(sample_error()),
             "a".to_string(),
             &mut state,
             &mut content,
@@ -154,7 +158,7 @@ mod tests {
         assert!(undo.get_previous_content("c").is_some());
 
         let _ = note_actions::handle_note_moved(
-            Err("move failed".to_string()),
+            Err(sample_error()),
             "a".to_string(),
             &mut state,
             &mut undo,

@@ -6,13 +6,13 @@ use std::path::Path;
 // Import the correct styling types - button directly
 use iced::widget::button;
 
-use crate::notebook::{self, NoteMetadata};
+use crate::notebook::{self, NoteMetadata, NotebookError};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     NoteSelected(String),
     LoadNotes,
-    NotesLoaded(Result<notebook::MetadataLoadResult, String>),
+    NotesLoaded(Result<notebook::MetadataLoadResult, NotebookError>),
     ToggleFolder(String),
     InitiateFolderRename(String),
     // Removed: ExpandToNote(String),

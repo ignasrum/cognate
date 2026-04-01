@@ -92,7 +92,7 @@ impl Editor {
                         "Failed to Save Notebook Metadata",
                         &format!(
                             "Cognate could not save notebook metadata for your latest changes:\n\n{}",
-                            error
+                            error.ui_message()
                         ),
                     );
                 } else {
@@ -156,7 +156,7 @@ impl Editor {
                             .set_title("Failed to Save Before Exit")
                             .set_text(format!(
                                 "Cognate could not safely save your latest changes before exit:\n\n{}",
-                                error
+                                error.ui_message()
                             ))
                             .alert()
                             .show();
@@ -188,7 +188,10 @@ impl Editor {
                 if let Err(error) = result {
                     Self::report_persistence_error(
                         "Failed to Save Notebook Metadata",
-                        &format!("Cognate could not save notebook metadata:\n\n{}", error),
+                        &format!(
+                            "Cognate could not save notebook metadata:\n\n{}",
+                            error.ui_message()
+                        ),
                     );
                 } else {
                     #[cfg(debug_assertions)]
@@ -200,7 +203,10 @@ impl Editor {
                 if let Err(error) = result {
                     Self::report_persistence_error(
                         "Failed to Save Note Content",
-                        &format!("Cognate could not save note content to disk:\n\n{}", error),
+                        &format!(
+                            "Cognate could not save note content to disk:\n\n{}",
+                            error.ui_message()
+                        ),
                     );
                 } else {
                     #[cfg(debug_assertions)]

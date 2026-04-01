@@ -47,10 +47,7 @@ pub fn handle_add_label(
             let notebook_path = state.notebook_path().to_string();
             let notes_to_save = note_explorer.notes.clone();
             return Task::perform(
-                async move {
-                    notebook::save_metadata(&notebook_path, &notes_to_save[..])
-                        .map_err(|e| e.to_string())
-                },
+                async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]) },
                 Message::MetadataSaved,
             );
         }
@@ -87,10 +84,7 @@ pub fn handle_remove_label(
         let notebook_path = state.notebook_path().to_string();
         let notes_to_save = note_explorer.notes.clone();
         return Task::perform(
-            async move {
-                notebook::save_metadata(&notebook_path, &notes_to_save[..])
-                    .map_err(|e| e.to_string())
-            },
+            async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]) },
             Message::MetadataSaved,
         );
     }

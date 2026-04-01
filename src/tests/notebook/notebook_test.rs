@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::notebook::{self, NoteMetadata};
+    use crate::notebook::{self, NoteMetadata, NotebookErrorKind};
     use std::fs;
     use std::future::Future;
     use std::path::{Path, PathBuf};
@@ -255,10 +255,10 @@ mod tests {
         ));
 
         assert!(result.is_err());
+        let error = result.expect_err("expected error");
+        assert_eq!(error.kind(), NotebookErrorKind::Validation);
         assert!(
-            result
-                .expect_err("expected error")
-                .contains("Invalid relative path"),
+            error.to_string().contains("Invalid relative path"),
             "Expected invalid-path validation error",
         );
     }
@@ -338,10 +338,10 @@ mod tests {
         ));
 
         assert!(result.is_err());
+        let error = result.expect_err("expected error");
+        assert_eq!(error.kind(), NotebookErrorKind::Validation);
         assert!(
-            result
-                .expect_err("expected error")
-                .contains("Invalid current relative path"),
+            error.to_string().contains("Invalid current relative path"),
             "Expected invalid current-path validation error",
         );
     }
@@ -522,11 +522,9 @@ mod tests {
         ));
 
         assert!(load_result.is_err());
-        assert!(
-            load_result
-                .expect_err("Expected invalid metadata load to fail")
-                .contains("Failed to parse metadata")
-        );
+        let error = load_result.expect_err("Expected invalid metadata load to fail");
+        assert_eq!(error.kind(), NotebookErrorKind::Recovery);
+        assert!(error.to_string().contains("Failed to parse metadata"));
     }
 
     #[test]
@@ -843,8 +841,11 @@ mod tests {
 
         assert!(delete_result.is_err());
         let error = delete_result.expect_err("Expected delete to fail");
+        assert_eq!(error.kind(), NotebookErrorKind::Recovery);
         assert!(
-            error.contains("Rollback failed while restoring filesystem state"),
+            error
+                .to_string()
+                .contains("Rollback failed while restoring filesystem state"),
             "Expected explicit rollback failure message, got: {}",
             error
         );

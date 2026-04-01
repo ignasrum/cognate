@@ -14,3 +14,4 @@ time = { version = "0.3", features = ["formatting"] }
 arboard = "3.6.1"
 base64 = "0.22.1"
 png = "0.17.16"
+thiserror = "2.0"

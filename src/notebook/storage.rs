@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -10,7 +9,8 @@ use time::format_description::well_known::Rfc3339;
 
 use super::search::{cache_upsert_search_index_note_content, note_file_modified_time};
 use super::{
-    NoteMetadata, NotebookMetadata, STAGED_DELETE_CLEANUP_GRACE_NANOS, STAGED_DELETE_PREFIX,
+    NoteMetadata, NotebookError, NotebookMetadata, NotebookRelativePath,
+    STAGED_DELETE_CLEANUP_GRACE_NANOS, STAGED_DELETE_PREFIX,
 };
 
 const METADATA_FILE_NAME: &str = "metadata.json";
@@ -184,22 +184,31 @@ fn atomic_write_string(target_path: &Path, content: &str) -> Result<(), std::io:
     Ok(())
 }
 
-pub(super) fn write_text_file_atomically(target_path: &Path, content: &str) -> Result<(), String> {
+pub(super) fn write_text_file_atomically(
+    target_path: &Path,
+    content: &str,
+) -> Result<(), NotebookError> {
     if let Some(parent) = target_path.parent()
         && let Err(error) = fs::create_dir_all(parent)
     {
-        return Err(format!(
-            "Failed to create parent directory for '{}': {}",
-            target_path.display(),
-            error
+        return Err(NotebookError::storage(
+            "atomic write",
+            format!(
+                "Failed to create parent directory for '{}': {}",
+                target_path.display(),
+                error
+            ),
         ));
     }
 
     atomic_write_string(target_path, content).map_err(|error| {
-        format!(
-            "Failed to atomically write '{}': {}",
-            target_path.display(),
-            error
+        NotebookError::storage(
+            "atomic write",
+            format!(
+                "Failed to atomically write '{}': {}",
+                target_path.display(),
+                error
+            ),
         )
     })
 }
@@ -208,32 +217,44 @@ fn metadata_backup_path(notebook_path: &str) -> PathBuf {
     Path::new(notebook_path).join(METADATA_BACKUP_FILE_NAME)
 }
 
-fn snapshot_known_good_metadata(metadata_path: &Path, backup_path: &Path) -> Result<(), String> {
+fn snapshot_known_good_metadata(
+    metadata_path: &Path,
+    backup_path: &Path,
+) -> Result<(), NotebookError> {
     if !metadata_path.exists() {
         return Ok(());
     }
 
     let existing_metadata = fs::read_to_string(metadata_path).map_err(|error| {
-        format!(
-            "Failed to read existing metadata at '{}' before backup: {}",
-            metadata_path.display(),
-            error
+        NotebookError::recovery(
+            "metadata snapshot",
+            format!(
+                "Failed to read existing metadata at '{}' before backup: {}",
+                metadata_path.display(),
+                error
+            ),
         )
     })?;
 
     serde_json::from_str::<NotebookMetadata>(&existing_metadata).map_err(|error| {
-        format!(
-            "Refusing to overwrite invalid metadata at '{}': {}",
-            metadata_path.display(),
-            error
+        NotebookError::recovery(
+            "metadata snapshot",
+            format!(
+                "Refusing to overwrite invalid metadata at '{}': {}",
+                metadata_path.display(),
+                error
+            ),
         )
     })?;
 
     write_text_file_atomically(backup_path, &existing_metadata).map_err(|error| {
-        format!(
-            "Failed to update metadata recovery copy at '{}': {}",
-            backup_path.display(),
-            error
+        NotebookError::recovery(
+            "metadata snapshot",
+            format!(
+                "Failed to update metadata recovery copy at '{}': {}",
+                backup_path.display(),
+                error
+            ),
         )
     })
 }
@@ -247,10 +268,7 @@ fn append_warning(current: &mut Option<String>, warning: String) {
     }
 }
 
-pub fn save_metadata(
-    notebook_path: &str,
-    notes: &[NoteMetadata],
-) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+pub fn save_metadata(notebook_path: &str, notes: &[NoteMetadata]) -> Result<(), NotebookError> {
     #[cfg(debug_assertions)]
     eprintln!(
         "Saving metadata to: {}",
@@ -261,29 +279,46 @@ pub fn save_metadata(
     let backup_path = metadata_backup_path(notebook_path);
 
     if let Some(parent) = metadata_path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
+        && let Err(error) = fs::create_dir_all(parent)
     {
         #[cfg(debug_assertions)]
-        eprintln!("Failed to create parent directory for metadata file: {}", e);
-        return Err(Box::new(e));
+        eprintln!(
+            "Failed to create parent directory for metadata file: {}",
+            error
+        );
+        return Err(NotebookError::storage(
+            "save metadata",
+            format!(
+                "Failed to create metadata parent directory '{}': {}",
+                parent.display(),
+                error
+            ),
+        ));
     }
 
     let notebook_metadata = NotebookMetadata {
         notes: notes.to_vec(),
     };
 
-    snapshot_known_good_metadata(&metadata_path, &backup_path).map_err(std::io::Error::other)?;
+    snapshot_known_good_metadata(&metadata_path, &backup_path)?;
 
-    let json_string = serde_json::to_string_pretty(&notebook_metadata)?;
+    let json_string = serde_json::to_string_pretty(&notebook_metadata).map_err(|error| {
+        NotebookError::storage(
+            "save metadata",
+            format!("Failed to serialize metadata.json: {}", error),
+        )
+    })?;
 
-    write_text_file_atomically(&metadata_path, &json_string).map_err(std::io::Error::other)?;
+    write_text_file_atomically(&metadata_path, &json_string)?;
 
     #[cfg(debug_assertions)]
     eprintln!("Metadata saved successfully.");
     Ok(())
 }
 
-pub async fn load_notes_metadata(notebook_path: String) -> Result<MetadataLoadResult, String> {
+pub async fn load_notes_metadata(
+    notebook_path: String,
+) -> Result<MetadataLoadResult, NotebookError> {
     let file_path = Path::new(&notebook_path).join(METADATA_FILE_NAME);
     let backup_path = metadata_backup_path(&notebook_path);
     cleanup_stale_staged_delete_entries(Path::new(&notebook_path));
@@ -317,10 +352,13 @@ pub async fn load_notes_metadata(notebook_path: String) -> Result<MetadataLoadRe
                     warning: None,
                 });
             }
-            return Err(format!(
-                "Failed to read metadata file '{}': {}",
-                file_path.display(),
-                _err
+            return Err(NotebookError::storage(
+                "load metadata",
+                format!(
+                    "Failed to read metadata file '{}': {}",
+                    file_path.display(),
+                    _err
+                ),
             ));
         }
     };
@@ -341,33 +379,42 @@ pub async fn load_notes_metadata(notebook_path: String) -> Result<MetadataLoadRe
             );
 
             let backup_contents = fs::read_to_string(&backup_path).map_err(|backup_error| {
-                format!(
-                    "Failed to parse metadata at '{}': {}. Also failed to read backup '{}': {}",
-                    file_path.display(),
-                    _err,
-                    backup_path.display(),
-                    backup_error
+                NotebookError::recovery(
+                    "metadata recovery",
+                    format!(
+                        "Failed to parse metadata at '{}': {}. Also failed to read backup '{}': {}",
+                        file_path.display(),
+                        _err,
+                        backup_path.display(),
+                        backup_error
+                    ),
                 )
             })?;
 
             let backup_metadata = serde_json::from_str::<NotebookMetadata>(&backup_contents)
                 .map_err(|backup_parse_error| {
-                    format!(
-                        "Failed to parse metadata at '{}': {}. Backup '{}' is also invalid: {}",
-                        file_path.display(),
-                        _err,
-                        backup_path.display(),
-                        backup_parse_error
+                    NotebookError::recovery(
+                        "metadata recovery",
+                        format!(
+                            "Failed to parse metadata at '{}': {}. Backup '{}' is also invalid: {}",
+                            file_path.display(),
+                            _err,
+                            backup_path.display(),
+                            backup_parse_error
+                        ),
                     )
                 })?;
 
             write_text_file_atomically(&file_path, &backup_contents).map_err(|restore_error| {
-                format!(
-                    "Failed to parse metadata at '{}': {}. Backup '{}' was valid, but restore failed: {}",
-                    file_path.display(),
-                    _err,
-                    backup_path.display(),
-                    restore_error
+                NotebookError::recovery(
+                    "metadata recovery",
+                    format!(
+                        "Failed to parse metadata at '{}': {}. Backup '{}' was valid, but restore failed: {}",
+                        file_path.display(),
+                        _err,
+                        backup_path.display(),
+                        restore_error
+                    ),
                 )
             })?;
 
@@ -411,7 +458,7 @@ pub async fn load_notes_metadata(notebook_path: String) -> Result<MetadataLoadRe
             &mut warning,
             format!(
                 "Loaded metadata but failed to persist normalized timestamps: {}",
-                _error
+                _error.ui_message()
             ),
         );
     }
@@ -423,7 +470,7 @@ pub async fn save_note_content(
     notebook_path: String,
     rel_note_path: String,
     content: String,
-) -> Result<(), String> {
+) -> Result<(), NotebookError> {
     save_note_content_sync(&notebook_path, &rel_note_path, &content)
 }
 
@@ -431,26 +478,30 @@ pub fn save_note_content_sync(
     notebook_path: &str,
     rel_note_path: &str,
     content: &str,
-) -> Result<(), String> {
-    let full_note_path = Path::new(&notebook_path)
-        .join(rel_note_path)
+) -> Result<(), NotebookError> {
+    let rel_note_path = NotebookRelativePath::parse("note path", rel_note_path)?;
+    let full_note_path = rel_note_path
+        .join_under(Path::new(notebook_path))
         .join("note.md");
     #[cfg(debug_assertions)]
     eprintln!("Attempting to save note to: {}", full_note_path.display());
 
     if let Some(parent) = full_note_path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
+        && let Err(error) = fs::create_dir_all(parent)
     {
-        return Err(format!("Failed to create directory for note: {}", e));
+        return Err(NotebookError::storage(
+            "save note content",
+            format!("Failed to create directory for note: {}", error),
+        ));
     }
 
     let existing_content = match fs::read_to_string(&full_note_path) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(format!(
-                "Failed to read existing note before save: {}",
-                error
+            return Err(NotebookError::storage(
+                "save note content",
+                format!("Failed to read existing note before save: {}", error),
             ));
         }
     };
@@ -458,7 +509,7 @@ pub fn save_note_content_sync(
     if existing_content.as_deref() == Some(content) {
         cache_upsert_search_index_note_content(
             notebook_path,
-            rel_note_path,
+            rel_note_path.as_str(),
             content,
             note_file_modified_time(&full_note_path),
         );
@@ -468,7 +519,7 @@ pub fn save_note_content_sync(
     write_text_file_atomically(&full_note_path, content)?;
     cache_upsert_search_index_note_content(
         notebook_path,
-        rel_note_path,
+        rel_note_path.as_str(),
         content,
         note_file_modified_time(&full_note_path),
     );
