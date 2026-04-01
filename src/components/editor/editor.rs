@@ -708,9 +708,14 @@ impl Editor {
             Message::DebouncedMetadataSaveCompleted(saved_generation, result) => {
                 state.metadata_save_in_flight = false;
 
-                if let Err(_err) = &result {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Error saving debounced metadata: {}", _err);
+                if let Err(error) = &result {
+                    Self::report_persistence_error(
+                        "Failed to Save Notebook Metadata",
+                        &format!(
+                            "Cognate could not save notebook metadata for your latest changes:\n\n{}",
+                            error
+                        ),
+                    );
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("Debounced metadata saved successfully.");
@@ -784,12 +789,28 @@ impl Editor {
         }
     }
 
+    fn report_persistence_error(title: &str, detail: &str) {
+        eprintln!("{}: {}", title, detail);
+
+        #[cfg(not(test))]
+        {
+            let _ = DialogBuilder::message()
+                .set_level(MessageLevel::Error)
+                .set_title(title)
+                .set_text(detail)
+                .alert()
+                .show();
+        }
+    }
+
     fn handle_save_feedback_messages(message: Message) -> Task<Message> {
         match message {
             Message::MetadataSaved(result) => {
-                if let Err(_err) = result {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Error saving metadata: {}", _err);
+                if let Err(error) = result {
+                    Self::report_persistence_error(
+                        "Failed to Save Notebook Metadata",
+                        &format!("Cognate could not save notebook metadata:\n\n{}", error),
+                    );
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("Metadata saved successfully.");
@@ -797,9 +818,11 @@ impl Editor {
                 Task::none()
             }
             Message::NoteContentSaved(result) => {
-                if let Err(_err) = result {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Error saving note content: {}", _err);
+                if let Err(error) = result {
+                    Self::report_persistence_error(
+                        "Failed to Save Note Content",
+                        &format!("Cognate could not save note content to disk:\n\n{}", error),
+                    );
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("Note content saved successfully.");
@@ -807,9 +830,14 @@ impl Editor {
                 Task::none()
             }
             Message::ScaleSaved(result) => {
-                if let Err(_err) = result {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Error saving scale to config: {}", _err);
+                if let Err(error) = result {
+                    Self::report_persistence_error(
+                        "Failed to Save UI Scale",
+                        &format!(
+                            "Cognate could not save the updated UI scale to config:\n\n{}",
+                            error
+                        ),
+                    );
                 }
                 Task::none()
             }
