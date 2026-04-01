@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn read_configuration_falls_back_when_file_missing() {
+    fn read_configuration_errors_when_file_missing() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System clock error")
@@ -70,17 +70,13 @@ mod tests {
             unique
         ));
 
-        let config = read_configuration(
+        let result = read_configuration(
             missing_path
                 .to_str()
                 .expect("Temporary path must be valid UTF-8"),
-        )
-        .expect("Missing file should return default configuration");
+        );
 
-        assert_eq!(config.theme, "Dark");
-        assert_eq!(config.notebook_path, "");
-        assert!((config.scale - 1.0).abs() < f32::EPSILON);
-        assert!(!config.version.is_empty());
+        assert!(result.is_err());
     }
 
     #[test]

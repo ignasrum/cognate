@@ -2,9 +2,9 @@ use crate::notebook::NoteMetadata;
 use iced::widget::{Column, Container, Text, canvas, container};
 use iced::{Color, Element, Length, Point, Theme, task::Task};
 use std::cell::{Cell, RefCell};
-use std::time::Instant;
 #[cfg(test)]
 use std::collections::HashSet;
+use std::time::Instant;
 
 #[path = "core/canvas_impl.rs"]
 mod canvas_impl;

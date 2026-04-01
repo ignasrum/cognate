@@ -18,62 +18,49 @@ pub fn read_configuration(file_path: &str) -> Result<Configuration, Box<dyn std:
     // Get the version at compile time
     let version = env!("CARGO_PKG_VERSION").to_string();
 
-    let json_config: Result<Value, Box<dyn std::error::Error>> = read_json_file(file_path);
+    let json_value: Value = read_json_file(file_path)?;
 
-    match json_config {
-        Ok(json_value) => {
-            // Extract the theme value
-            let theme = json_value["theme"]
-                .as_str()
-                .ok_or("Theme not found or not a string in config.json")?
-                .to_string();
+    // Extract the theme value
+    let theme = json_value["theme"]
+        .as_str()
+        .ok_or("Theme not found or not a string in config.json")?
+        .to_string();
 
-            // Extract the notebook_path value
-            let notebook_path = json_value["notebook_path"]
-                .as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    eprintln!("Warning: 'notebook_path' not found or not a string in config.json. Starting without a notebook.");
-                    String::new() // Default to empty string if not found
-                });
+    // Extract the notebook_path value
+    let notebook_path = json_value["notebook_path"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            eprintln!(
+                "Warning: 'notebook_path' not found or not a string in config.json. Starting without a notebook."
+            );
+            String::new() // Default to empty string if not found
+        });
 
-            // Extract optional scale value (must be > 0), defaulting to 1.0
-            let scale = match json_value.get("scale") {
-                None => 1.0,
-                Some(raw_scale) => {
-                    if let Some(scale) = raw_scale.as_f64()
-                        && scale > 0.0
-                    {
-                        scale as f32
-                    } else {
-                        eprintln!(
-                            "Warning: 'scale' must be a positive number in config.json. Using default scale 1.0."
-                        );
-                        1.0
-                    }
-                }
-            };
-
-            Ok(Configuration {
-                theme,
-                notebook_path,
-                scale,
-                config_path: file_path.to_string(),
-                version, // Include the embedded version
-            })
+    // Extract optional scale value (must be > 0), defaulting to 1.0
+    let scale = match json_value.get("scale") {
+        None => 1.0,
+        Some(raw_scale) => {
+            if let Some(scale) = raw_scale.as_f64()
+                && scale > 0.0
+            {
+                scale as f32
+            } else {
+                eprintln!(
+                    "Warning: 'scale' must be a positive number in config.json. Using default scale 1.0."
+                );
+                1.0
+            }
         }
-        Err(err) => {
-            eprintln!("Error reading config.json: {}", err);
-            // If config.json fails, return a default configuration but include the embedded version
-            Ok(Configuration {
-                theme: "Dark".to_string(),    // Default theme if config.json fails
-                notebook_path: String::new(), // Empty path if config.json fails
-                scale: 1.0,                   // Default UI scale
-                config_path: file_path.to_string(),
-                version, // Still include the embedded version
-            })
-        }
-    }
+    };
+
+    Ok(Configuration {
+        theme,
+        notebook_path,
+        scale,
+        config_path: file_path.to_string(),
+        version, // Include the embedded version
+    })
 }
 
 pub fn save_scale_to_config(file_path: &str, scale: f32) -> Result<(), String> {
