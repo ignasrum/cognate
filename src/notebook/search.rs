@@ -297,9 +297,10 @@ pub async fn search_notes(
         }
 
         for (rel_path, expected_previous_modified_time, indexed_note) in refreshed_entries {
-            let should_apply = index.notes_by_path.get(&rel_path).map_or(true, |existing| {
-                existing.modified_time == expected_previous_modified_time
-            });
+            let should_apply = index
+                .notes_by_path
+                .get(&rel_path)
+                .is_none_or(|existing| existing.modified_time == expected_previous_modified_time);
 
             if should_apply {
                 index.notes_by_path.insert(rel_path, indexed_note);

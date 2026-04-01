@@ -10,14 +10,14 @@ pub(super) fn read_clipboard_paste_payload() -> Result<Option<ClipboardPastePayl
     let mut clipboard =
         arboard::Clipboard::new().map_err(|err| format!("Failed to open clipboard: {}", err))?;
 
-    if let Ok(text) = clipboard.get_text() {
-        if !text.is_empty() {
-            if let Some(image_base64) = read_clipboard_image_file_as_base64_from_text(&text) {
-                return Ok(Some(ClipboardPastePayload::ImageBase64(image_base64)));
-            }
-
-            return Ok(Some(ClipboardPastePayload::Text(text)));
+    if let Ok(text) = clipboard.get_text()
+        && !text.is_empty()
+    {
+        if let Some(image_base64) = read_clipboard_image_file_as_base64_from_text(&text) {
+            return Ok(Some(ClipboardPastePayload::ImageBase64(image_base64)));
         }
+
+        return Ok(Some(ClipboardPastePayload::Text(text)));
     }
 
     Ok(read_clipboard_image_as_base64_png_from(&mut clipboard)?

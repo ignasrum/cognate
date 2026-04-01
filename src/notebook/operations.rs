@@ -238,13 +238,11 @@ pub async fn create_new_note(
         ));
     }
 
-    if note_dir_path.exists() || note_file_path.exists() {
-        if note_dir_path.exists() {
-            return Err(format!(
-                "A directory or file already exists at '{}'.",
-                rel_path
-            ));
-        }
+    if (note_dir_path.exists() || note_file_path.exists()) && note_dir_path.exists() {
+        return Err(format!(
+            "A directory or file already exists at '{}'.",
+            rel_path
+        ));
     }
 
     if let Err(e) = fs::create_dir_all(&note_dir_path) {

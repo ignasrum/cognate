@@ -460,9 +460,7 @@ pub(super) fn html_line_breaks_replacement(html: &str) -> Option<String> {
             return None;
         }
 
-        let Some(tag_end) = html[cursor..].find('>') else {
-            return None;
-        };
+        let tag_end = html[cursor..].find('>')?;
 
         let tag = &html[cursor..cursor + tag_end + 1];
         if !is_html_line_break_tag(tag) {
