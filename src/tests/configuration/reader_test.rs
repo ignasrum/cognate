@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::configuration::read_configuration;
+    use crate::configuration::{read_configuration, save_scale_to_config};
+    use serde_json::Value;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,6 +37,20 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.path);
         }
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System clock error")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "cognate_config_test_{}_{}_{}.json",
+            name,
+            std::process::id(),
+            unique
+        ))
     }
 
     #[test]
@@ -124,5 +139,80 @@ mod tests {
         let result = read_configuration(config_file.as_str());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_scale_to_config_creates_file_when_missing() {
+        let path = unique_temp_path("save_scale_missing");
+        let path_str = path
+            .to_str()
+            .expect("Temporary config path must be valid UTF-8")
+            .to_string();
+
+        assert!(!path.exists(), "Test path should start absent");
+        save_scale_to_config(&path_str, 1.5).expect("Expected scale save to succeed");
+
+        let stored = fs::read_to_string(&path).expect("Expected config file to be created");
+        let json: Value = serde_json::from_str(&stored).expect("Expected valid JSON");
+        assert_eq!(json["scale"].as_f64(), Some(1.5));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_scale_to_config_preserves_existing_fields() {
+        let config_file = TestConfigFile::new(
+            "save_scale_preserve_fields",
+            r#"{
+                "theme": "Dark",
+                "notebook_path": "/tmp/my_notebook",
+                "scale": 1.0
+            }"#,
+        );
+
+        save_scale_to_config(config_file.as_str(), 1.75).expect("Expected scale save to succeed");
+
+        let stored =
+            fs::read_to_string(config_file.as_str()).expect("Expected config file to be readable");
+        let json: Value = serde_json::from_str(&stored).expect("Expected valid JSON");
+        assert_eq!(json["theme"].as_str(), Some("Dark"));
+        assert_eq!(json["notebook_path"].as_str(), Some("/tmp/my_notebook"));
+        assert_eq!(json["scale"].as_f64(), Some(1.75));
+    }
+
+    #[test]
+    fn save_scale_to_config_errors_when_root_is_not_object() {
+        let config_file =
+            TestConfigFile::new("save_scale_root_array", r#"["not", "an", "object"]"#);
+
+        let result = save_scale_to_config(config_file.as_str(), 1.2);
+
+        assert!(result.is_err());
+        let message = result.expect_err("Expected a validation error");
+        assert!(
+            message.contains("root must be a JSON object"),
+            "Unexpected error message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn save_scale_to_config_rejects_non_positive_or_non_finite_scales() {
+        let path = unique_temp_path("save_scale_invalid");
+        let path_str = path
+            .to_str()
+            .expect("Temporary config path must be valid UTF-8")
+            .to_string();
+
+        let zero_result = save_scale_to_config(&path_str, 0.0);
+        assert!(zero_result.is_err());
+
+        let nan_result = save_scale_to_config(&path_str, f32::NAN);
+        assert!(nan_result.is_err());
+
+        assert!(
+            !path.exists(),
+            "Invalid scales should not create or modify config files"
+        );
     }
 }
