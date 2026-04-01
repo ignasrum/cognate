@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use time::OffsetDateTime;
@@ -11,6 +12,17 @@ use super::search::{cache_upsert_search_index_note_content, note_file_modified_t
 use super::{
     NoteMetadata, NotebookMetadata, STAGED_DELETE_CLEANUP_GRACE_NANOS, STAGED_DELETE_PREFIX,
 };
+
+const METADATA_FILE_NAME: &str = "metadata.json";
+const METADATA_BACKUP_FILE_NAME: &str = "metadata.json.bak";
+#[cfg(test)]
+const FAIL_ATOMIC_RENAME_MARKER: &str = ".cognate_fail_atomic_rename";
+
+#[derive(Debug, Clone)]
+pub struct MetadataLoadResult {
+    pub notes: Vec<NoteMetadata>,
+    pub warning: Option<String>,
+}
 
 pub fn current_timestamp_rfc3339() -> String {
     OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
@@ -117,6 +129,124 @@ fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     }
 }
 
+fn build_atomic_temp_path(target_path: &Path) -> Result<PathBuf, std::io::Error> {
+    let parent = target_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            format!(
+                "Cannot atomically write '{}': target has no parent directory.",
+                target_path.display()
+            ),
+        )
+    })?;
+
+    let target_name = target_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("cognate_tmp");
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+
+    Ok(parent.join(format!(
+        ".{}.cognate_tmp_{}_{}",
+        target_name,
+        process::id(),
+        timestamp_nanos
+    )))
+}
+
+fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    #[cfg(test)]
+    if let Some(parent) = to.parent()
+        && parent.join(FAIL_ATOMIC_RENAME_MARKER).exists()
+        && to.file_name().and_then(|name| name.to_str()) != Some(METADATA_BACKUP_FILE_NAME)
+    {
+        return Err(std::io::Error::other(format!(
+            "Simulated atomic rename failure for '{}'",
+            to.display()
+        )));
+    }
+
+    fs::rename(from, to)
+}
+
+fn atomic_write_string(target_path: &Path, content: &str) -> Result<(), std::io::Error> {
+    let temp_path = build_atomic_temp_path(target_path)?;
+    fs::write(&temp_path, content)?;
+
+    if let Err(rename_error) = atomic_rename(&temp_path, target_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(rename_error);
+    }
+
+    Ok(())
+}
+
+pub(super) fn write_text_file_atomically(target_path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = target_path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        return Err(format!(
+            "Failed to create parent directory for '{}': {}",
+            target_path.display(),
+            error
+        ));
+    }
+
+    atomic_write_string(target_path, content).map_err(|error| {
+        format!(
+            "Failed to atomically write '{}': {}",
+            target_path.display(),
+            error
+        )
+    })
+}
+
+fn metadata_backup_path(notebook_path: &str) -> PathBuf {
+    Path::new(notebook_path).join(METADATA_BACKUP_FILE_NAME)
+}
+
+fn snapshot_known_good_metadata(metadata_path: &Path, backup_path: &Path) -> Result<(), String> {
+    if !metadata_path.exists() {
+        return Ok(());
+    }
+
+    let existing_metadata = fs::read_to_string(metadata_path).map_err(|error| {
+        format!(
+            "Failed to read existing metadata at '{}' before backup: {}",
+            metadata_path.display(),
+            error
+        )
+    })?;
+
+    serde_json::from_str::<NotebookMetadata>(&existing_metadata).map_err(|error| {
+        format!(
+            "Refusing to overwrite invalid metadata at '{}': {}",
+            metadata_path.display(),
+            error
+        )
+    })?;
+
+    write_text_file_atomically(backup_path, &existing_metadata).map_err(|error| {
+        format!(
+            "Failed to update metadata recovery copy at '{}': {}",
+            backup_path.display(),
+            error
+        )
+    })
+}
+
+fn append_warning(current: &mut Option<String>, warning: String) {
+    if let Some(existing) = current {
+        existing.push_str("\n\n");
+        existing.push_str(&warning);
+    } else {
+        *current = Some(warning);
+    }
+}
+
 pub fn save_metadata(
     notebook_path: &str,
     notes: &[NoteMetadata],
@@ -127,7 +257,8 @@ pub fn save_metadata(
         Path::new(notebook_path).join("metadata.json").display()
     );
 
-    let metadata_path = Path::new(notebook_path).join("metadata.json");
+    let metadata_path = Path::new(notebook_path).join(METADATA_FILE_NAME);
+    let backup_path = metadata_backup_path(notebook_path);
 
     if let Some(parent) = metadata_path.parent()
         && let Err(e) = fs::create_dir_all(parent)
@@ -141,17 +272,20 @@ pub fn save_metadata(
         notes: notes.to_vec(),
     };
 
+    snapshot_known_good_metadata(&metadata_path, &backup_path).map_err(std::io::Error::other)?;
+
     let json_string = serde_json::to_string_pretty(&notebook_metadata)?;
 
-    fs::write(&metadata_path, json_string)?;
+    write_text_file_atomically(&metadata_path, &json_string).map_err(std::io::Error::other)?;
 
     #[cfg(debug_assertions)]
     eprintln!("Metadata saved successfully.");
     Ok(())
 }
 
-pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
-    let file_path = Path::new(&notebook_path).join("metadata.json");
+pub async fn load_notes_metadata(notebook_path: String) -> Result<MetadataLoadResult, String> {
+    let file_path = Path::new(&notebook_path).join(METADATA_FILE_NAME);
+    let backup_path = metadata_backup_path(&notebook_path);
     cleanup_stale_staged_delete_entries(Path::new(&notebook_path));
     #[cfg(debug_assertions)]
     eprintln!(
@@ -178,12 +312,20 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
             if _err.kind() == ErrorKind::NotFound {
                 #[cfg(debug_assertions)]
                 eprintln!("Metadata file not found, assuming new notebook.");
-                return Vec::new();
+                return Ok(MetadataLoadResult {
+                    notes: Vec::new(),
+                    warning: None,
+                });
             }
-            return Vec::new();
+            return Err(format!(
+                "Failed to read metadata file '{}': {}",
+                file_path.display(),
+                _err
+            ));
         }
     };
 
+    let mut warning: Option<String> = None;
     let metadata: NotebookMetadata = match serde_json::from_str(&contents) {
         Ok(m) => {
             #[cfg(debug_assertions)]
@@ -197,7 +339,45 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
                 file_path.display(),
                 _err
             );
-            return Vec::new();
+
+            let backup_contents = fs::read_to_string(&backup_path).map_err(|backup_error| {
+                format!(
+                    "Failed to parse metadata at '{}': {}. Also failed to read backup '{}': {}",
+                    file_path.display(),
+                    _err,
+                    backup_path.display(),
+                    backup_error
+                )
+            })?;
+
+            let backup_metadata = serde_json::from_str::<NotebookMetadata>(&backup_contents)
+                .map_err(|backup_parse_error| {
+                    format!(
+                        "Failed to parse metadata at '{}': {}. Backup '{}' is also invalid: {}",
+                        file_path.display(),
+                        _err,
+                        backup_path.display(),
+                        backup_parse_error
+                    )
+                })?;
+
+            write_text_file_atomically(&file_path, &backup_contents).map_err(|restore_error| {
+                format!(
+                    "Failed to parse metadata at '{}': {}. Backup '{}' was valid, but restore failed: {}",
+                    file_path.display(),
+                    _err,
+                    backup_path.display(),
+                    restore_error
+                )
+            })?;
+
+            warning = Some(format!(
+                "Recovered metadata from '{}' after parse failure in '{}'.",
+                backup_path.display(),
+                file_path.display()
+            ));
+
+            backup_metadata
         }
     };
 
@@ -227,14 +407,16 @@ pub async fn load_notes_metadata(notebook_path: String) -> Vec<NoteMetadata> {
     }
 
     if metadata_changed && let Err(_error) = save_metadata(&notebook_path, &notes) {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Warning: failed to persist backfilled last_updated metadata: {}",
-            _error
+        append_warning(
+            &mut warning,
+            format!(
+                "Loaded metadata but failed to persist normalized timestamps: {}",
+                _error
+            ),
         );
     }
 
-    notes
+    Ok(MetadataLoadResult { notes, warning })
 }
 
 pub async fn save_note_content(
@@ -283,7 +465,7 @@ pub fn save_note_content_sync(
         return Ok(());
     }
 
-    fs::write(&full_note_path, content).map_err(|e| format!("Failed to save note: {}", e))?;
+    write_text_file_atomically(&full_note_path, content)?;
     cache_upsert_search_index_note_content(
         notebook_path,
         rel_note_path,

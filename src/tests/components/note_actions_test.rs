@@ -8,7 +8,7 @@ mod tests {
     use crate::components::note_explorer::NoteExplorer;
     use crate::components::visualizer;
     use crate::components::visualizer::Visualizer;
-    use crate::notebook::NoteMetadata;
+    use crate::notebook::{MetadataLoadResult, NoteMetadata};
     use iced::widget::text_editor::{Content, Cursor, Position};
 
     fn note(path: &str, labels: &[&str]) -> NoteMetadata {
@@ -193,7 +193,10 @@ mod tests {
             &mut state,
             &mut content,
             &mut markdown,
-            note_explorer::Message::NotesLoaded(loaded_notes),
+            note_explorer::Message::NotesLoaded(Ok(MetadataLoadResult {
+                notes: loaded_notes,
+                warning: None,
+            })),
         );
 
         let _ = note_actions::handle_note_selected(

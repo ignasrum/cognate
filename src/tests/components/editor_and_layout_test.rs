@@ -6,7 +6,7 @@ mod tests {
     use crate::components::note_explorer;
     use crate::components::visualizer;
     use crate::configuration::Configuration;
-    use crate::notebook::NoteMetadata;
+    use crate::notebook::{MetadataLoadResult, NoteMetadata};
     use iced::widget::text_editor::Content;
 
     #[test]
@@ -81,13 +81,16 @@ mod tests {
 
         let _ = Editor::update(
             &mut editor,
-            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(vec![
-                NoteMetadata {
-                    rel_path: "folder/note".to_string(),
-                    labels: vec!["tag".to_string()],
-                    last_updated: None,
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(Ok(
+                MetadataLoadResult {
+                    notes: vec![NoteMetadata {
+                        rel_path: "folder/note".to_string(),
+                        labels: vec!["tag".to_string()],
+                        last_updated: None,
+                    }],
+                    warning: None,
                 },
-            ])),
+            ))),
         );
         let _ = Editor::update(
             &mut editor,
@@ -101,13 +104,16 @@ mod tests {
 
         let _ = Editor::update(
             &mut editor,
-            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(vec![
-                NoteMetadata {
-                    rel_path: "folder/note".to_string(),
-                    labels: vec![],
-                    last_updated: None,
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(Ok(
+                MetadataLoadResult {
+                    notes: vec![NoteMetadata {
+                        rel_path: "folder/note".to_string(),
+                        labels: vec![],
+                        last_updated: None,
+                    }],
+                    warning: None,
                 },
-            ])),
+            ))),
         );
         let _ = Editor::update(
             &mut editor,

@@ -47,6 +47,6 @@ pub struct NoteSearchResult {
 pub use operations::{create_new_note, delete_note, move_note};
 pub use search::{clear_search_index_for_notebook, search_notes};
 pub use storage::{
-    current_timestamp_rfc3339, load_notes_metadata, save_metadata, save_note_content,
-    save_note_content_sync,
+    MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
+    save_note_content, save_note_content_sync,
 };

@@ -13,6 +13,20 @@ use crate::components::visualizer;
 use crate::components::visualizer::Visualizer;
 use crate::notebook::{self, NoteMetadata};
 
+fn report_metadata_load_issue(title: &str, detail: &str) {
+    eprintln!("{}: {}", title, detail);
+
+    #[cfg(not(test))]
+    {
+        let _ = DialogBuilder::message()
+            .set_level(MessageLevel::Warning)
+            .set_title(title)
+            .set_text(detail)
+            .alert()
+            .show();
+    }
+}
+
 fn handle_note_selection_internal(
     note_explorer: &mut NoteExplorer,
     undo_manager: &mut UndoManager,
@@ -102,12 +116,29 @@ pub fn handle_note_explorer_message(
 
     let mut editor_command = Task::none();
 
-    if let note_explorer::Message::NotesLoaded(_loaded_notes) = note_explorer_message {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
-            _loaded_notes.len()
-        );
+    if let note_explorer::Message::NotesLoaded(load_result) = note_explorer_message {
+        match load_result {
+            Ok(load_result) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
+                    load_result.notes.len()
+                );
+
+                if let Some(load_warning) = load_result.warning {
+                    report_metadata_load_issue("Notebook Metadata Recovered", &load_warning);
+                }
+            }
+            Err(load_error) => {
+                report_metadata_load_issue(
+                    "Failed to Load Notebook Metadata",
+                    &format!(
+                        "Cognate could not read notebook metadata safely:\n\n{}",
+                        load_error
+                    ),
+                );
+            }
+        }
 
         // Update the visualizer with the new notes data
         let _ = visualizer.update(visualizer::Message::UpdateNotes(

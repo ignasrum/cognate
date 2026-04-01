@@ -8,7 +8,10 @@ use super::search::{
     cache_remove_search_index_entries, cache_rename_search_index_entries,
     cache_upsert_search_index_note_content, note_file_modified_time,
 };
-use super::storage::{current_timestamp_rfc3339, save_metadata};
+use super::storage::{current_timestamp_rfc3339, save_metadata, write_text_file_atomically};
+
+const FAIL_DELETE_ROLLBACK_MARKER: &str = ".cognate_fail_delete_rollback";
+const FAIL_MOVE_ROLLBACK_MARKER: &str = ".cognate_fail_move_rollback";
 
 fn validate_notebook_relative_path(rel_path: &str, path_kind: &str) -> Result<(), String> {
     if rel_path.is_empty()
@@ -208,6 +211,24 @@ fn remove_empty_parent_directories(notebook_path: &Path, deleted_note_dir_path: 
     }
 }
 
+fn rollback_rename(
+    staged_or_new_path: &Path,
+    original_path: &Path,
+    _notebook_root: &Path,
+    _fail_marker: &str,
+) -> Result<(), String> {
+    #[cfg(test)]
+    if _notebook_root.join(_fail_marker).exists() {
+        return Err(format!(
+            "simulated rollback rename failure from '{}' to '{}'",
+            staged_or_new_path.display(),
+            original_path.display()
+        ));
+    }
+
+    fs::rename(staged_or_new_path, original_path).map_err(|error| error.to_string())
+}
+
 pub async fn create_new_note(
     notebook_path: &str,
     rel_path: &str,
@@ -249,7 +270,7 @@ pub async fn create_new_note(
         return Err(format!("Failed to create directory for new note: {}", e));
     }
 
-    if let Err(e) = fs::write(&note_file_path, "") {
+    if let Err(e) = write_text_file_atomically(&note_file_path, "") {
         let _ = fs::remove_dir_all(&note_dir_path);
         return Err(format!("Failed to create note file: {}", e));
     }
@@ -396,7 +417,12 @@ pub async fn delete_note(
         *notes = previous_notes;
 
         if let Some(staged_path) = staged_delete_path
-            && let Err(rollback_error) = fs::rename(&staged_path, &note_dir_path)
+            && let Err(rollback_error) = rollback_rename(
+                &staged_path,
+                &note_dir_path,
+                full_notebook_path,
+                FAIL_DELETE_ROLLBACK_MARKER,
+            )
         {
             return Err(format!(
                 "{} Rollback failed while restoring filesystem state: {}",
@@ -571,7 +597,12 @@ pub async fn move_note(
         current_rel_path,
     ) {
         *notes = previous_notes;
-        if let Err(rollback_error) = fs::rename(&new_fs_path, &current_fs_path) {
+        if let Err(rollback_error) = rollback_rename(
+            &new_fs_path,
+            &current_fs_path,
+            full_notebook_path,
+            FAIL_MOVE_ROLLBACK_MARKER,
+        ) {
             return Err(format!(
                 "{} Rollback failed while restoring filesystem state: {}",
                 metadata_error, rollback_error

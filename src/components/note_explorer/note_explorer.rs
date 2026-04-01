@@ -12,7 +12,7 @@ use crate::notebook::{self, NoteMetadata};
 pub enum Message {
     NoteSelected(String),
     LoadNotes,
-    NotesLoaded(Vec<NoteMetadata>),
+    NotesLoaded(Result<notebook::MetadataLoadResult, String>),
     ToggleFolder(String),
     InitiateFolderRename(String),
     // Removed: ExpandToNote(String),
@@ -64,45 +64,53 @@ impl NoteExplorer {
                     Message::NotesLoaded,
                 )
             }
-            Message::NotesLoaded(notes) => {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "NoteExplorer: Received NotesLoaded message with {} notes.",
-                    notes.len()
-                );
-                self.notes = notes;
-                self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+            Message::NotesLoaded(load_result) => match load_result {
+                Ok(load_result) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "NoteExplorer: Received NotesLoaded message with {} notes.",
+                        load_result.notes.len()
+                    );
+                    self.notes = load_result.notes;
+                    self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-                let mut all_folders: HashSet<String> = HashSet::new();
-                for note in &self.notes {
-                    let path = Path::new(&note.rel_path);
-                    let mut current_folder_path = String::new();
-                    if let Some(parent) = path.parent() {
-                        for component in parent.iter() {
-                            let component_name = component.to_string_lossy().into_owned();
-                            if !current_folder_path.is_empty() {
-                                current_folder_path.push('/');
-                            }
-                            current_folder_path.push_str(&component_name);
-                            if !current_folder_path.is_empty() && current_folder_path != "." {
-                                all_folders.insert(current_folder_path.clone());
+                    let mut all_folders: HashSet<String> = HashSet::new();
+                    for note in &self.notes {
+                        let path = Path::new(&note.rel_path);
+                        let mut current_folder_path = String::new();
+                        if let Some(parent) = path.parent() {
+                            for component in parent.iter() {
+                                let component_name = component.to_string_lossy().into_owned();
+                                if !current_folder_path.is_empty() {
+                                    current_folder_path.push('/');
+                                }
+                                current_folder_path.push_str(&component_name);
+                                if !current_folder_path.is_empty() && current_folder_path != "." {
+                                    all_folders.insert(current_folder_path.clone());
+                                }
                             }
                         }
                     }
+
+                    let mut new_expanded_folders = HashMap::new();
+                    for folder_path in all_folders {
+                        let is_expanded =
+                            *self.expanded_folders.get(&folder_path).unwrap_or(&false);
+                        new_expanded_folders.insert(folder_path, is_expanded);
+                    }
+                    let is_root_expanded = *self.expanded_folders.get("").unwrap_or(&false);
+                    new_expanded_folders.insert("".to_string(), is_root_expanded);
+
+                    self.expanded_folders = new_expanded_folders;
+
+                    Task::none()
                 }
-
-                let mut new_expanded_folders = HashMap::new();
-                for folder_path in all_folders {
-                    let is_expanded = *self.expanded_folders.get(&folder_path).unwrap_or(&false);
-                    new_expanded_folders.insert(folder_path, is_expanded);
+                Err(_load_error) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("NoteExplorer: Failed to load metadata: {}", _load_error);
+                    Task::none()
                 }
-                let is_root_expanded = *self.expanded_folders.get("").unwrap_or(&false);
-                new_expanded_folders.insert("".to_string(), is_root_expanded);
-
-                self.expanded_folders = new_expanded_folders;
-
-                Task::none()
-            }
+            },
             Message::NoteSelected(_path) => Task::none(),
             Message::ToggleFolder(folder_path) => {
                 if let Some(is_expanded) = self.expanded_folders.get_mut(&folder_path) {

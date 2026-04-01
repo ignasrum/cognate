@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::components::note_explorer::{Message, NoteExplorer};
-    use crate::notebook::NoteMetadata;
+    use crate::notebook::{MetadataLoadResult, NoteMetadata};
 
     fn sample_notes() -> Vec<NoteMetadata> {
         vec![
@@ -26,7 +26,10 @@ mod tests {
     #[test]
     fn notes_loaded_sorts_and_tracks_folders() {
         let mut explorer = NoteExplorer::new("dummy".to_string());
-        let _ = explorer.update(Message::NotesLoaded(sample_notes()));
+        let _ = explorer.update(Message::NotesLoaded(Ok(MetadataLoadResult {
+            notes: sample_notes(),
+            warning: None,
+        })));
 
         let sorted_paths: Vec<String> = explorer.notes.iter().map(|n| n.rel_path.clone()).collect();
         assert_eq!(
@@ -47,7 +50,10 @@ mod tests {
     #[test]
     fn toggle_and_expand_messages_update_state() {
         let mut explorer = NoteExplorer::new("dummy".to_string());
-        let _ = explorer.update(Message::NotesLoaded(sample_notes()));
+        let _ = explorer.update(Message::NotesLoaded(Ok(MetadataLoadResult {
+            notes: sample_notes(),
+            warning: None,
+        })));
 
         assert_eq!(explorer.expanded_folders.get("a"), Some(&false));
         let _ = explorer.update(Message::ToggleFolder("a".to_string()));
@@ -69,7 +75,10 @@ mod tests {
             let _empty_view = explorer.view(None);
         }
 
-        let _ = explorer.update(Message::NotesLoaded(sample_notes()));
+        let _ = explorer.update(Message::NotesLoaded(Ok(MetadataLoadResult {
+            notes: sample_notes(),
+            warning: None,
+        })));
         let _ = explorer.update(Message::CollapseAllAndExpandToNote(
             "a/sub/note3".to_string(),
         ));

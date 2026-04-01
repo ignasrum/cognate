@@ -86,6 +86,14 @@ mod tests {
             .as_nanos()
     }
 
+    fn load_notes_or_panic(notebook_dir: &TestNotebookDir) -> Vec<NoteMetadata> {
+        block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ))
+        .expect("Expected metadata load to succeed")
+        .notes
+    }
+
     #[test]
     fn create_new_note_creates_file_and_metadata() {
         let notebook_dir = TestNotebookDir::new("create_note");
@@ -108,9 +116,7 @@ mod tests {
         assert!(notes[0].last_updated.is_some());
         assert_note_md_exists(&notebook_dir, "work/todo");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "work/todo");
         assert!(loaded[0].last_updated.is_some());
@@ -183,9 +189,7 @@ mod tests {
         assert_note_md_not_exists(&notebook_dir, "alpha");
         assert_note_md_exists(&notebook_dir, "beta");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "beta");
     }
@@ -286,9 +290,7 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].rel_path, "new/path");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "new/path");
     }
@@ -458,9 +460,7 @@ mod tests {
 
         assert_eq!(content, "hello from test");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(loaded.len(), 1);
         assert_eq!(
             loaded[0].last_updated.as_deref(),
@@ -500,9 +500,7 @@ mod tests {
         ))
         .expect("save_note_content should succeed");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(
             loaded[0].last_updated.as_deref(),
             Some("2000-01-01T00:00:00Z"),
@@ -511,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn load_notes_metadata_returns_empty_for_invalid_json() {
+    fn load_notes_metadata_errors_for_invalid_json_without_backup() {
         let notebook_dir = TestNotebookDir::new("invalid_metadata");
         fs::write(
             Path::new(notebook_dir.as_str()).join("metadata.json"),
@@ -519,11 +517,16 @@ mod tests {
         )
         .expect("Failed to write invalid metadata");
 
-        let loaded = block_on(notebook::load_notes_metadata(
+        let load_result = block_on(notebook::load_notes_metadata(
             notebook_dir.as_str().to_string(),
         ));
 
-        assert!(loaded.is_empty());
+        assert!(load_result.is_err());
+        assert!(
+            load_result
+                .expect_err("Expected invalid metadata load to fail")
+                .contains("Failed to parse metadata")
+        );
     }
 
     #[test]
@@ -546,9 +549,7 @@ mod tests {
         )
         .expect("Failed to write legacy metadata");
 
-        let loaded = block_on(notebook::load_notes_metadata(
-            notebook_dir.as_str().to_string(),
-        ));
+        let loaded = load_notes_or_panic(&notebook_dir);
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].rel_path, "legacy/note");
@@ -716,6 +717,136 @@ mod tests {
                 "renamed/note_a".to_string(),
                 "renamed/sub/note_b".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn load_notes_metadata_recovers_from_backup_when_primary_is_corrupted() {
+        let notebook_dir = TestNotebookDir::new("metadata_recovery_from_backup");
+
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json.bak"),
+            r#"{
+  "notes": [
+    {
+      "rel_path": "recovered/note",
+      "labels": ["restored"],
+      "last_updated": "2024-01-01T00:00:00Z"
+    }
+  ]
+}"#,
+        )
+        .expect("Failed to write metadata backup fixture");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json"),
+            "{ corrupt_primary_json ",
+        )
+        .expect("Failed to write corrupted metadata.json fixture");
+
+        let load_result = block_on(notebook::load_notes_metadata(
+            notebook_dir.as_str().to_string(),
+        ))
+        .expect("Expected metadata load to recover from backup");
+
+        assert_eq!(load_result.notes.len(), 1);
+        assert_eq!(load_result.notes[0].rel_path, "recovered/note");
+        assert!(
+            load_result.warning.is_some(),
+            "Recovery path should surface a warning"
+        );
+
+        let restored_primary =
+            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+                .expect("Expected metadata.json to be restored from backup");
+        assert!(
+            restored_primary.contains("recovered/note"),
+            "Primary metadata should be restored from backup contents"
+        );
+    }
+
+    #[test]
+    fn save_metadata_keeps_last_known_good_copy_and_preserves_primary_when_atomic_rename_fails() {
+        let notebook_dir = TestNotebookDir::new("metadata_backup_and_atomic_failure");
+        let initial_notes = vec![NoteMetadata {
+            rel_path: "stable/note".to_string(),
+            labels: vec!["v1".to_string()],
+            last_updated: Some("2024-01-01T00:00:00Z".to_string()),
+        }];
+        notebook::save_metadata(notebook_dir.as_str(), &initial_notes)
+            .expect("Failed to save initial metadata");
+
+        fs::write(
+            Path::new(notebook_dir.as_str()).join(".cognate_fail_atomic_rename"),
+            "fail",
+        )
+        .expect("Failed to create atomic-rename failure marker");
+
+        let updated_notes = vec![NoteMetadata {
+            rel_path: "stable/note".to_string(),
+            labels: vec!["v2".to_string()],
+            last_updated: Some("2024-01-02T00:00:00Z".to_string()),
+        }];
+        let save_result = notebook::save_metadata(notebook_dir.as_str(), &updated_notes);
+
+        assert!(
+            save_result.is_err(),
+            "Expected save to fail on simulated rename error"
+        );
+
+        let primary_after_failure =
+            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+                .expect("Failed to read metadata.json after simulated rename failure");
+        assert!(
+            primary_after_failure.contains("\"v1\""),
+            "Atomic save should keep the previous metadata.json when rename fails"
+        );
+        assert!(
+            !primary_after_failure.contains("\"v2\""),
+            "Failed atomic save must not partially apply new metadata"
+        );
+
+        let backup_after_failure =
+            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json.bak"))
+                .expect("Failed to read metadata.json.bak after simulated rename failure");
+        assert!(
+            backup_after_failure.contains("\"v1\""),
+            "Backup should preserve the last known-good metadata snapshot"
+        );
+    }
+
+    #[test]
+    fn delete_note_surfaces_failed_rollback_when_rollback_rename_fails() {
+        let notebook_dir = TestNotebookDir::new("delete_rollback_failure_surface");
+        let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
+            rel_path: "rollback/failure".to_string(),
+            labels: Vec::new(),
+            last_updated: None,
+        }];
+
+        let note_dir = Path::new(notebook_dir.as_str()).join("rollback/failure");
+        fs::create_dir_all(&note_dir).expect("Failed to create rollback target note directory");
+        fs::write(note_dir.join("note.md"), "rollback failure")
+            .expect("Failed to write rollback failure note");
+        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to create metadata trap directory");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join(".cognate_fail_delete_rollback"),
+            "fail",
+        )
+        .expect("Failed to create delete-rollback failure marker");
+
+        let delete_result = block_on(notebook::delete_note(
+            notebook_dir.as_str(),
+            "rollback/failure",
+            &mut notes,
+        ));
+
+        assert!(delete_result.is_err());
+        let error = delete_result.expect_err("Expected delete to fail");
+        assert!(
+            error.contains("Rollback failed while restoring filesystem state"),
+            "Expected explicit rollback failure message, got: {}",
+            error
         );
     }
 }
