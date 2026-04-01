@@ -33,6 +33,7 @@ Cognate is a local-first note taking desktop app built with Rust and Iced. Notes
 Use `make`:
 
 - `make build` builds in release mode
+- `make install` installs the final release app
 - `make run` runs the app
 - `make test` runs the full test suite
 - `make help` lists all targets
