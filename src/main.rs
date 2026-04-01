@@ -1,3 +1,9 @@
+//! Cognate desktop application entry point.
+//!
+//! This crate wires configuration loading and Iced application bootstrapping,
+//! then delegates feature behavior to modules under `components`, `notebook`,
+//! and `configuration`.
+
 mod components;
 mod configuration;
 
