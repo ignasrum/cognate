@@ -12,12 +12,12 @@ impl MetadataDebounceScheduler {
         let (schedule_sender, schedule_receiver) = std_mpsc::channel::<u64>();
         let (elapsed_sender, elapsed_receiver) = mpsc::unbounded::<u64>();
 
-        if let Err(error) = std::thread::Builder::new()
+        if let Err(_error) = std::thread::Builder::new()
             .name("cognate-metadata-debounce".to_string())
             .spawn(move || Self::run_worker(window, schedule_receiver, elapsed_sender))
         {
             #[cfg(debug_assertions)]
-            eprintln!("Failed to start metadata debounce worker: {}", error);
+            eprintln!("Failed to start metadata debounce worker: {}", _error);
         }
 
         (Self { schedule_sender }, elapsed_receiver)
