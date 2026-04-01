@@ -1,41 +1,24 @@
-#[path = "configuration/reader.rs"]
+//! Cognate desktop application entry point.
+//!
+//! This crate wires configuration loading and Iced application bootstrapping,
+//! then delegates feature behavior to modules under `components`, `notebook`,
+//! and `configuration`.
+
+mod components;
 mod configuration;
 
-// Declare the components module with all the submodules
-mod components {
-    // Editor module and submodules
-    pub mod editor;
-    
-    // Note explorer module
-    pub mod note_explorer {
-        #[path = "../note_explorer/note_explorer.rs"]
-        pub mod note_explorer;
-        pub use self::note_explorer::NoteExplorer;
-        pub use self::note_explorer::Message;
-    }
-    
-    // Visualizer module
-    pub mod visualizer {
-        #[path = "../visualizer/visualizer.rs"]
-        pub mod visualizer;
-        pub use self::visualizer::Visualizer;
-        pub use self::visualizer::Message;
-    }
-}
-
-mod notebook;
 mod json;
+mod notebook;
 
 #[cfg(test)]
 mod tests;
 
+use components::editor::Editor;
+use configuration::theme::convert_str_to_theme;
 use std::env;
 use std::process::exit;
 
-use components::editor::Editor;
-use iced::Application;
-
-fn main() -> iced::Result {
+pub fn main() -> iced::Result {
     let config_path_env_var = "COGNATE_CONFIG_PATH";
     let default_config_path = "./config.json";
 
@@ -49,34 +32,37 @@ fn main() -> iced::Result {
         default_config_path.to_string()
     });
 
-    // read_configuration now handles potential errors with config.json internally
-    // and always provides the embedded version.
+    // Read configuration
     let config = match configuration::read_configuration(&config_path) {
         Ok(cfg) => {
-            // Configuration read successfully (potentially with default path/theme)
             println!("Theme: {}", cfg.theme);
             println!("Notebook Path: {}", cfg.notebook_path);
+            println!("Scale: {}", cfg.scale);
             println!("App Version: {}", cfg.version);
             cfg
         }
         Err(err) => {
-            // This branch should theoretically not be reachable anymore if
-            // read_configuration always returns Ok(Config) even on config.json error.
-            // However, keeping defensive programming is good.
             eprintln!("Failed to read configuration: {}", err);
             exit(1);
         }
     };
 
-    let settings = iced::Settings {
-        window: iced::window::Settings {
-            size: iced::Size::new(1000.0, 800.0),
-            ..iced::window::Settings::default()
-        },
-        flags: config, // Pass the entire config struct as flags
-        ..iced::Settings::default()
-    };
-    let _ = Editor::run(settings);
+    // Resolve the configured theme once and use it consistently across app startup.
+    let app_theme = convert_str_to_theme(&config.theme);
 
-    Ok(())
+    let config_for_boot = config.clone();
+
+    // Setup the application with an explicit boot closure
+    let app = iced::application(
+        move || Editor::create(config_for_boot.clone()),
+        Editor::update,
+        Editor::view,
+    )
+    .title("Cognate")
+    .theme(app_theme.clone())
+    .scale_factor(Editor::scale_factor)
+    .exit_on_close_request(false)
+    .subscription(Editor::subscription);
+
+    app.run()
 }

@@ -7,13 +7,13 @@ use crate::components::editor::Message;
 pub fn about_dialog<'a>(app_version: &str) -> Element<'a, Message> {
     let about_info_column = Column::new()
         .spacing(10)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
         .push(Text::new("Cognate - Note Taking App").size(30))
         .push(Text::new(format!("Version: {}", app_version)).size(20));
 
     Container::new(about_info_column)
-        .center_x()
-        .center_y()
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -41,22 +41,23 @@ pub fn new_note_dialog<'a>(new_note_path_input: &str) -> Element<'a, Message> {
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
         .into()
 }
 
 // Move note dialog
-pub fn move_note_dialog<'a>(current_path: &str, new_path_input: &str, is_folder: bool) -> Element<'a, Message> {
+pub fn move_note_dialog<'a>(
+    current_path: &str,
+    new_path_input: &str,
+    is_folder: bool,
+) -> Element<'a, Message> {
     let prompt_text = if is_folder {
         format!(
             "Enter new relative path/name for folder '{}':",
             current_path
         )
     } else {
-        format!(
-            "Enter new relative path/name for note '{}':",
-            current_path
-        )
+        format!("Enter new relative path/name for note '{}':", current_path)
     };
 
     Column::new()
@@ -85,6 +86,36 @@ pub fn move_note_dialog<'a>(current_path: &str, new_path_input: &str, is_folder:
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_items(iced::Alignment::Center)
+        .align_x(iced::Alignment::Center)
+        .into()
+}
+
+pub fn confirm_embedded_image_delete_dialog<'a>(count: usize) -> Element<'a, Message> {
+    let noun = if count == 1 { "image" } else { "images" };
+    let prompt = format!(
+        "Delete {count} {noun} from this note?\nThis also deletes the corresponding image file(s)."
+    );
+
+    Column::new()
+        .push(Text::new(prompt))
+        .push(
+            Row::new()
+                .push(
+                    button("Delete")
+                        .padding(5)
+                        .on_press(Message::ConfirmDeleteEmbeddedImages(true)),
+                )
+                .push(
+                    button("Keep")
+                        .padding(5)
+                        .on_press(Message::ConfirmDeleteEmbeddedImages(false)),
+                )
+                .spacing(10),
+        )
+        .spacing(10)
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
         .into()
 }

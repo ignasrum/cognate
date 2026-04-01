@@ -5,20 +5,23 @@
       "labels": [
         "label1",
         "test"
-      ]
+      ],
+      "last_updated": "2026-03-10T12:00:00Z"
     },
     {
       "rel_path": "note2",
       "labels": [
         "label1",
         "label2"
-      ]
+      ],
+      "last_updated": "2026-03-10T12:05:00Z"
     },
     {
       "rel_path": "note3",
       "labels": [
         "test"
-      ]
+      ],
+      "last_updated": "2026-03-10T12:10:00Z"
     }
   ]
 }

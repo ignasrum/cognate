@@ -1,188 +1,251 @@
 use crate::notebook::NoteMetadata;
-use iced::{
-    Element, Length, Theme,
-    widget::{Button, Column, Container, Row, Scrollable, Text},
-};
-use std::collections::{HashMap, HashSet};
+use iced::widget::{Column, Container, Text, canvas, container};
+use iced::{Color, Element, Length, Point, Theme, task::Task};
+#[cfg(test)]
+use std::collections::HashSet;
+use std::time::Instant;
+
+#[path = "core/canvas_impl.rs"]
+mod canvas_impl;
+#[path = "core/graph_cache.rs"]
+mod graph_cache;
+#[path = "core/math.rs"]
+mod math;
+
+const DEFAULT_CAMERA_YAW: f32 = 0.0;
+const DEFAULT_CAMERA_PITCH: f32 = -0.15;
+const DEFAULT_CAMERA_ZOOM: f32 = 1.0;
+const MIN_CAMERA_ZOOM: f32 = 0.55;
+const MAX_CAMERA_ZOOM: f32 = 4.0;
+const MAX_LABEL_LENGTH: usize = 32;
+const MAX_DOUBLE_CLICK_INTERVAL_MS: u128 = 300;
+const MAX_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const CAMERA_TRANSITION_DURATION_MS: f32 = 320.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    UpdateNotes(Vec<NoteMetadata>),
+    FocusOnNote(Option<String>),
     NoteSelectedInVisualizer(String),
-    ToggleLabel(String),
+}
+
+#[derive(Debug, Clone)]
+struct GraphNode {
+    note_path: String,
+    labels: Vec<String>,
+    position: [f32; 3],
+    degree: usize,
+}
+
+#[derive(Debug, Clone)]
+struct GraphEdge {
+    start: usize,
+    end: usize,
+    shared_labels: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GraphCache {
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    max_shared_labels_per_edge: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectedNode {
+    index: usize,
+    point: Point,
+    radius: f32,
+    depth: f32,
+}
+
+#[derive(Debug, Clone)]
+struct GraphProgram {
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    max_shared_labels_per_edge: usize,
+    selected_note_path: Option<String>,
+    focus_yaw: f32,
+    focus_pitch: f32,
+    focus_zoom: f32,
+    focus_version: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CameraTransition {
+    from_yaw: f32,
+    from_pitch: f32,
+    from_zoom: f32,
+    to_yaw: f32,
+    to_pitch: f32,
+    to_zoom: f32,
+    started_at: Instant,
+}
+
+#[derive(Debug)]
+struct GraphCanvasState {
+    yaw: f32,
+    pitch: f32,
+    zoom: f32,
+    drag_anchor: Option<Point>,
+    drag_origin_yaw: f32,
+    drag_origin_pitch: f32,
+    hovered_node_index: Option<usize>,
+    last_node_click: Option<(usize, Point, Instant)>,
+    camera_transition: Option<CameraTransition>,
+    center_note_path: Option<String>,
+    center_transition_from_note: Option<String>,
+    center_transition_to_note: Option<String>,
+    center_transition_blend: f32,
+    applied_focus_version: u64,
 }
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
-    pub notes: Vec<NoteMetadata>,
-    pub expanded_labels: HashMap<String, bool>,
+    note_count: usize,
+    graph_cache: GraphCache,
+    focus_target_note: Option<String>,
+    focus_yaw: f32,
+    focus_pitch: f32,
+    focus_zoom: f32,
+    focus_version: u64,
 }
 
 impl Visualizer {
     pub fn new() -> Self {
         Self {
-            notes: Vec::new(),
-            expanded_labels: HashMap::new(),
+            note_count: 0,
+            graph_cache: GraphCache::default(),
+            focus_target_note: None,
+            focus_yaw: DEFAULT_CAMERA_YAW,
+            focus_pitch: DEFAULT_CAMERA_PITCH,
+            focus_zoom: DEFAULT_CAMERA_ZOOM,
+            focus_version: 1,
         }
     }
 
-    pub fn update(&mut self, message: Message) -> iced::Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::UpdateNotes(notes) => {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Visualizer: Received UpdateNotes message with {} notes.",
-                    notes.len()
-                );
-                self.notes = notes;
-                // Update expanded_labels to include new labels, keeping existing state
-                let mut all_labels: HashSet<String> = HashSet::new();
-                for note in &self.notes {
-                    for label in &note.labels {
-                        all_labels.insert(label.clone());
-                    }
-                }
-                let mut new_expanded_labels = HashMap::new();
-                for label in all_labels {
-                    // Change default from true to false here
-                    let is_expanded = *self.expanded_labels.get(&label).unwrap_or(&false);
-                    new_expanded_labels.insert(label, is_expanded);
-                }
-                self.expanded_labels = new_expanded_labels;
+            Message::FocusOnNote(note_path) => {
+                self.apply_focus_target(note_path);
+                Task::none()
+            }
+            Message::NoteSelectedInVisualizer(_) => Task::none(),
+        }
+    }
 
-                iced::Command::none()
-            }
-            Message::NoteSelectedInVisualizer(_path) => iced::Command::none(),
-            Message::ToggleLabel(label) => {
-                if let Some(is_expanded) = self.expanded_labels.get_mut(&label) {
-                    *is_expanded = !*is_expanded;
-                    #[cfg(debug_assertions)]
-                    eprintln!("Toggled label '{}' to expanded: {}", label, *is_expanded);
-                } else {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Attempted to toggle non-existent label: {}", label);
-                }
-                iced::Command::none()
-            }
+    pub fn sync_notes(&mut self, notes: &[NoteMetadata]) {
+        self.note_count = notes.len();
+        self.rebuild_graph_cache(notes);
+        if self.focus_target_note.is_some() {
+            let (yaw, pitch, zoom) = self.calculate_focus_camera(self.focus_target_note.as_deref());
+            self.focus_yaw = yaw;
+            self.focus_pitch = pitch;
+            self.focus_zoom = zoom;
+            self.focus_version = self.focus_version.wrapping_add(1);
         }
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
-        let mut content = Column::new().spacing(10);
+        let mut content = Column::new()
+            .spacing(12)
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-        if self.notes.is_empty() {
+        if self.note_count == 0 {
             content = content.push(Text::new(
                 "No notes available for visualization. Open a notebook first.",
             ));
-        } else {
-            content = content.push(Text::new("Notes Grouped by Label:"));
-
-            // Group notes by label
-            let mut notes_by_label: HashMap<String, Vec<&NoteMetadata>> = HashMap::new();
-            let mut notes_without_labels: Vec<&NoteMetadata> = Vec::new();
-            let mut all_labels: HashSet<String> = HashSet::new();
-
-            for note in &self.notes {
-                if note.labels.is_empty() {
-                    notes_without_labels.push(note);
-                } else {
-                    for label in &note.labels {
-                        notes_by_label
-                            .entry(label.clone())
-                            .or_insert_with(Vec::new)
-                            .push(note);
-                        all_labels.insert(label.clone());
-                    }
-                }
-            }
-
-            // Display notes without labels first
-            if !notes_without_labels.is_empty() {
-                let mut no_label_column = Column::new().spacing(5);
-                no_label_column = no_label_column.push(Text::new("No Labels:").size(18).style(
-                    iced::theme::Text::Color(iced::Color::from_rgb(0.7, 0.7, 0.7)),
-                ));
-
-                let mut sorted_notes_without_labels = notes_without_labels.clone();
-                sorted_notes_without_labels.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-
-                for note in sorted_notes_without_labels {
-                    // Use rel_path instead of file_name()
-                    let note_path = note.rel_path.clone();
-
-                    let note_button = Button::new(Text::new(format!("- {}", note_path)).size(16))
-                        .on_press(Message::NoteSelectedInVisualizer(note.rel_path.clone()))
-                        .style(iced::theme::Button::Text);
-
-                    no_label_column = no_label_column.push(note_button);
-                }
-                content = content.push(
-                    Container::new(no_label_column)
-                        .style(iced::theme::Container::Box)
-                        .padding(5)
-                        .width(Length::Fill),
-                );
-            }
-
-            // Sort labels for consistent display
-            let mut sorted_labels: Vec<String> = all_labels.into_iter().collect();
-            sorted_labels.sort();
-
-            // Display notes grouped by label
-            for label in sorted_labels {
-                if let Some(notes_with_label) = notes_by_label.get(&label) {
-                    let is_expanded = *self.expanded_labels.get(&label).unwrap_or(&false); // Default to collapsed
-
-                    let mut label_header_row =
-                        Row::new().spacing(5).align_items(iced::Alignment::Center);
-                    let indicator = if is_expanded { 'v' } else { '>' };
-
-                    label_header_row = label_header_row.push(
-                        Button::new(
-                            Text::new(format!("{} {}", indicator, label))
-                                .size(20)
-                                .style(iced::theme::Text::Color(iced::Color::from_rgb(
-                                    0.0, 0.9, 1.0,
-                                )))
-                                .shaping(iced::widget::text::Shaping::Advanced),
-                        )
-                        .on_press(Message::ToggleLabel(label.clone()))
-                        .style(iced::theme::Button::Text),
-                    );
-
-                    let mut label_column = Column::new().spacing(5).push(label_header_row);
-
-                    if is_expanded {
-                        let mut sorted_notes_with_label = notes_with_label.clone();
-                        sorted_notes_with_label.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-
-                        for note in sorted_notes_with_label {
-                            // Use rel_path instead of file_name()
-                            let note_path = note.rel_path.clone();
-
-                            let note_button =
-                                Button::new(Text::new(format!("- {}", note_path)).size(16))
-                                    .on_press(Message::NoteSelectedInVisualizer(
-                                        note.rel_path.clone(),
-                                    ))
-                                    .style(iced::theme::Button::Text);
-
-                            label_column = label_column.push(note_button);
-                        }
-                    }
-
-                    content = content.push(
-                        Container::new(label_column)
-                            .style(iced::theme::Container::Box)
-                            .padding(5)
-                            .width(Length::Fill),
-                    );
-                }
-            }
+            return Container::new(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
         }
 
-        let padded_content = content.padding(20);
+        let isolated_note_count = self
+            .graph_cache
+            .nodes
+            .iter()
+            .filter(|node| node.degree == 0)
+            .count();
 
-        Scrollable::new(padded_content).into()
+        content = content
+            .push(
+                Text::new(format!(
+                    "{} notes | {} label links | {} isolated notes",
+                    self.graph_cache.nodes.len(),
+                    self.graph_cache.edges.len(),
+                    isolated_note_count
+                ))
+                .size(15),
+            )
+            .push(
+                Text::new(
+                    "Click a node to center it. Double-click to open it. Drag to orbit. Scroll to zoom. Edges mean shared labels.",
+                )
+                .size(14)
+                .style(|_theme: &Theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgba(0.88, 0.92, 0.99, 0.88)),
+                }),
+            );
+
+        let graph_program = GraphProgram {
+            nodes: self.graph_cache.nodes.clone(),
+            edges: self.graph_cache.edges.clone(),
+            max_shared_labels_per_edge: self.graph_cache.max_shared_labels_per_edge,
+            selected_note_path: self.focus_target_note.clone(),
+            focus_yaw: self.focus_yaw,
+            focus_pitch: self.focus_pitch,
+            focus_zoom: self.focus_zoom,
+            focus_version: self.focus_version,
+        };
+
+        let graph_canvas = canvas::Canvas::new(graph_program)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        content = content.push(
+            Container::new(graph_canvas)
+                .padding(4)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb(0.04, 0.06, 0.10))),
+                    text_color: None,
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: Color::from_rgba(0.55, 0.72, 0.94, 0.35),
+                    },
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                })
+                .width(Length::Fill)
+                .height(Length::Fill),
+        );
+
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_graph_stats(&self) -> (usize, usize, usize) {
+        let unique_label_count = self
+            .graph_cache
+            .nodes
+            .iter()
+            .flat_map(|node| node.labels.iter().cloned())
+            .collect::<HashSet<_>>()
+            .len();
+        (
+            self.graph_cache.nodes.len(),
+            self.graph_cache.edges.len(),
+            unique_label_count,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notes_len(&self) -> usize {
+        self.note_count
     }
 }

@@ -1,10 +1,16 @@
-// Re-export everything publicly from the editor module
-pub mod editor;
-pub use editor::Editor;
-pub use editor::Message;
+//! Editor component module.
+//!
+//! Exposes editor state/actions/ui modules and re-exports the `Editor`
+//! application type with its top-level message enum.
 
-// Make these modules public so they can be referenced from editor.rs
+pub mod actions;
+pub(crate) mod note_coordinator;
 pub mod state;
 pub mod text_management;
 pub mod ui;
-pub mod actions;
+
+#[path = "editor.rs"]
+mod core;
+
+pub use core::Editor;
+pub use core::Message;

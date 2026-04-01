@@ -1,1 +1,3 @@
-pub mod reader; // Declare the reader module as public
+//! JSON utility helpers shared across higher-level modules.
+
+pub mod reader;

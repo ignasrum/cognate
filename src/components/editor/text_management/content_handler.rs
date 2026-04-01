@@ -1,10 +1,22 @@
-use iced::widget::text_editor::{Action, Content, Edit, Motion};
-use iced::Command;
+use iced::task::Task;
+use iced::widget::text_editor::{Action, Content, Edit}; // Use Task instead of Command
 
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::notebook;
+
+fn should_debounce_undo_for_edit(edit: &Edit) -> bool {
+    matches!(
+        edit,
+        Edit::Insert(_)
+            | Edit::Backspace
+            | Edit::Delete
+            | Edit::Enter
+            | Edit::Indent
+            | Edit::Unindent
+    )
+}
 
 // Handler for tab key press
 pub fn handle_tab_key(
@@ -13,11 +25,12 @@ pub fn handle_tab_key(
     selected_note_path: Option<&String>,
     notebook_path: &str,
     state: &EditorState,
-) -> Command<Message> {
+) -> Task<Message> {
     if selected_note_path.is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         #[cfg(debug_assertions)]
@@ -38,37 +51,32 @@ pub fn handle_tab_key(
                 "Editor: Handling Tab: Saving content for note: {}",
                 note_path
             );
-            return Command::perform(
-                async move {
-                    notebook::save_note_content(notebook_path, note_path, content_text).await
-                },
+            return Task::perform(
+                async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
                 Message::NoteContentSaved,
             );
         }
     }
-    Command::none()
+    Task::none()
 }
 
 // Handler for select all action
-pub fn handle_select_all(
-    content: &mut Content,
-    state: &EditorState,
-) -> Command<Message> {
+pub fn handle_select_all(content: &mut Content, state: &EditorState) -> Task<Message> {
     if state.selected_note_path().is_some()
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
         #[cfg(debug_assertions)]
         eprintln!("Editor: Handling SelectAll message.");
-        
-        // Perform the SelectAll action
-        // First move cursor to start, then select to end
-        content.perform(Action::Move(Motion::DocumentStart));
-        content.perform(Action::Select(Motion::DocumentEnd));
+
+        // Use the built-in SelectAll action so selection semantics stay
+        // consistent with keyboard shortcuts and double-click word selection.
+        content.perform(Action::SelectAll);
     }
-    Command::none()
+    Task::none()
 }
 
 // Handler for editor actions
@@ -80,27 +88,31 @@ pub fn handle_editor_action(
     selected_note_path: Option<&String>,
     notebook_path: &str,
     state: &EditorState,
-) -> Command<Message> {
-    if selected_note_path.is_some()
+) -> Task<Message> {
+    if let Some(selected_path) = selected_note_path
         && !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
-        // Save the current state to history before performing the action
-        // Only save if this is a modifying action (Edit)
-        if matches!(action, Action::Edit(_)) && selected_note_path.is_some() {
-            let note_path = selected_note_path.unwrap().clone();
-            undo_manager.add_to_history(&note_path, markdown_text.clone());
-        }
-        
         #[cfg(debug_assertions)]
         eprintln!("Editor: Performing EditorAction: {:?}", action);
-        content.perform(action);
 
-        *markdown_text = content.text();
+        if let Action::Edit(edit) = &action {
+            // Save the current state to history before applying an actual text edit.
+            if should_debounce_undo_for_edit(edit) {
+                undo_manager.add_to_history_debounced(
+                    selected_path,
+                    markdown_text.clone(),
+                    content.cursor(),
+                );
+            } else {
+                undo_manager.add_to_history(selected_path, markdown_text.clone(), content.cursor());
+            }
+            content.perform(action);
+            *markdown_text = content.text();
 
-        if let Some(selected_path) = selected_note_path {
             let notebook_path_clone = notebook_path.to_string();
             let note_path_clone = selected_path.clone();
             let content_text = markdown_text.clone();
@@ -109,44 +121,54 @@ pub fn handle_editor_action(
                 "Editor: Performing EditorAction: Saving content for note: {}",
                 note_path_clone
             );
-            return Command::perform(
+            return Task::perform(
                 async move {
-                    notebook::save_note_content(notebook_path_clone, note_path_clone, content_text).await
+                    notebook::save_note_content(notebook_path_clone, note_path_clone, content_text)
+                        .await
                 },
                 Message::NoteContentSaved,
             );
         }
+
+        // Non-edit text editor actions (cursor movement, selection, focus) should not
+        // persist content or update timestamps.
+        content.perform(action);
     }
-    Command::none()
+    Task::none()
 }
 
-// Handler for content changed
-pub fn handle_content_changed(
+pub fn handle_loaded_note_content(
     content: &mut Content,
     markdown_text: &mut String,
     undo_manager: &mut UndoManager,
     state: &mut EditorState,
+    loaded_note_path: String,
     new_content: String,
-) -> Command<Message> {
+) -> Task<Message> {
     if !state.show_visualizer()
         && !state.show_move_note_input()
         && !state.show_new_note_input()
+        && !state.show_embedded_image_delete_confirmation()
         && !state.show_about_info()
     {
-        if let Some(note_path) = state.selected_note_path() {
-            // Check if we're loading a note (switching between notes)
-            if state.is_loading_note() {
-                undo_manager.handle_initial_content(note_path, &new_content);
-                // Reset the loading flag
-                state.set_loading_note(false);
-            } else if !markdown_text.is_empty() && *markdown_text != new_content {
-                // This is a regular content change, not a note switch
-                undo_manager.add_to_history(note_path, markdown_text.clone());
-            }
+        if state.selected_note_path() != Some(&loaded_note_path) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Ignoring stale loaded content for '{}'; current selection is '{:?}'.",
+                loaded_note_path,
+                state.selected_note_path()
+            );
+            return Task::none();
+        }
+
+        if state.is_loading_note() {
+            undo_manager.handle_initial_content(&loaded_note_path, &new_content);
+            state.set_loading_note(false);
         }
 
         *content = Content::with_text(&new_content);
         *markdown_text = new_content;
     }
-    Command::none()
+
+    Task::none()
 }

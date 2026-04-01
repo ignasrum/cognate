@@ -1,15 +1,18 @@
 use iced::widget::{Button, Column, Container, Row, Scrollable, Text};
-use iced::{Command, Element, Length};
+use iced::{Element, Length, task::Task};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::notebook::{self, NoteMetadata};
+// Import the correct styling types - button directly
+use iced::widget::button;
+
+use crate::notebook::{self, NoteMetadata, NotebookError};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     NoteSelected(String),
     LoadNotes,
-    NotesLoaded(Vec<NoteMetadata>),
+    NotesLoaded(Result<notebook::MetadataLoadResult, NotebookError>),
     ToggleFolder(String),
     InitiateFolderRename(String),
     // Removed: ExpandToNote(String),
@@ -26,8 +29,6 @@ enum NodeOwned {
     },
     NoteDir {
         name: String,
-        #[allow(dead_code)]
-        metadata: NoteMetadata,
         path: String,
     },
     Placeholder,
@@ -49,7 +50,7 @@ impl NoteExplorer {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::LoadNotes => {
                 #[cfg(debug_assertions)]
@@ -58,52 +59,59 @@ impl NoteExplorer {
                     self.notebook_path
                 );
                 let notebook_path = self.notebook_path.clone();
-                Command::perform(
+                Task::perform(
                     notebook::load_notes_metadata(notebook_path),
                     Message::NotesLoaded,
                 )
             }
-            Message::NotesLoaded(notes) => {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "NoteExplorer: Received NotesLoaded message with {} notes.",
-                    notes.len()
-                );
-                self.notes = notes;
-                self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+            Message::NotesLoaded(load_result) => match load_result {
+                Ok(load_result) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "NoteExplorer: Received NotesLoaded message with {} notes.",
+                        load_result.notes.len()
+                    );
+                    self.notes = load_result.notes;
+                    self.notes.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-                let mut all_folders: HashSet<String> = HashSet::new();
-                for note in &self.notes {
-                    let path = Path::new(&note.rel_path);
-                    let mut current_folder_path = String::new();
-                    if let Some(parent) = path.parent() {
-                        for component in parent.iter() {
-                            let component_name = component.to_string_lossy().into_owned();
-                            if !current_folder_path.is_empty() {
-                                current_folder_path.push('/');
-                            }
-                            current_folder_path.push_str(&component_name);
-                            if !current_folder_path.is_empty() && current_folder_path != "." {
-                                all_folders.insert(current_folder_path.clone());
+                    let mut all_folders: HashSet<String> = HashSet::new();
+                    for note in &self.notes {
+                        let path = Path::new(&note.rel_path);
+                        let mut current_folder_path = String::new();
+                        if let Some(parent) = path.parent() {
+                            for component in parent.iter() {
+                                let component_name = component.to_string_lossy().into_owned();
+                                if !current_folder_path.is_empty() {
+                                    current_folder_path.push('/');
+                                }
+                                current_folder_path.push_str(&component_name);
+                                if !current_folder_path.is_empty() && current_folder_path != "." {
+                                    all_folders.insert(current_folder_path.clone());
+                                }
                             }
                         }
-                    } else {
                     }
+
+                    let mut new_expanded_folders = HashMap::new();
+                    for folder_path in all_folders {
+                        let is_expanded =
+                            *self.expanded_folders.get(&folder_path).unwrap_or(&false);
+                        new_expanded_folders.insert(folder_path, is_expanded);
+                    }
+                    let is_root_expanded = *self.expanded_folders.get("").unwrap_or(&false);
+                    new_expanded_folders.insert("".to_string(), is_root_expanded);
+
+                    self.expanded_folders = new_expanded_folders;
+
+                    Task::none()
                 }
-
-                let mut new_expanded_folders = HashMap::new();
-                for folder_path in all_folders {
-                    let is_expanded = *self.expanded_folders.get(&folder_path).unwrap_or(&false);
-                    new_expanded_folders.insert(folder_path, is_expanded);
+                Err(_load_error) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("NoteExplorer: Failed to load metadata: {}", _load_error);
+                    Task::none()
                 }
-                let is_root_expanded = *self.expanded_folders.get("").unwrap_or(&false);
-                new_expanded_folders.insert("".to_string(), is_root_expanded);
-
-                self.expanded_folders = new_expanded_folders;
-
-                Command::none()
-            }
-            Message::NoteSelected(_path) => Command::none(),
+            },
+            Message::NoteSelected(_path) => Task::none(),
             Message::ToggleFolder(folder_path) => {
                 if let Some(is_expanded) = self.expanded_folders.get_mut(&folder_path) {
                     *is_expanded = !*is_expanded;
@@ -119,9 +127,9 @@ impl NoteExplorer {
                         folder_path
                     );
                 }
-                Command::none()
+                Task::none()
             }
-            Message::InitiateFolderRename(_folder_path) => Command::none(),
+            Message::InitiateFolderRename(_folder_path) => Task::none(),
             Message::CollapseAllAndExpandToNote(note_path) => {
                 #[cfg(debug_assertions)]
                 eprintln!(
@@ -148,7 +156,7 @@ impl NoteExplorer {
                         break;
                     }
                 }
-                Command::none()
+                Task::none()
             }
         }
     }
@@ -182,7 +190,6 @@ impl NoteExplorer {
                 if is_last_component {
                     let note_dir_node = NodeOwned::NoteDir {
                         name: component_name.clone(),
-                        metadata: note.clone(),
                         path: note.rel_path.clone(),
                     };
                     current_nodes_list.push(note_dir_node);
@@ -237,7 +244,7 @@ impl NoteExplorer {
             }
         }
 
-        fn sort_owned_nodes(nodes: &mut Vec<NodeOwned>) {
+        fn sort_owned_nodes(nodes: &mut [NodeOwned]) {
             nodes.sort_by(|a, b| match (a, b) {
                 (
                     NodeOwned::Folder { name: name_a, .. },
@@ -266,11 +273,10 @@ impl NoteExplorer {
     }
 
     fn render_owned_nodes(
-        &self,
         nodes: &[NodeOwned],
-        selected_note_path: Option<&String>,
+        selected_note_path: Option<&str>,
         indent_level: usize,
-    ) -> Column<'_, Message> {
+    ) -> Column<'static, Message> {
         let mut column = Column::new().spacing(3);
         let indent_space = "  ".repeat(indent_level);
 
@@ -291,20 +297,20 @@ impl NoteExplorer {
                         .push(indicator_text)
                         .push(folder_name_text)
                         .spacing(3) // Adjust spacing between indicator and name
-                        .align_items(iced::Alignment::Center);
+                        .align_y(iced::Alignment::Center);
 
                     let folder_button = Button::new(folder_content_row)
                         .on_press(Message::ToggleFolder(folder_path.clone()))
-                        .style(iced::theme::Button::Text)
+                        .style(button::text) // Use button styling function
                         .width(Length::Fill);
 
                     let mut folder_row = Row::new().push(folder_button);
 
                     if !folder_path.is_empty() {
                         folder_row = folder_row.push(
-                            Button::new(Text::new("Rename").size(14))
+                            Button::new(Text::new("Move").size(14))
                                 .on_press(Message::InitiateFolderRename(folder_path.clone()))
-                                .style(iced::theme::Button::Secondary)
+                                .style(button::secondary) // Use button styling function
                                 .padding(3)
                                 .width(Length::Shrink),
                         );
@@ -312,14 +318,13 @@ impl NoteExplorer {
 
                     folder_row = folder_row
                         .spacing(5)
-                        .align_items(iced::Alignment::Center)
-                        // Add a width constraint to prevent scrollbar overlap
+                        .align_y(iced::Alignment::Center)
                         .width(Length::Fill);
 
                     column = column.push(folder_row);
 
                     if *is_expanded {
-                        column = column.push(self.render_owned_nodes(
+                        column = column.push(Self::render_owned_nodes(
                             children,
                             selected_note_path,
                             indent_level + 1,
@@ -329,14 +334,14 @@ impl NoteExplorer {
                 NodeOwned::NoteDir {
                     name,
                     path: note_path,
-                    // Corrected the pattern here
                     ..
                 } => {
-                    let is_selected = Some(note_path) == selected_note_path;
+                    let is_selected =
+                        selected_note_path.is_some_and(|selected_path| note_path == selected_path);
                     let button_style = if is_selected {
-                        iced::theme::Button::Primary
+                        button::primary // Use button styling function
                     } else {
-                        iced::theme::Button::Text
+                        button::text // Use button styling function
                     };
 
                     let note_button_text = format!("{}o {}", indent_space, name);
@@ -363,15 +368,19 @@ impl NoteExplorer {
             column = column.push(Text::new("No notes found."));
         } else {
             let root_tree = NoteExplorer::build_owned_tree(&self.notes, &self.expanded_folders);
-            let tree_view = self.render_owned_nodes(&root_tree, selected_note_path, 0);
+            let tree_view = Self::render_owned_nodes(
+                &root_tree,
+                selected_note_path.map(|path| path.as_str()),
+                0,
+            );
             column = column.push(tree_view);
         }
 
         // Wrap the column in a container with right padding to avoid scrollbar overlap
         Scrollable::new(
             Container::new(column)
-                .padding([0, 15, 0, 0]) // top, right, bottom, left padding
-                .width(Length::Fill)
+                .padding([0.0, 15.0])
+                .width(Length::Fill),
         )
         .into()
     }
