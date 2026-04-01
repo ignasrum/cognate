@@ -1,7 +1,6 @@
 use crate::notebook::NoteMetadata;
 use iced::widget::{Column, Container, Text, canvas, container};
 use iced::{Color, Element, Length, Point, Theme, task::Task};
-use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::time::Instant;
@@ -103,9 +102,8 @@ struct GraphCanvasState {
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
-    pub notes: Vec<NoteMetadata>,
-    graph_cache: RefCell<GraphCache>,
-    graph_cache_key: Cell<Option<u64>>,
+    notes: Vec<NoteMetadata>,
+    graph_cache: GraphCache,
     focus_target_note: Option<String>,
     focus_yaw: f32,
     focus_pitch: f32,
@@ -117,8 +115,7 @@ impl Visualizer {
     pub fn new() -> Self {
         Self {
             notes: Vec::new(),
-            graph_cache: RefCell::new(GraphCache::default()),
-            graph_cache_key: Cell::new(None),
+            graph_cache: GraphCache::default(),
             focus_target_note: None,
             focus_yaw: DEFAULT_CAMERA_YAW,
             focus_pitch: DEFAULT_CAMERA_PITCH,
@@ -131,7 +128,15 @@ impl Visualizer {
         match message {
             Message::UpdateNotes(notes) => {
                 self.notes = notes;
-                self.refresh_graph_cache_if_needed();
+                self.rebuild_graph_cache();
+                if self.focus_target_note.is_some() {
+                    let (yaw, pitch, zoom) =
+                        self.calculate_focus_camera(self.focus_target_note.as_deref());
+                    self.focus_yaw = yaw;
+                    self.focus_pitch = pitch;
+                    self.focus_zoom = zoom;
+                    self.focus_version = self.focus_version.wrapping_add(1);
+                }
                 Task::none()
             }
             Message::FocusOnNote(note_path) => {
@@ -143,9 +148,6 @@ impl Visualizer {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme> {
-        self.refresh_graph_cache_if_needed();
-        let graph_cache = self.graph_cache.borrow();
-
         let mut content = Column::new()
             .spacing(12)
             .padding(16)
@@ -162,7 +164,8 @@ impl Visualizer {
                 .into();
         }
 
-        let isolated_note_count = graph_cache
+        let isolated_note_count = self
+            .graph_cache
             .nodes
             .iter()
             .filter(|node| node.degree == 0)
@@ -172,8 +175,8 @@ impl Visualizer {
             .push(
                 Text::new(format!(
                     "{} notes | {} label links | {} isolated notes",
-                    graph_cache.nodes.len(),
-                    graph_cache.edges.len(),
+                    self.graph_cache.nodes.len(),
+                    self.graph_cache.edges.len(),
                     isolated_note_count
                 ))
                 .size(15),
@@ -189,9 +192,9 @@ impl Visualizer {
             );
 
         let graph_program = GraphProgram {
-            nodes: graph_cache.nodes.clone(),
-            edges: graph_cache.edges.clone(),
-            max_shared_labels_per_edge: graph_cache.max_shared_labels_per_edge,
+            nodes: self.graph_cache.nodes.clone(),
+            edges: self.graph_cache.edges.clone(),
+            max_shared_labels_per_edge: self.graph_cache.max_shared_labels_per_edge,
             selected_note_path: self.focus_target_note.clone(),
             focus_yaw: self.focus_yaw,
             focus_pitch: self.focus_pitch,
@@ -229,14 +232,22 @@ impl Visualizer {
 
     #[cfg(test)]
     pub(crate) fn debug_graph_stats(&self) -> (usize, usize, usize) {
-        self.refresh_graph_cache_if_needed();
-        let cache = self.graph_cache.borrow();
-        let unique_label_count = cache
+        let unique_label_count = self
+            .graph_cache
             .nodes
             .iter()
             .flat_map(|node| node.labels.iter().cloned())
             .collect::<HashSet<_>>()
             .len();
-        (cache.nodes.len(), cache.edges.len(), unique_label_count)
+        (
+            self.graph_cache.nodes.len(),
+            self.graph_cache.edges.len(),
+            unique_label_count,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notes_len(&self) -> usize {
+        self.notes.len()
     }
 }

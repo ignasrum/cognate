@@ -1,6 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use crate::notebook::NoteMetadata;
 
@@ -14,29 +12,6 @@ use super::{
 };
 
 impl Visualizer {
-    pub(super) fn compute_notes_cache_key(&self) -> u64 {
-        let mut normalized_notes: Vec<(String, Vec<String>)> = self
-            .notes
-            .iter()
-            .map(|note| {
-                let labels = normalize_labels(&note.labels);
-                (note.rel_path.clone(), labels)
-            })
-            .collect();
-
-        normalized_notes.sort_by(|left, right| left.0.cmp(&right.0));
-
-        let mut hasher = DefaultHasher::new();
-        for (path, labels) in normalized_notes {
-            path.hash(&mut hasher);
-            for label in labels {
-                label.hash(&mut hasher);
-            }
-        }
-
-        hasher.finish()
-    }
-
     pub(super) fn build_graph_cache(notes: &[NoteMetadata]) -> GraphCache {
         let mut normalized_notes: Vec<(String, Vec<String>)> = notes
             .iter()
@@ -129,15 +104,8 @@ impl Visualizer {
         }
     }
 
-    pub(super) fn refresh_graph_cache_if_needed(&self) {
-        let cache_key = self.compute_notes_cache_key();
-        if self.graph_cache_key.get() == Some(cache_key) {
-            return;
-        }
-
-        let graph = Self::build_graph_cache(&self.notes);
-        *self.graph_cache.borrow_mut() = graph;
-        self.graph_cache_key.set(Some(cache_key));
+    pub(super) fn rebuild_graph_cache(&mut self) {
+        self.graph_cache = Self::build_graph_cache(&self.notes);
     }
 
     pub(super) fn calculate_focus_camera(&self, target_note: Option<&str>) -> (f32, f32, f32) {
@@ -149,8 +117,12 @@ impl Visualizer {
             );
         };
 
-        let cache = self.graph_cache.borrow();
-        let Some(node) = cache.nodes.iter().find(|node| node.note_path == note_path) else {
+        let Some(node) = self
+            .graph_cache
+            .nodes
+            .iter()
+            .find(|node| node.note_path == note_path)
+        else {
             return (
                 DEFAULT_CAMERA_YAW,
                 DEFAULT_CAMERA_PITCH,
@@ -168,7 +140,6 @@ impl Visualizer {
 
     pub(super) fn apply_focus_target(&mut self, target_note: Option<String>) {
         self.focus_target_note = target_note;
-        self.refresh_graph_cache_if_needed();
 
         let (yaw, pitch, zoom) = self.calculate_focus_camera(self.focus_target_note.as_deref());
         self.focus_yaw = yaw;

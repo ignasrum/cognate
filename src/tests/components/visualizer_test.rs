@@ -52,7 +52,7 @@ mod tests {
         let mut visualizer = Visualizer::new();
         let _ = visualizer.update(Message::UpdateNotes(sample_notes()));
 
-        assert_eq!(visualizer.notes.len(), 3);
+        assert_eq!(visualizer.notes_len(), 3);
         assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
 
         let _ = visualizer.update(Message::FocusOnNote(Some("x/n2".to_string())));
