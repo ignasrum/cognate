@@ -1,4 +1,5 @@
 use super::*;
+use native_dialog::{DialogBuilder, MessageLevel};
 
 impl Editor {
     pub(super) fn handle_label_messages(state: &mut Self, message: Message) -> Task<Message> {
@@ -130,7 +131,7 @@ impl Editor {
 
                 Task::perform(
                     async move {
-                        let result = flush_editor_state_for_shutdown(
+                        let result = note_coordinator::flush_for_shutdown(
                             &notebook_path,
                             content_note_path,
                             &markdown_text,
@@ -334,11 +335,7 @@ impl Editor {
 
         if state.markdown_text != previous_markdown {
             if state.state.selected_note_path().is_none() {
-                state.embedded_images.clear();
-                state.embedded_image_handles.clear();
-                state.pending_embedded_image_deletion_ids.clear();
-                state.pending_embedded_image_delete_action = None;
-                state.embedded_image_prompt_note_path = None;
+                state.embedded_image_workflow.clear_all();
                 state.content_note_path = None;
                 state.state.hide_embedded_image_delete_dialog();
             } else {

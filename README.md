@@ -12,6 +12,16 @@ Cognate is a local-first note taking desktop app built with Rust and Iced. Notes
 - Visualizer for label-connected notes
 - Theme and UI scale configuration via `config.json`
 
+## Screenshots
+
+### Editor Workspace
+
+![Cognate editor workspace with note explorer, markdown editor, and live preview](docs/editor.png)
+
+### Label Visualizer
+
+![Cognate visualizer showing label-connected note graph](docs/visualizer.png)
+
 ## Quick Start
 
 ### Prerequisites

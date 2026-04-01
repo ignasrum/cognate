@@ -30,6 +30,16 @@ Cognate is a desktop app with a message-driven UI and a file-backed notebook dom
 - Handles camera focus and canvas interactions
 - Emits note selection and focus events back to the editor
 
+## UI Surfaces
+
+Editor workspace:
+
+![Editor workspace](editor.png)
+
+Visualizer:
+
+![Visualizer](visualizer.png)
+
 ### `src/notebook`
 
 - `operations.rs`: create/delete/move with path safety and metadata updates

@@ -1,10 +1,10 @@
 use iced::task::Task; // Use Task instead of Command
 use iced::widget::text_editor::Content;
 use native_dialog::{DialogBuilder, MessageLevel};
-use std::collections::HashMap;
 
 // Use root-level imports that avoid circular references
 use crate::components::editor::Message;
+use crate::components::editor::note_coordinator;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::note_explorer;
@@ -69,26 +69,8 @@ fn handle_note_selection_internal(
         let selected_note_path = note_path;
 
         commands.push(Task::perform(
-            async move {
-                let full_note_path = format!("{}/{}/note.md", notebook_path, selected_note_path);
-                let loaded_content = match std::fs::read_to_string(full_note_path) {
-                    Ok(content) => content,
-                    Err(_err) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to read note file for editor: {}", _err);
-                        String::new()
-                    }
-                };
-                let legacy_images_path = format!(
-                    "{}/{}/embedded_images.json",
-                    notebook_path, selected_note_path
-                );
-                let _ = std::fs::remove_file(legacy_images_path);
-                let loaded_images = HashMap::new();
-
-                (selected_note_path, loaded_content, loaded_images)
-            },
-            |(note_path, content, images)| Message::LoadedNoteContent(note_path, content, images),
+            async move { note_coordinator::load_note_payload(notebook_path, selected_note_path).await },
+            |payload| Message::LoadedNoteContent(payload.note_path, payload.content, payload.images),
         ));
     }
 

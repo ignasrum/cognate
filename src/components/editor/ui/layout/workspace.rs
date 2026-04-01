@@ -1,0 +1,216 @@
+use iced::widget::{Column, Container, Row, Text, text_editor};
+use iced::{Element, Length};
+use std::collections::HashMap;
+
+use crate::components::editor::Message;
+use crate::components::editor::state::editor_state::EditorState;
+use crate::components::editor::ui::dialogs;
+use crate::components::editor::ui::input_fields;
+use crate::components::note_explorer;
+use crate::components::visualizer;
+
+use super::preview;
+use super::search_results;
+
+pub(super) fn build_main_content<'a>(
+    state: &'a EditorState,
+    content: &'a iced::widget::text_editor::Content,
+    markdown_content: &'a iced::widget::markdown::Content,
+    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    note_explorer_component: &'a note_explorer::NoteExplorer,
+    visualizer_component: &'a visualizer::Visualizer,
+    preview_indicator_char_range: Option<(usize, usize)>,
+) -> Element<'a, Message> {
+    if state.show_about_info() {
+        return dialogs::about_dialog(state.app_version());
+    }
+
+    if state.show_visualizer() {
+        return Container::new(visualizer_component.view().map(Message::VisualizerMsg))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+
+    if state.show_new_note_input() {
+        return dialogs::new_note_dialog(state.new_note_path_input());
+    }
+
+    if state.show_move_note_input() {
+        let is_folder = state
+            .move_note_current_path()
+            .map(|p| state.is_folder_path(p, &note_explorer_component.notes))
+            .unwrap_or(false);
+
+        return dialogs::move_note_dialog(
+            state.move_note_current_path().unwrap_or(&String::new()),
+            state.move_note_new_path_input(),
+            is_folder,
+        );
+    }
+
+    if state.show_embedded_image_delete_confirmation() {
+        return dialogs::confirm_embedded_image_delete_dialog(
+            state.pending_embedded_image_delete_count(),
+        );
+    }
+
+    if state.notebook_path().is_empty() {
+        return Container::new(
+            Text::new(
+                "Please configure the 'notebook_path' in your config.json file to open a notebook.",
+            )
+            .size(20)
+            .style(|_: &_| iced::widget::text::Style {
+                color: Some(iced::Color::from_rgb(0.7, 0.2, 0.2)),
+            }),
+        )
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
+    }
+
+    build_editor_workspace(
+        state,
+        content,
+        markdown_content,
+        markdown_image_handles,
+        note_explorer_component,
+        preview_indicator_char_range,
+    )
+}
+
+fn build_editor_workspace<'a>(
+    state: &'a EditorState,
+    content: &'a iced::widget::text_editor::Content,
+    markdown_content: &'a iced::widget::markdown::Content,
+    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    note_explorer_component: &'a note_explorer::NoteExplorer,
+    preview_indicator_char_range: Option<(usize, usize)>,
+) -> Element<'a, Message> {
+    let mut explorer_column = Column::new().spacing(8).width(Length::Fill);
+
+    if !state.search_query().trim().is_empty() {
+        explorer_column = explorer_column.push(search_results::render_search_results(
+            state.search_query(),
+            state.search_results(),
+        ));
+    }
+
+    explorer_column = explorer_column.push(
+        note_explorer_component
+            .view(state.selected_note_path())
+            .map(|note_explorer_message| match note_explorer_message {
+                note_explorer::Message::NoteSelected(path) => Message::NoteSelected(path),
+                note_explorer::Message::ToggleFolder(path) => {
+                    Message::NoteExplorerMsg(note_explorer::Message::ToggleFolder(path))
+                }
+                note_explorer::Message::InitiateFolderRename(path) => {
+                    Message::InitiateFolderRename(path)
+                }
+                other_msg => Message::NoteExplorerMsg(other_msg),
+            }),
+    );
+
+    let note_explorer_view: Element<'_, Message> = Container::new(explorer_column)
+        .width(Length::FillPortion(2))
+        .into();
+
+    let mut editor_widget = text_editor(content);
+
+    if state.selected_note_path().is_some() {
+        editor_widget = editor_widget
+            .on_action(Message::EditorAction)
+            .key_binding(|key_press| {
+                let is_paste_shortcut = key_press.modifiers.command()
+                    && !key_press.modifiers.alt()
+                    && matches!(
+                        key_press.key.as_ref(),
+                        iced::keyboard::Key::Character("v" | "V")
+                    );
+
+                if is_paste_shortcut {
+                    Some(iced::widget::text_editor::Binding::Custom(
+                        Message::PasteFromClipboard,
+                    ))
+                } else {
+                    iced::widget::text_editor::Binding::from_key_press(key_press)
+                }
+            });
+    }
+
+    let selected_note_last_updated = state
+        .selected_note_path()
+        .and_then(|selected_path| {
+            note_explorer_component
+                .notes
+                .iter()
+                .find(|note| &note.rel_path == selected_path)
+        })
+        .and_then(|note| note.last_updated.as_deref());
+
+    let selected_note_info = state.selected_note_path().map(|_| {
+        let updated_text = selected_note_last_updated.map_or_else(
+            || "Last updated: unknown".to_string(),
+            |value| format!("Last updated: {}", value),
+        );
+
+        Row::new().push(
+            Container::new(Text::new(updated_text).size(14))
+                .width(Length::Fill)
+                .align_x(iced::Alignment::End),
+        )
+    });
+
+    let mut editor_column = Column::new().spacing(5).width(Length::Fill);
+
+    if let Some(note_info_row) = selected_note_info {
+        editor_column = editor_column.push(note_info_row);
+    }
+
+    editor_column = editor_column.push(editor_widget).width(Length::Fill);
+
+    let editor_with_padding = Row::new()
+        .push(editor_column)
+        .push(Container::new(Text::new("").width(Length::Fixed(20.0))))
+        .width(Length::Fill);
+
+    let editor_scrollable = iced::widget::scrollable(editor_with_padding)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let editor_container = Container::new(editor_scrollable)
+        .width(Length::FillPortion(4))
+        .height(Length::Fill);
+
+    let markdown_preview_container = preview::build_markdown_preview_panel(
+        state,
+        markdown_content,
+        markdown_image_handles,
+        preview_indicator_char_range,
+    );
+
+    let content_row = Row::new()
+        .push(note_explorer_view)
+        .push(editor_container)
+        .push(markdown_preview_container)
+        .spacing(10)
+        .padding(10)
+        .width(Length::Fill)
+        .height(Length::FillPortion(10));
+
+    let labels_row = input_fields::create_labels_section(
+        state.selected_note_path(),
+        state.selected_note_labels(),
+        state.new_label_text(),
+    );
+
+    let bottom_bar: Element<'_, Message> = Container::new(labels_row)
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .into();
+
+    Column::new().push(content_row).push(bottom_bar).into()
+}

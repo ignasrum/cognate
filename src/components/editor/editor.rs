@@ -3,14 +3,14 @@ use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
 use iced::{Element, Subscription, window};
-use native_dialog::{DialogBuilder, MessageLevel};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
 mod clipboard;
+#[path = "core/embedded_image_service.rs"]
+mod embedded_image_service;
 #[path = "core/embedded_images.rs"]
 mod embedded_images;
 #[cfg(test)]
@@ -20,6 +20,8 @@ mod image_tag_tests;
 mod persistence;
 #[path = "core/preview.rs"]
 mod preview;
+#[path = "reducer.rs"]
+mod reducer;
 #[path = "update_handlers.rs"]
 mod update_handlers;
 
@@ -34,15 +36,17 @@ use self::clipboard::{
     ClipboardPastePayload, paste_text_from_action, read_clipboard_image_file_as_base64_from_text,
     read_clipboard_paste_payload,
 };
-use self::embedded_images::{resolve_embedded_image_reference, save_base64_image_for_note};
-use self::persistence::{flush_editor_state_for_shutdown, round_scale_step};
+use self::embedded_image_service::EmbeddedImageWorkflow;
+use self::embedded_images::save_base64_image_for_note;
+use self::persistence::round_scale_step;
 use self::preview::{
     build_markdown_preview_content, cursor_preview_character_index, cursor_preview_character_range,
-    extract_embedded_image_ids, preview_markdown_after_action, preview_rendered_char_count,
+    preview_rendered_char_count,
 };
 
 // Import required types and modules
 use crate::components::editor::actions::{label_actions, note_actions};
+use crate::components::editor::note_coordinator;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::content_handler;
 use crate::components::editor::text_management::undo_manager;
@@ -132,11 +136,7 @@ pub struct Editor {
     content: iced::widget::text_editor::Content,
     markdown_text: String,
     markdown_preview: iced::widget::markdown::Content,
-    embedded_images: HashMap<String, String>,
-    embedded_image_handles: HashMap<String, iced::widget::image::Handle>,
-    pending_embedded_image_deletion_ids: HashSet<String>,
-    pending_embedded_image_delete_action: Option<Action>,
-    embedded_image_prompt_note_path: Option<String>,
+    embedded_image_workflow: EmbeddedImageWorkflow,
     content_note_path: Option<String>,
     metadata_save_generation: u64,
     metadata_save_in_flight: bool,
@@ -161,11 +161,7 @@ impl Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
-            embedded_images: HashMap::new(),
-            embedded_image_handles: HashMap::new(),
-            pending_embedded_image_deletion_ids: HashSet::new(),
-            pending_embedded_image_delete_action: None,
-            embedded_image_prompt_note_path: None,
+            embedded_image_workflow: EmbeddedImageWorkflow::default(),
             content_note_path: None,
             metadata_save_generation: 0,
             metadata_save_in_flight: false,
@@ -196,66 +192,7 @@ impl Editor {
 
     // Update method delegates to focused reducers by message domain.
     pub fn update(state: &mut Self, message: Message) -> Task<Message> {
-        match message {
-            Message::HandleTabKey
-            | Message::SelectAll
-            | Message::Undo
-            | Message::Redo
-            | Message::PasteFromClipboard
-            | Message::EditorAction(_)
-            | Message::LoadedNoteContent(_, _, _) => Self::handle_text_messages(state, message),
-
-            Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => {
-                Self::handle_selection_messages(state, message)
-            }
-
-            Message::NewLabelInputChanged(_) | Message::AddLabel | Message::RemoveLabel(_) => {
-                Self::handle_label_messages(state, message)
-            }
-
-            Message::SearchQueryChanged(_)
-            | Message::RunSearch
-            | Message::SearchCompleted(_)
-            | Message::ClearSearch => Self::handle_search_messages(state, message),
-
-            Message::DebouncedMetadataSaveElapsed(_)
-            | Message::DebouncedMetadataSaveCompleted(_, _) => {
-                Self::handle_debounced_metadata_messages(state, message)
-            }
-
-            Message::WindowCloseRequested(_) | Message::ShutdownFlushCompleted(_, _) => {
-                Self::handle_shutdown_messages(state, message)
-            }
-
-            Message::MetadataSaved(_) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
-                Self::handle_save_feedback_messages(message)
-            }
-
-            Message::ToggleVisualizer | Message::VisualizerMsg(_) => {
-                Self::handle_visualizer_messages(state, message)
-            }
-
-            Message::NewNote
-            | Message::NewNoteInputChanged(_)
-            | Message::CreateNote
-            | Message::CancelNewNote
-            | Message::NoteCreated(_)
-            | Message::DeleteNote
-            | Message::ConfirmDeleteNote(_)
-            | Message::ConfirmDeleteEmbeddedImages(_)
-            | Message::NoteDeleted(_, _)
-            | Message::MoveNote
-            | Message::MoveNoteInputChanged(_)
-            | Message::ConfirmMoveNote
-            | Message::CancelMoveNote
-            | Message::NoteMoved(_, _) => Self::handle_note_lifecycle_messages(state, message),
-
-            Message::InitiateFolderRename(_)
-            | Message::AboutButtonClicked
-            | Message::IncreaseScale
-            | Message::DecreaseScale
-            | Message::MarkdownLinkClicked(_) => Self::handle_ui_messages(state, message),
-        }
+        reducer::route_message(state, message)
     }
 
     fn handle_text_messages(state: &mut Self, message: Message) -> Task<Message> {
@@ -342,10 +279,11 @@ impl Editor {
 
                 let dereferenced_image_ids = state.dereferenced_embedded_images_for_action(&action);
                 if !dereferenced_image_ids.is_empty() {
-                    state.pending_embedded_image_deletion_ids = dereferenced_image_ids;
-                    state.pending_embedded_image_delete_action = Some(action);
+                    state
+                        .embedded_image_workflow
+                        .stage_pending_deletion(dereferenced_image_ids, action);
                     state.state.show_embedded_image_delete_dialog(
-                        state.pending_embedded_image_deletion_ids.len(),
+                        state.embedded_image_workflow.pending_deletion_count(),
                     );
                     return Task::none();
                 }
@@ -380,7 +318,7 @@ impl Editor {
                     return Task::none();
                 }
                 state.content_note_path = Some(note_path.clone());
-                state.embedded_images = images;
+                state.embedded_image_workflow.set_loaded_images(images);
                 let previous_markdown = state.markdown_text.clone();
                 let task = content_handler::handle_loaded_note_content(
                     &mut state.content,
@@ -620,35 +558,39 @@ impl Editor {
     }
 
     fn sync_markdown_preview(&mut self) {
-        self.refresh_embedded_images_for_current_markdown();
-        self.sync_embedded_image_handles();
-        let preview_markdown =
-            build_markdown_preview_content(&self.markdown_text, &self.embedded_images);
+        self.embedded_image_workflow.sync_preview_assets(
+            self.state.notebook_path(),
+            self.state.selected_note_path(),
+            &self.markdown_text,
+        );
+        let preview_markdown = build_markdown_preview_content(
+            &self.markdown_text,
+            self.embedded_image_workflow.images(),
+        );
         self.markdown_preview = iced::widget::markdown::Content::parse(&preview_markdown);
     }
 
     fn prune_embedded_images_for_current_markdown(&mut self) {
-        let current_note_path = self.state.selected_note_path().cloned();
-        if self.embedded_image_prompt_note_path != current_note_path {
-            self.pending_embedded_image_deletion_ids.clear();
-            self.pending_embedded_image_delete_action = None;
+        let pending_state_cleared = self.embedded_image_workflow.prune_for_current_markdown(
+            self.state.notebook_path(),
+            self.state.selected_note_path(),
+            &self.markdown_text,
+        );
+        if pending_state_cleared {
             self.state.hide_embedded_image_delete_dialog();
-            self.embedded_image_prompt_note_path = current_note_path;
         }
-
-        self.refresh_embedded_images_for_current_markdown();
     }
 
     fn handle_confirm_delete_embedded_images(&mut self, confirmed: bool) -> Task<Message> {
-        if self.pending_embedded_image_deletion_ids.is_empty() {
-            self.pending_embedded_image_delete_action = None;
+        if !self.embedded_image_workflow.has_pending_deletion() {
+            self.embedded_image_workflow.clear_pending_deletion();
             self.state.hide_embedded_image_delete_dialog();
             return Task::none();
         }
 
         if confirmed {
-            let Some(action) = self.pending_embedded_image_delete_action.take() else {
-                self.pending_embedded_image_deletion_ids.clear();
+            let Some(action) = self.embedded_image_workflow.take_pending_delete_action() else {
+                self.embedded_image_workflow.clear_pending_deletion();
                 self.state.hide_embedded_image_delete_dialog();
                 return Task::none();
             };
@@ -671,15 +613,16 @@ impl Editor {
                 metadata_save_task = self.touch_selected_note_last_updated_and_schedule_save_task();
             }
 
-            for image_id in std::mem::take(&mut self.pending_embedded_image_deletion_ids) {
-                if let Some(image_path) = self.embedded_images.remove(&image_id)
+            for image_id in self.embedded_image_workflow.take_pending_deletion_ids() {
+                if let Some(image_path) = self
+                    .embedded_image_workflow
+                    .remove_image_path_for_id(&image_id)
                     && let Err(_err) = std::fs::remove_file(&image_path)
                     && _err.kind() != std::io::ErrorKind::NotFound
                 {
                     #[cfg(debug_assertions)]
                     eprintln!("Failed to delete image file '{}': {}", image_path, _err);
                 }
-                self.embedded_image_handles.remove(&image_id);
             }
 
             self.sync_markdown_preview();
@@ -689,36 +632,17 @@ impl Editor {
             ]);
         }
 
-        self.pending_embedded_image_deletion_ids.clear();
-        self.pending_embedded_image_delete_action = None;
+        self.embedded_image_workflow.clear_pending_deletion();
         self.state.hide_embedded_image_delete_dialog();
         Task::none()
     }
 
     fn dereferenced_embedded_images_for_action(&self, action: &Action) -> HashSet<String> {
-        if self.embedded_images.is_empty() {
-            return HashSet::new();
-        }
-
-        let Some(after_markdown) =
-            preview_markdown_after_action(&self.markdown_text, self.content.cursor(), action)
-        else {
-            return HashSet::new();
-        };
-
-        if after_markdown == self.markdown_text {
-            return HashSet::new();
-        }
-
-        let before = extract_embedded_image_ids(&self.markdown_text);
-        let after = extract_embedded_image_ids(&after_markdown);
-
-        before
-            .into_iter()
-            .filter(|image_id| {
-                self.embedded_images.contains_key(image_id) && !after.contains(image_id)
-            })
-            .collect()
+        self.embedded_image_workflow.dereferenced_for_action(
+            &self.markdown_text,
+            self.content.cursor(),
+            action,
+        )
     }
 
     fn schedule_debounced_metadata_save_task(&mut self) -> Task<Message> {
@@ -754,8 +678,7 @@ impl Editor {
 
         Task::perform(
             async move {
-                let result =
-                    notebook::save_metadata(&notebook_path, &notes).map_err(|e| e.to_string());
+                let result = note_coordinator::save_metadata_snapshot(&notebook_path, &notes);
                 (generation, result)
             },
             |(generation, result)| Message::DebouncedMetadataSaveCompleted(generation, result),
@@ -802,13 +725,15 @@ impl Editor {
         let Some(cursor_char_index) = cursor_preview_character_index(
             &self.markdown_text,
             self.content.cursor(),
-            &self.embedded_images,
+            self.embedded_image_workflow.images(),
         ) else {
             return Task::none();
         };
 
-        let rendered_preview_markdown =
-            build_markdown_preview_content(&self.markdown_text, &self.embedded_images);
+        let rendered_preview_markdown = build_markdown_preview_content(
+            &self.markdown_text,
+            self.embedded_image_workflow.images(),
+        );
         let total_rendered_chars = preview_rendered_char_count(&rendered_preview_markdown);
 
         let y = if total_rendered_chars == 0 {
@@ -824,45 +749,6 @@ impl Editor {
                 y: Some(y),
             },
         )
-    }
-
-    fn sync_embedded_image_handles(&mut self) {
-        self.embedded_image_handles
-            .retain(|image_id, _| self.embedded_images.contains_key(image_id));
-
-        for (image_id, image_path) in &self.embedded_images {
-            if self.embedded_image_handles.contains_key(image_id) {
-                continue;
-            }
-
-            if let Ok(image_bytes) = std::fs::read(image_path) {
-                self.embedded_image_handles.insert(
-                    image_id.clone(),
-                    iced::widget::image::Handle::from_bytes(image_bytes),
-                );
-            }
-        }
-    }
-
-    fn refresh_embedded_images_for_current_markdown(&mut self) {
-        self.embedded_images.clear();
-
-        let Some(selected_note_path) = self.state.selected_note_path() else {
-            return;
-        };
-
-        if self.state.notebook_path().is_empty() {
-            return;
-        }
-
-        let note_dir = Path::new(self.state.notebook_path()).join(selected_note_path);
-
-        for image_ref in extract_embedded_image_ids(&self.markdown_text) {
-            if let Some(image_path) = resolve_embedded_image_reference(&note_dir, &image_ref) {
-                self.embedded_images
-                    .insert(image_ref, image_path.to_string_lossy().into_owned());
-            }
-        }
     }
 
     fn touch_selected_note_last_updated(&mut self) -> bool {
@@ -888,7 +774,7 @@ impl Editor {
                 &state.markdown_text,
                 state.content.cursor(),
                 selected_text.as_deref(),
-                &state.embedded_images,
+                state.embedded_image_workflow.images(),
             )
         } else {
             None
@@ -898,7 +784,7 @@ impl Editor {
             &state.state,
             &state.content,
             &state.markdown_preview,
-            &state.embedded_image_handles,
+            state.embedded_image_workflow.image_handles(),
             &state.note_explorer,
             &state.visualizer,
             preview_indicator_char_range,
@@ -964,11 +850,7 @@ impl Default for Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
-            embedded_images: HashMap::new(),
-            embedded_image_handles: HashMap::new(),
-            pending_embedded_image_deletion_ids: HashSet::new(),
-            pending_embedded_image_delete_action: None,
-            embedded_image_prompt_note_path: None,
+            embedded_image_workflow: EmbeddedImageWorkflow::default(),
             content_note_path: None,
             metadata_save_generation: 0,
             metadata_save_in_flight: false,

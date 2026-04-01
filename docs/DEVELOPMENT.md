@@ -18,6 +18,12 @@ This guide is the fastest way to onboard to Cognate as a contributor.
 cargo run
 ```
 
+## UI Snapshots
+
+![Editor workspace](editor.png)
+
+![Visualizer](visualizer.png)
+
 ## Daily Commands
 
 - `cargo test`: run all tests
@@ -57,4 +63,3 @@ Use this when exploring module docs and public APIs:
 ```bash
 cargo doc --no-deps
 ```
-

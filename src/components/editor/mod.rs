@@ -4,6 +4,7 @@
 //! application type with its top-level message enum.
 
 pub mod actions;
+pub(crate) mod note_coordinator;
 pub mod state;
 pub mod text_management;
 pub mod ui;
