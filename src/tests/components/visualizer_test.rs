@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn update_notes_builds_label_connected_graph() {
         let mut visualizer = Visualizer::new();
-        let _ = visualizer.update(Message::UpdateNotes(sample_notes()));
+        visualizer.sync_notes(&sample_notes());
 
         assert_eq!(visualizer.notes_len(), 3);
         assert_eq!(visualizer.debug_graph_stats(), (3, 1, 2));
@@ -66,7 +66,7 @@ mod tests {
             let _empty_view = visualizer.view();
         }
 
-        let _ = visualizer.update(Message::UpdateNotes(sample_notes()));
+        visualizer.sync_notes(&sample_notes());
         {
             let _populated_view = visualizer.view();
         }
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn update_notes_normalizes_and_deduplicates_labels_for_graph_stats() {
         let mut visualizer = Visualizer::new();
-        let _ = visualizer.update(Message::UpdateNotes(sample_notes_with_messy_labels()));
+        visualizer.sync_notes(&sample_notes_with_messy_labels());
 
         // Expected:
         // - labels normalize to "urgent" and "work" (2 unique labels)

@@ -26,18 +26,14 @@ impl Editor {
     pub(super) fn handle_search_messages(state: &mut Self, message: Message) -> Task<Message> {
         match message {
             Message::SearchQueryChanged(query) => {
-                state.state.set_search_query(query.clone());
+                state.state.set_search_query(query);
+                let query = state.state.search_query().trim().to_string();
                 if query.trim().is_empty() {
                     state.state.set_search_results(Vec::new());
                     return Task::none();
                 }
 
-                let notebook_path = state.state.notebook_path().to_string();
-                let notes = state.note_explorer.notes.clone();
-                Task::perform(
-                    async move { notebook::search_notes(notebook_path, notes, query).await },
-                    Message::SearchCompleted,
-                )
+                Self::spawn_search_task(state, query)
             }
             Message::RunSearch => {
                 let query = state.state.search_query().trim().to_string();
@@ -46,12 +42,7 @@ impl Editor {
                     return Task::none();
                 }
 
-                let notebook_path = state.state.notebook_path().to_string();
-                let notes = state.note_explorer.notes.clone();
-                Task::perform(
-                    async move { notebook::search_notes(notebook_path, notes, query).await },
-                    Message::SearchCompleted,
-                )
+                Self::spawn_search_task(state, query)
             }
             Message::SearchCompleted(results) => {
                 state.state.set_search_results(results);
@@ -63,6 +54,20 @@ impl Editor {
             }
             _ => unreachable!("search handler received invalid message"),
         }
+    }
+
+    fn spawn_search_task(state: &Self, query: String) -> Task<Message> {
+        let notebook_path = state.state.notebook_path().to_string();
+        let notes = state
+            .note_explorer
+            .notes
+            .iter()
+            .map(notebook::SearchNote::from)
+            .collect::<Vec<notebook::SearchNote>>();
+        Task::perform(
+            async move { notebook::search_notes_with_snapshot(notebook_path, notes, query).await },
+            Message::SearchCompleted,
+        )
     }
 
     pub(super) fn handle_debounced_metadata_messages(
@@ -236,9 +241,7 @@ impl Editor {
                 state.state.toggle_visualizer();
 
                 if state.state.show_visualizer() && !state.state.notebook_path().is_empty() {
-                    let _ = state.visualizer.update(visualizer::Message::UpdateNotes(
-                        state.note_explorer.notes.clone(),
-                    ));
+                    state.visualizer.sync_notes(&state.note_explorer.notes);
                     let _ = state.visualizer.update(visualizer::Message::FocusOnNote(
                         state.state.selected_note_path().cloned(),
                     ));

@@ -51,7 +51,7 @@ pub struct NoteSearchResult {
 pub use error::{NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
 pub use relative_path::NotebookRelativePath;
-pub use search::{clear_search_index_for_notebook, search_notes};
+pub use search::{SearchNote, clear_search_index_for_notebook, search_notes_with_snapshot};
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
     save_note_content, save_note_content_sync,

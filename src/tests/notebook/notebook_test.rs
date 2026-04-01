@@ -682,18 +682,23 @@ mod tests {
         )
         .expect("Failed to write brainstorm note content");
 
-        let path_results = block_on(notebook::search_notes(
+        let search_snapshot = notes
+            .iter()
+            .map(notebook::SearchNote::from)
+            .collect::<Vec<notebook::SearchNote>>();
+
+        let path_results = block_on(notebook::search_notes_with_snapshot(
             notebook_dir.as_str().to_string(),
-            notes.clone(),
+            search_snapshot.clone(),
             "work".to_string(),
         ));
         assert_eq!(path_results.len(), 1);
         assert_eq!(path_results[0].rel_path, "work/todo");
         assert_eq!(path_results[0].snippet, "Path match");
 
-        let label_results = block_on(notebook::search_notes(
+        let label_results = block_on(notebook::search_notes_with_snapshot(
             notebook_dir.as_str().to_string(),
-            notes.clone(),
+            search_snapshot.clone(),
             "urgent".to_string(),
         ));
         assert_eq!(label_results.len(), 1);
@@ -703,9 +708,9 @@ mod tests {
             "Expected snippet to indicate label match"
         );
 
-        let content_results = block_on(notebook::search_notes(
+        let content_results = block_on(notebook::search_notes_with_snapshot(
             notebook_dir.as_str().to_string(),
-            notes.clone(),
+            search_snapshot,
             "indexing".to_string(),
         ));
         assert_eq!(content_results.len(), 1);

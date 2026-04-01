@@ -3,7 +3,6 @@ use iced::task::Task; // Use Task instead of Command
 use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::note_explorer::NoteExplorer;
-use crate::components::visualizer;
 use crate::components::visualizer::Visualizer;
 use crate::notebook;
 
@@ -38,9 +37,7 @@ pub fn handle_add_label(
                 note.labels.push(label);
             }
 
-            let _ = visualizer.update(visualizer::Message::UpdateNotes(
-                note_explorer.notes.clone(),
-            ));
+            visualizer.sync_notes(&note_explorer.notes);
 
             state.clear_new_label_text();
 
@@ -77,9 +74,7 @@ pub fn handle_remove_label(
             note.labels.retain(|label| label != &label_to_remove);
         }
 
-        let _ = visualizer.update(visualizer::Message::UpdateNotes(
-            note_explorer.notes.clone(),
-        ));
+        visualizer.sync_notes(&note_explorer.notes);
 
         let notebook_path = state.notebook_path().to_string();
         let notes_to_save = note_explorer.notes.clone();

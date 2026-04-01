@@ -31,14 +31,31 @@ fn notebook_error_text(error: &NotebookError) -> String {
     error.ui_message()
 }
 
-fn handle_note_selection_internal(
-    note_explorer: &mut NoteExplorer,
+fn sync_selected_note_labels(
+    state: &mut EditorState,
+    note_explorer: &NoteExplorer,
+    selected_note_path: Option<&str>,
+) {
+    let labels = selected_note_path
+        .and_then(|path| {
+            note_explorer
+                .notes
+                .iter()
+                .find(|note| note.rel_path == path)
+        })
+        .map(|note| note.labels.clone())
+        .unwrap_or_default();
+    state.set_selected_note_labels(labels);
+}
+
+fn apply_selected_note_change(
+    note_explorer: &NoteExplorer,
     undo_manager: &mut UndoManager,
     state: &mut EditorState,
-    note_path: String,
+    note_path: &str,
     hide_visualizer: bool,
-) -> Task<Message> {
-    state.set_selected_note_path(Some(note_path.clone()));
+) {
+    state.set_selected_note_path(Some(note_path.to_string()));
     state.clear_new_label_text();
     state.hide_move_note_dialog();
     if hide_visualizer {
@@ -46,14 +63,31 @@ fn handle_note_selection_internal(
     }
     state.set_show_new_note_input(false);
     state.set_show_about_info(false);
+    undo_manager.initialize_history(note_path);
+    sync_selected_note_labels(state, note_explorer, Some(note_path));
+}
 
-    undo_manager.initialize_history(&note_path);
+fn clear_selected_note_change(state: &mut EditorState) {
+    state.set_selected_note_path(None);
+    state.set_selected_note_labels(Vec::new());
+    state.hide_move_note_dialog();
+    state.clear_new_label_text();
+}
 
-    if let Some(note) = note_explorer.notes.iter().find(|n| n.rel_path == note_path) {
-        state.set_selected_note_labels(note.labels.clone());
-    } else {
-        state.set_selected_note_labels(Vec::new());
-    }
+fn handle_note_selection_internal(
+    note_explorer: &mut NoteExplorer,
+    undo_manager: &mut UndoManager,
+    state: &mut EditorState,
+    note_path: String,
+    hide_visualizer: bool,
+) -> Task<Message> {
+    apply_selected_note_change(
+        note_explorer,
+        undo_manager,
+        state,
+        &note_path,
+        hide_visualizer,
+    );
 
     let mut commands = vec![
         note_explorer
@@ -96,22 +130,30 @@ pub fn handle_note_explorer_message(
         note_explorer_message
     );
 
+    let notes_loaded_feedback = match &note_explorer_message {
+        note_explorer::Message::NotesLoaded(load_result) => Some(match load_result {
+            Ok(load_result) => Ok(load_result.warning.clone()),
+            Err(load_error) => Err(notebook_error_text(load_error)),
+        }),
+        _ => None,
+    };
+
     let note_explorer_command = note_explorer
-        .update(note_explorer_message.clone())
+        .update(note_explorer_message)
         .map(Message::NoteExplorerMsg);
 
     let mut editor_command = Task::none();
 
-    if let note_explorer::Message::NotesLoaded(load_result) = note_explorer_message {
-        match load_result {
-            Ok(load_result) => {
+    if let Some(load_feedback) = notes_loaded_feedback {
+        match load_feedback {
+            Ok(load_warning) => {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
-                    load_result.notes.len()
+                    note_explorer.notes.len()
                 );
 
-                if let Some(load_warning) = load_result.warning {
+                if let Some(load_warning) = load_warning {
                     report_metadata_load_issue("Notebook Metadata Recovered", &load_warning);
                 }
             }
@@ -120,37 +162,29 @@ pub fn handle_note_explorer_message(
                     "Failed to Load Notebook Metadata",
                     &format!(
                         "Cognate could not read notebook metadata safely:\n\n{}",
-                        notebook_error_text(&load_error)
+                        load_error
                     ),
                 );
             }
         }
 
         // Update the visualizer with the new notes data
-        let _ = visualizer.update(visualizer::Message::UpdateNotes(
-            note_explorer.notes.clone(),
-        ));
+        visualizer.sync_notes(&note_explorer.notes);
 
-        if let Some(selected_path) = state.selected_note_path() {
+        if let Some(selected_path) = state.selected_note_path().cloned() {
             if !note_explorer
                 .notes
                 .iter()
-                .any(|n| &n.rel_path == selected_path)
+                .any(|n| n.rel_path == selected_path)
             {
                 #[cfg(debug_assertions)]
                 eprintln!("Editor: Selected note no longer exists. Clearing editor state.");
 
-                state.set_selected_note_path(None);
-                state.set_selected_note_labels(Vec::new());
+                clear_selected_note_change(state);
                 *content = Content::with_text("");
                 *markdown_text = String::new();
-                state.hide_move_note_dialog();
-            } else if let Some(note) = note_explorer
-                .notes
-                .iter()
-                .find(|n| &n.rel_path == selected_path)
-            {
-                state.set_selected_note_labels(note.labels.clone());
+            } else {
+                sync_selected_note_labels(state, note_explorer, Some(selected_path.as_str()));
             }
         } else if !note_explorer.notes.is_empty() {
             let first_note_path = note_explorer.notes[0].rel_path.clone();
@@ -191,44 +225,36 @@ pub fn handle_visualizer_message(
     visualizer_message: visualizer::Message,
 ) -> Task<Message> {
     let mut commands_to_return: Vec<Task<Message>> = Vec::new();
+    let selection_change = match &visualizer_message {
+        visualizer::Message::FocusOnNote(note_path) => {
+            note_path.as_ref().map(|path| (path.clone(), false))
+        }
+        visualizer::Message::NoteSelectedInVisualizer(note_path) => Some((note_path.clone(), true)),
+    };
 
     // Update visualizer state and map the command
     commands_to_return.push(
         visualizer
-            .update(visualizer_message.clone())
+            .update(visualizer_message)
             .map(Message::VisualizerMsg),
     );
 
-    match visualizer_message {
-        visualizer::Message::UpdateNotes(_) => {
-            // No additional editor commands needed when visualizer just updates notes
-        }
-        visualizer::Message::FocusOnNote(note_path) => {
-            if let Some(note_path) = note_path {
-                commands_to_return.push(handle_note_selection_internal(
-                    note_explorer,
-                    undo_manager,
-                    state,
-                    note_path,
-                    false,
-                ));
-            }
-        }
-        visualizer::Message::NoteSelectedInVisualizer(note_path) => {
+    if let Some((note_path, hide_visualizer)) = selection_change {
+        if hide_visualizer {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Editor: Received NoteSelectedInVisualizer for path: {}",
                 note_path
             );
-
-            commands_to_return.push(handle_note_selection_internal(
-                note_explorer,
-                undo_manager,
-                state,
-                note_path,
-                true,
-            ));
         }
+
+        commands_to_return.push(handle_note_selection_internal(
+            note_explorer,
+            undo_manager,
+            state,
+            note_path,
+            hide_visualizer,
+        ));
     }
 
     // Batch all collected commands
@@ -399,11 +425,9 @@ pub fn handle_note_deleted(
             // Clean up history for the deleted note
             undo_manager.remove_history(&deleted_path);
 
-            state.set_selected_note_path(None);
-            state.set_selected_note_labels(Vec::new());
+            clear_selected_note_change(state);
             *content = Content::with_text("");
             *markdown_text = String::new();
-            state.hide_move_note_dialog();
 
             note_explorer
                 .update(note_explorer::Message::LoadNotes)

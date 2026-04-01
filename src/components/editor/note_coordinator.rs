@@ -4,6 +4,7 @@
 //! UI + IO orchestrator.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata, NotebookError};
 
@@ -18,7 +19,8 @@ pub async fn load_note_payload(
     notebook_path: String,
     selected_note_path: String,
 ) -> LoadedNotePayload {
-    let full_note_path = format!("{}/{}/note.md", notebook_path, selected_note_path);
+    let note_dir_path = Path::new(&notebook_path).join(&selected_note_path);
+    let full_note_path = note_dir_path.join("note.md");
     let loaded_content = match std::fs::read_to_string(full_note_path) {
         Ok(content) => content,
         Err(_err) => {
@@ -29,11 +31,7 @@ pub async fn load_note_payload(
     };
 
     // Legacy cleanup: embedded image state is now inferred from markdown.
-    let legacy_images_path = format!(
-        "{}/{}/embedded_images.json",
-        notebook_path, selected_note_path
-    );
-    let _ = std::fs::remove_file(legacy_images_path);
+    let _ = std::fs::remove_file(note_dir_path.join("embedded_images.json"));
 
     LoadedNotePayload {
         note_path: selected_note_path,

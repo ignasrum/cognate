@@ -19,6 +19,21 @@ const SEARCH_INDEX_MAX_CACHED_NOTEBOOKS: usize = 4;
 #[cfg(not(test))]
 const SEARCH_INDEX_MAX_CACHED_NOTEBOOKS: usize = 24;
 
+#[derive(Debug, Clone)]
+pub struct SearchNote {
+    pub rel_path: String,
+    pub labels: Vec<String>,
+}
+
+impl From<&NoteMetadata> for SearchNote {
+    fn from(note: &NoteMetadata) -> Self {
+        Self {
+            rel_path: note.rel_path.clone(),
+            labels: note.labels.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct IndexedNoteContent {
     content: Arc<str>,
@@ -220,9 +235,9 @@ fn should_refresh_search_index_from_filesystem(last_refresh: Option<Instant>) ->
     }
 }
 
-pub async fn search_notes(
+pub async fn search_notes_with_snapshot(
     notebook_path: String,
-    notes: Vec<NoteMetadata>,
+    notes: Vec<SearchNote>,
     query: String,
 ) -> Vec<NoteSearchResult> {
     let normalized_query = query.trim().to_lowercase();

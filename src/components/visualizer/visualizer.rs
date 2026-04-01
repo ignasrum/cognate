@@ -24,7 +24,6 @@ const CAMERA_TRANSITION_DURATION_MS: f32 = 320.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    UpdateNotes(Vec<NoteMetadata>),
     FocusOnNote(Option<String>),
     NoteSelectedInVisualizer(String),
 }
@@ -102,7 +101,7 @@ struct GraphCanvasState {
 
 #[derive(Debug, Default)]
 pub struct Visualizer {
-    notes: Vec<NoteMetadata>,
+    note_count: usize,
     graph_cache: GraphCache,
     focus_target_note: Option<String>,
     focus_yaw: f32,
@@ -114,7 +113,7 @@ pub struct Visualizer {
 impl Visualizer {
     pub fn new() -> Self {
         Self {
-            notes: Vec::new(),
+            note_count: 0,
             graph_cache: GraphCache::default(),
             focus_target_note: None,
             focus_yaw: DEFAULT_CAMERA_YAW,
@@ -126,24 +125,23 @@ impl Visualizer {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::UpdateNotes(notes) => {
-                self.notes = notes;
-                self.rebuild_graph_cache();
-                if self.focus_target_note.is_some() {
-                    let (yaw, pitch, zoom) =
-                        self.calculate_focus_camera(self.focus_target_note.as_deref());
-                    self.focus_yaw = yaw;
-                    self.focus_pitch = pitch;
-                    self.focus_zoom = zoom;
-                    self.focus_version = self.focus_version.wrapping_add(1);
-                }
-                Task::none()
-            }
             Message::FocusOnNote(note_path) => {
                 self.apply_focus_target(note_path);
                 Task::none()
             }
             Message::NoteSelectedInVisualizer(_) => Task::none(),
+        }
+    }
+
+    pub fn sync_notes(&mut self, notes: &[NoteMetadata]) {
+        self.note_count = notes.len();
+        self.rebuild_graph_cache(notes);
+        if self.focus_target_note.is_some() {
+            let (yaw, pitch, zoom) = self.calculate_focus_camera(self.focus_target_note.as_deref());
+            self.focus_yaw = yaw;
+            self.focus_pitch = pitch;
+            self.focus_zoom = zoom;
+            self.focus_version = self.focus_version.wrapping_add(1);
         }
     }
 
@@ -154,7 +152,7 @@ impl Visualizer {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        if self.notes.is_empty() {
+        if self.note_count == 0 {
             content = content.push(Text::new(
                 "No notes available for visualization. Open a notebook first.",
             ));
@@ -248,6 +246,6 @@ impl Visualizer {
 
     #[cfg(test)]
     pub(crate) fn notes_len(&self) -> usize {
-        self.notes.len()
+        self.note_count
     }
 }

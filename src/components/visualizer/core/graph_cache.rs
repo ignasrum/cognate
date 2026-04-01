@@ -104,8 +104,8 @@ impl Visualizer {
         }
     }
 
-    pub(super) fn rebuild_graph_cache(&mut self) {
-        self.graph_cache = Self::build_graph_cache(&self.notes);
+    pub(super) fn rebuild_graph_cache(&mut self, notes: &[NoteMetadata]) {
+        self.graph_cache = Self::build_graph_cache(notes);
     }
 
     pub(super) fn calculate_focus_camera(&self, target_note: Option<&str>) -> (f32, f32, f32) {
