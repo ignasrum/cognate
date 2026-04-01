@@ -1,10 +1,11 @@
 use iced::event::Event;
+use iced::futures::channel::mpsc;
 use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
 use iced::{Element, Subscription, window};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc as std_mpsc};
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
@@ -86,7 +87,7 @@ pub enum Message {
     // Search
     SearchQueryChanged(String),
     RunSearch,
-    SearchCompleted(Vec<notebook::NoteSearchResult>),
+    SearchCompleted(u64, Vec<notebook::NoteSearchResult>),
     ClearSearch,
 
     // Content management
@@ -127,6 +128,67 @@ pub enum Message {
     ScaleSaved(Result<(), String>),
 }
 
+#[derive(Debug, Clone)]
+struct MetadataDebounceScheduler {
+    schedule_sender: std_mpsc::Sender<u64>,
+}
+
+impl MetadataDebounceScheduler {
+    fn new(window: Duration) -> (Self, mpsc::UnboundedReceiver<u64>) {
+        let (schedule_sender, schedule_receiver) = std_mpsc::channel::<u64>();
+        let (elapsed_sender, elapsed_receiver) = mpsc::unbounded::<u64>();
+
+        if let Err(error) = std::thread::Builder::new()
+            .name("cognate-metadata-debounce".to_string())
+            .spawn(move || Self::run_worker(window, schedule_receiver, elapsed_sender))
+        {
+            #[cfg(debug_assertions)]
+            eprintln!("Failed to start metadata debounce worker: {}", error);
+        }
+
+        (Self { schedule_sender }, elapsed_receiver)
+    }
+
+    fn schedule(&self, generation: u64) {
+        let _ = self.schedule_sender.send(generation);
+    }
+
+    fn run_worker(
+        window: Duration,
+        schedule_receiver: std_mpsc::Receiver<u64>,
+        elapsed_sender: mpsc::UnboundedSender<u64>,
+    ) {
+        let mut pending_generation = match schedule_receiver.recv() {
+            Ok(generation) => generation,
+            Err(_) => return,
+        };
+        let mut deadline = std::time::Instant::now() + window;
+
+        loop {
+            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+
+            match schedule_receiver.recv_timeout(timeout) {
+                Ok(generation) => {
+                    pending_generation = generation;
+                    deadline = std::time::Instant::now() + window;
+                }
+                Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                    if elapsed_sender.unbounded_send(pending_generation).is_err() {
+                        return;
+                    }
+
+                    pending_generation = match schedule_receiver.recv() {
+                        Ok(generation) => generation,
+                        Err(_) => return,
+                    };
+                    deadline = std::time::Instant::now() + window;
+                }
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    }
+}
+
 // Define the Editor struct
 pub struct Editor {
     // Core state management
@@ -141,7 +203,9 @@ pub struct Editor {
     metadata_save_generation: u64,
     metadata_save_in_flight: bool,
     metadata_save_reschedule_after_in_flight: bool,
+    metadata_debounce_scheduler: MetadataDebounceScheduler,
     shutdown_in_progress: bool,
+    search_generation: u64,
 
     // Undo/redo management
     undo_manager: UndoManager,
@@ -156,6 +220,12 @@ impl Editor {
     // Keep create method for internal use
     pub fn create(flags: Configuration) -> (Self, Task<Message>) {
         let notebook_path_clone = flags.notebook_path.clone();
+        let (metadata_debounce_scheduler, metadata_debounce_events) =
+            MetadataDebounceScheduler::new(METADATA_SAVE_DEBOUNCE_WINDOW);
+        let metadata_debounce_task = Task::run(
+            metadata_debounce_events,
+            Message::DebouncedMetadataSaveElapsed,
+        );
 
         let mut editor_instance = Editor {
             content: iced::widget::text_editor::Content::with_text(""),
@@ -166,7 +236,9 @@ impl Editor {
             metadata_save_generation: 0,
             metadata_save_in_flight: false,
             metadata_save_reschedule_after_in_flight: false,
+            metadata_debounce_scheduler,
             shutdown_in_progress: false,
+            search_generation: 0,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
@@ -187,7 +259,10 @@ impl Editor {
             Task::none()
         };
 
-        (editor_instance, initial_command)
+        (
+            editor_instance,
+            Task::batch(vec![initial_command, metadata_debounce_task]),
+        )
     }
 
     // Update method delegates to focused reducers by message domain.
@@ -647,25 +722,9 @@ impl Editor {
 
     fn schedule_debounced_metadata_save_task(&mut self) -> Task<Message> {
         self.metadata_save_generation = self.metadata_save_generation.wrapping_add(1);
-        let generation = self.metadata_save_generation;
-
-        Task::perform(
-            async move {
-                let (sender, receiver) = iced::futures::channel::oneshot::channel();
-
-                // Sleep on a dedicated OS thread and wake the async task via oneshot.
-                // This avoids blocking the Iced executor worker thread.
-                let _ = std::thread::Builder::new()
-                    .name("cognate-metadata-debounce".to_string())
-                    .spawn(move || {
-                        std::thread::sleep(METADATA_SAVE_DEBOUNCE_WINDOW);
-                        let _ = sender.send(generation);
-                    });
-
-                receiver.await.unwrap_or(generation)
-            },
-            Message::DebouncedMetadataSaveElapsed,
-        )
+        self.metadata_debounce_scheduler
+            .schedule(self.metadata_save_generation);
+        Task::none()
     }
 
     fn persist_metadata_snapshot_task(&self, generation: u64) -> Task<Message> {
@@ -766,6 +825,11 @@ impl Editor {
         false
     }
 
+    fn next_search_generation(&mut self) -> u64 {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        self.search_generation
+    }
+
     // Keep view method as is, but fix the state reference
     pub fn view(state: &Self) -> Element<'_, Message> {
         let selected_text = state.content.selection();
@@ -862,6 +926,15 @@ impl Editor {
     }
 
     #[cfg(test)]
+    pub(crate) fn debug_search_state(&self) -> (u64, String, Vec<notebook::NoteSearchResult>) {
+        (
+            self.search_generation,
+            self.state.search_query().to_string(),
+            self.state.search_results().to_vec(),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn debug_shutdown_in_progress(&self) -> bool {
         self.shutdown_in_progress
     }
@@ -882,6 +955,9 @@ impl Editor {
 // Keep Default impl for Editor
 impl Default for Editor {
     fn default() -> Self {
+        let (metadata_debounce_scheduler, _metadata_debounce_events) =
+            MetadataDebounceScheduler::new(METADATA_SAVE_DEBOUNCE_WINDOW);
+
         Self {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
@@ -891,7 +967,9 @@ impl Default for Editor {
             metadata_save_generation: 0,
             metadata_save_in_flight: false,
             metadata_save_reschedule_after_in_flight: false,
+            metadata_debounce_scheduler,
             shutdown_in_progress: false,
+            search_generation: 0,
             undo_manager: UndoManager::new(),
             state: EditorState::new(),
             note_explorer: note_explorer::NoteExplorer::new(String::new()),

@@ -4,7 +4,9 @@ mod tests {
     use crate::components::editor::{Editor, Message as EditorMessage};
     use crate::components::note_explorer;
     use crate::configuration::Configuration;
-    use crate::notebook::{self, MetadataLoadResult, NoteMetadata, NotebookError};
+    use crate::notebook::{
+        self, MetadataLoadResult, NoteMetadata, NoteSearchResult, NotebookError,
+    };
     use iced::widget::text_editor::{Action, Edit};
     use iced::window;
     use std::collections::HashMap;
@@ -116,6 +118,88 @@ mod tests {
 
         assert_eq!(editor.debug_selected_note_path(), None);
         assert_eq!(editor.debug_markdown_text(), "");
+    }
+
+    #[test]
+    fn stale_search_results_are_ignored_when_newer_query_exists() {
+        let mut editor = Editor::default();
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchQueryChanged("alpha".to_string()),
+        );
+        let (alpha_generation, _, _) = editor.debug_search_state();
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchQueryChanged("beta".to_string()),
+        );
+        let (beta_generation, query, initial_results) = editor.debug_search_state();
+
+        assert!(beta_generation > alpha_generation);
+        assert_eq!(query, "beta");
+        assert!(initial_results.is_empty());
+
+        let stale_result = NoteSearchResult {
+            rel_path: "alpha/note".to_string(),
+            snippet: "Path match".to_string(),
+        };
+        let fresh_result = NoteSearchResult {
+            rel_path: "beta/note".to_string(),
+            snippet: "Path match".to_string(),
+        };
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchCompleted(alpha_generation, vec![stale_result]),
+        );
+        let (_, _, stale_applied_results) = editor.debug_search_state();
+        assert!(
+            stale_applied_results.is_empty(),
+            "stale search completions should not overwrite newer queries"
+        );
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchCompleted(beta_generation, vec![fresh_result.clone()]),
+        );
+        let (_, _, final_results) = editor.debug_search_state();
+        assert_eq!(final_results, vec![fresh_result]);
+    }
+
+    #[test]
+    fn clear_search_invalidates_in_flight_results() {
+        let mut editor = Editor::default();
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchQueryChanged("alpha".to_string()),
+        );
+        let (generation, _, _) = editor.debug_search_state();
+
+        let _ = Editor::update(&mut editor, EditorMessage::ClearSearch);
+        let (cleared_generation, query, results) = editor.debug_search_state();
+        assert!(cleared_generation > generation);
+        assert!(query.is_empty());
+        assert!(results.is_empty());
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::SearchCompleted(
+                generation,
+                vec![NoteSearchResult {
+                    rel_path: "alpha/note".to_string(),
+                    snippet: "Path match".to_string(),
+                }],
+            ),
+        );
+
+        let (_, final_query, final_results) = editor.debug_search_state();
+        assert!(final_query.is_empty());
+        assert!(
+            final_results.is_empty(),
+            "clearing search should keep stale in-flight results from reappearing"
+        );
     }
 
     #[test]

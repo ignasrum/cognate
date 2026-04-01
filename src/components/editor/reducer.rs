@@ -32,7 +32,7 @@ fn message_domain(message: &Message) -> MessageDomain {
 
         Message::SearchQueryChanged(_)
         | Message::RunSearch
-        | Message::SearchCompleted(_)
+        | Message::SearchCompleted(_, _)
         | Message::ClearSearch => MessageDomain::Search,
 
         Message::DebouncedMetadataSaveElapsed(_)

@@ -49,6 +49,37 @@ fn normalize_rfc3339_to_seconds(timestamp: &str) -> String {
     timestamp.to_string()
 }
 
+fn parse_rfc3339_timestamp(timestamp: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(timestamp, &Rfc3339).ok()
+}
+
+fn reconcile_last_updated_timestamp(
+    existing_timestamp: Option<&str>,
+    note_file_modified_time: Option<SystemTime>,
+) -> Option<String> {
+    let file_timestamp = note_file_modified_time.and_then(|modified_time| {
+        format_system_time_rfc3339(modified_time).and_then(|formatted| {
+            parse_rfc3339_timestamp(&formatted).map(|parsed| (parsed, formatted))
+        })
+    });
+
+    match existing_timestamp {
+        Some(existing_timestamp) => {
+            let normalized = normalize_rfc3339_to_seconds(existing_timestamp);
+            let existing_parsed = parse_rfc3339_timestamp(&normalized);
+
+            if let Some((file_parsed, file_formatted)) = file_timestamp
+                && existing_parsed.is_none_or(|existing| file_parsed > existing)
+            {
+                return Some(file_formatted);
+            }
+
+            Some(normalized)
+        }
+        None => file_timestamp.map(|(_, formatted)| formatted),
+    }
+}
+
 fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -432,24 +463,18 @@ pub async fn load_notes_metadata(
     let mut metadata_changed = false;
 
     for note in &mut notes {
-        if let Some(existing_timestamp) = note.last_updated.clone() {
-            let normalized = normalize_rfc3339_to_seconds(&existing_timestamp);
-            if normalized != existing_timestamp {
-                note.last_updated = Some(normalized);
-                metadata_changed = true;
-            }
-        } else {
-            let note_file_path = Path::new(&notebook_path)
-                .join(&note.rel_path)
-                .join("note.md");
+        let note_file_path = Path::new(&notebook_path)
+            .join(&note.rel_path)
+            .join("note.md");
+        let note_file_modified_time = fs::metadata(note_file_path)
+            .ok()
+            .and_then(|file_metadata| file_metadata.modified().ok());
+        let reconciled_last_updated =
+            reconcile_last_updated_timestamp(note.last_updated.as_deref(), note_file_modified_time);
 
-            if let Ok(file_metadata) = fs::metadata(note_file_path)
-                && let Ok(modified_time) = file_metadata.modified()
-                && let Some(formatted_time) = format_system_time_rfc3339(modified_time)
-            {
-                note.last_updated = Some(formatted_time);
-                metadata_changed = true;
-            }
+        if note.last_updated != reconciled_last_updated {
+            note.last_updated = reconciled_last_updated;
+            metadata_changed = true;
         }
     }
 

@@ -476,12 +476,20 @@ mod tests {
 
         assert_eq!(content, "hello from test");
 
+        let persisted_before_load =
+            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+                .expect("Failed to read metadata after content save");
+        assert!(
+            persisted_before_load.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
+            "save_note_content should not rewrite metadata immediately"
+        );
+
         let loaded = load_notes_or_panic(&notebook_dir);
         assert_eq!(loaded.len(), 1);
-        assert_eq!(
+        assert_ne!(
             loaded[0].last_updated.as_deref(),
             Some("2000-01-01T00:00:00Z"),
-            "save_note_content should not rewrite metadata"
+            "load_notes_metadata should reconcile stale last_updated from note file mtime"
         );
     }
 
@@ -516,11 +524,12 @@ mod tests {
         ))
         .expect("save_note_content should succeed");
 
-        let loaded = load_notes_or_panic(&notebook_dir);
-        assert_eq!(
-            loaded[0].last_updated.as_deref(),
-            Some("2000-01-01T00:00:00Z"),
-            "last_updated should not change when content is unchanged"
+        let persisted_metadata =
+            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+                .expect("Expected metadata file to remain readable after no-op save");
+        assert!(
+            persisted_metadata.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
+            "save_note_content should not rewrite metadata when content is unchanged"
         );
     }
 
@@ -608,6 +617,44 @@ mod tests {
         let persisted = fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
             .expect("Failed to read metadata after backfill");
         assert!(persisted.contains("last_updated"));
+    }
+
+    #[test]
+    fn load_notes_metadata_refreshes_stale_last_updated_from_note_file_mtime() {
+        let notebook_dir = TestNotebookDir::new("refresh_stale_last_updated");
+        let note_dir = Path::new(notebook_dir.as_str()).join("stale/note");
+
+        fs::create_dir_all(&note_dir).expect("Failed to create stale note directory");
+        fs::write(note_dir.join("note.md"), "stale").expect("Failed to write stale note file");
+        fs::write(
+            Path::new(notebook_dir.as_str()).join("metadata.json"),
+            r#"{
+  "notes": [
+    {
+      "rel_path": "stale/note",
+      "labels": ["legacy"],
+      "last_updated": "2000-01-01T00:00:00Z"
+    }
+  ]
+}"#,
+        )
+        .expect("Failed to write stale metadata");
+
+        let loaded = load_notes_or_panic(&notebook_dir);
+
+        assert_eq!(loaded.len(), 1);
+        assert_ne!(
+            loaded[0].last_updated.as_deref(),
+            Some("2000-01-01T00:00:00Z"),
+            "Expected stale last_updated to be refreshed from note file mtime"
+        );
+
+        let persisted = fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            .expect("Failed to read refreshed metadata");
+        assert!(
+            !persisted.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
+            "Expected refreshed metadata to replace the stale timestamp"
+        );
     }
 
     #[test]
