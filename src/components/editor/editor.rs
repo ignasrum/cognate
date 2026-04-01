@@ -276,7 +276,6 @@ impl Editor {
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
-                        state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -305,7 +304,6 @@ impl Editor {
                     return Task::batch(vec![
                         task,
                         metadata_save_task,
-                        state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -329,7 +327,6 @@ impl Editor {
                     return Task::batch(vec![
                         task,
                         metadata_save_task,
-                        state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -370,7 +367,6 @@ impl Editor {
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
-                        state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -492,7 +488,6 @@ impl Editor {
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
-                        state.persist_embedded_images_task(),
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -616,11 +611,7 @@ impl Editor {
             }
             state.prune_embedded_images_for_current_markdown();
             state.sync_markdown_preview();
-            return Task::batch(vec![
-                task,
-                state.persist_embedded_images_task(),
-                state.scroll_preview_to_cursor_task(),
-            ]);
+            return Task::batch(vec![task, state.scroll_preview_to_cursor_task()]);
         }
 
         task
@@ -964,11 +955,7 @@ impl Editor {
                 state.prune_embedded_images_for_current_markdown();
             }
             state.sync_markdown_preview();
-            return Task::batch(vec![
-                task,
-                state.persist_embedded_images_task(),
-                state.scroll_preview_to_cursor_task(),
-            ]);
+            return Task::batch(vec![task, state.scroll_preview_to_cursor_task()]);
         }
 
         task
@@ -1105,18 +1092,24 @@ impl Editor {
             .collect()
     }
 
-    fn persist_embedded_images_task(&self) -> Task<Message> {
-        Task::none()
-    }
-
     fn schedule_debounced_metadata_save_task(&mut self) -> Task<Message> {
         self.metadata_save_generation = self.metadata_save_generation.wrapping_add(1);
         let generation = self.metadata_save_generation;
 
         Task::perform(
             async move {
-                std::thread::sleep(METADATA_SAVE_DEBOUNCE_WINDOW);
-                generation
+                let (sender, receiver) = iced::futures::channel::oneshot::channel();
+
+                // Sleep on a dedicated OS thread and wake the async task via oneshot.
+                // This avoids blocking the Iced executor worker thread.
+                let _ = std::thread::Builder::new()
+                    .name("cognate-metadata-debounce".to_string())
+                    .spawn(move || {
+                        std::thread::sleep(METADATA_SAVE_DEBOUNCE_WINDOW);
+                        let _ = sender.send(generation);
+                    });
+
+                receiver.await.unwrap_or(generation)
             },
             Message::DebouncedMetadataSaveElapsed,
         )
