@@ -43,7 +43,7 @@ Visualizer:
 ### `src/notebook`
 
 - `operations.rs`: create/delete/move with path safety and metadata updates
-- `storage.rs`: metadata and note file persistence
+- `storage.rs`: metadata and note file persistence (see [STORAGE.md](STORAGE.md))
 - `search.rs`: search index cache and query matching
 
 ## Data Model
@@ -54,7 +54,7 @@ Primary persisted metadata shape (`NoteMetadata`):
 - `labels`: user-defined tags
 - `last_updated`: RFC3339 timestamp (optional for backward compatibility)
 
-Notebook metadata is stored in `metadata.json` under notebook root.
+Notebook metadata is stored in `metadata.json` under notebook root. For details, see [STORAGE.md](STORAGE.md).
 
 ## Message and State Flow
 
