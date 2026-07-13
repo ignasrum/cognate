@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{NoteMetadata, NoteSearchResult};
@@ -35,16 +35,18 @@ impl From<&NoteMetadata> for SearchNote {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NotebookSearchIndex {
-    manager: cognate_engine::search::SearchIndexManager,
+    manager: Arc<tokio::sync::Mutex<cognate_engine::search::SearchIndexManager>>,
     last_accessed_at: Instant,
 }
 
 impl NotebookSearchIndex {
     fn new(notebook_path: &str) -> Self {
         Self {
-            manager: cognate_engine::search::SearchIndexManager::new(Path::new(notebook_path)),
+            manager: Arc::new(tokio::sync::Mutex::new(
+                cognate_engine::search::SearchIndexManager::new(Path::new(notebook_path))
+            )),
             last_accessed_at: Instant::now(),
         }
     }
@@ -98,46 +100,62 @@ pub fn clear_search_index_for_notebook(notebook_path: &str) {
     });
 }
 
-pub(super) fn cache_upsert_search_index_note_content(
+pub(super) async fn cache_upsert_search_index_note_content(
     notebook_path: &str,
     rel_path: &str,
     content: &str,
     modified_time: Option<SystemTime>,
 ) {
-    with_search_indexes(|search_indexes| {
+    let manager_arc = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
         let index = search_indexes
             .entry(notebook_path.to_string())
             .or_insert_with(|| NotebookSearchIndex::new(notebook_path));
         touch_search_index(index);
-
-        index.manager.cache_upsert(rel_path, content, modified_time);
+        index.manager.clone()
     });
+
+    let mut manager = manager_arc.lock().await;
+    manager.cache_upsert(rel_path, content, modified_time);
 }
 
-pub(super) fn cache_remove_search_index_entries(notebook_path: &str, rel_path: &str) {
-    with_search_indexes(|search_indexes| {
+pub(super) async fn cache_remove_search_index_entries(notebook_path: &str, rel_path: &str) {
+    let manager_arc_opt = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
 
         if let Some(index) = search_indexes.get_mut(notebook_path) {
             touch_search_index(index);
-            index.manager.cache_remove(rel_path);
+            Some(index.manager.clone())
+        } else {
+            None
         }
     });
+
+    if let Some(manager_arc) = manager_arc_opt {
+        let mut manager = manager_arc.lock().await;
+        manager.cache_remove(rel_path);
+    }
 }
 
-pub(super) fn cache_rename_search_index_entries(
+pub(super) async fn cache_rename_search_index_entries(
     notebook_path: &str,
     from_rel_path: &str,
     to_rel_path: &str,
 ) {
-    with_search_indexes(|search_indexes| {
+    let manager_arc_opt = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
         if let Some(index) = search_indexes.get_mut(notebook_path) {
             touch_search_index(index);
-            index.manager.cache_rename(from_rel_path, to_rel_path);
+            Some(index.manager.clone())
+        } else {
+            None
         }
     });
+
+    if let Some(manager_arc) = manager_arc_opt {
+        let mut manager = manager_arc.lock().await;
+        manager.cache_rename(from_rel_path, to_rel_path);
+    }
 }
 
 pub async fn search_notes_with_snapshot(
@@ -159,19 +177,21 @@ pub async fn search_notes_with_snapshot(
         })
         .collect();
 
-    let engine_results = with_search_indexes(|search_indexes| {
+    let manager_arc = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
         let index = search_indexes
             .entry(notebook_path.clone())
             .or_insert_with(|| NotebookSearchIndex::new(&notebook_path));
         touch_search_index(index);
-
-        index.manager.search(
-            &query,
-            &engine_notes,
-            SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
-        )
+        index.manager.clone()
     });
+
+    let mut manager = manager_arc.lock().await;
+    let engine_results = manager.search(
+        &query,
+        &engine_notes,
+        SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
+    ).await;
 
     let mut results = match engine_results {
         Ok(res) => res,
@@ -210,14 +230,18 @@ mod search_index_eviction_tests {
         indexes.insert(
             "stale".to_string(),
             NotebookSearchIndex {
-                manager: cognate_engine::search::SearchIndexManager::new(Path::new("stale")),
+                manager: Arc::new(tokio::sync::Mutex::new(
+                    cognate_engine::search::SearchIndexManager::new(Path::new("stale"))
+                )),
                 last_accessed_at: stale_last_access,
             },
         );
         indexes.insert(
             "active".to_string(),
             NotebookSearchIndex {
-                manager: cognate_engine::search::SearchIndexManager::new(Path::new("active")),
+                manager: Arc::new(tokio::sync::Mutex::new(
+                    cognate_engine::search::SearchIndexManager::new(Path::new("active"))
+                )),
                 last_accessed_at: now,
             },
         );
@@ -246,7 +270,9 @@ mod search_index_eviction_tests {
             indexes.insert(
                 format!("notebook_{i}"),
                 NotebookSearchIndex {
-                    manager: cognate_engine::search::SearchIndexManager::new(Path::new(&format!("notebook_{i}"))),
+                    manager: Arc::new(tokio::sync::Mutex::new(
+                        cognate_engine::search::SearchIndexManager::new(Path::new(&format!("notebook_{i}")))
+                    )),
                     last_accessed_at,
                 },
             );

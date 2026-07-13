@@ -43,7 +43,7 @@ pub struct AttachmentManager;
 impl AttachmentManager {
     /// Decodes base64 payload and writes it to target note's subfolder, returning the Markdown relative path.
     /// Performs format signature checks (magic bytes) to resolve file extension (.png, .jpg, etc.).
-    pub fn save_image_from_base64(
+    pub async fn save_image_from_base64(
         notebook_path: &Path,
         rel_note_path: &str,
         base64_data: &str,
@@ -59,8 +59,8 @@ impl AttachmentManager {
         let images_dir = note_dir.join("images");
         
         // Safety check to ensure images_dir is under notebook_path
-        if let Ok(canonical_notebook) = notebook_path.canonicalize() {
-            if let Ok(canonical_images_dir) = images_dir.canonicalize() {
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
+            if let Ok(canonical_images_dir) = tokio::fs::canonicalize(&images_dir).await {
                 if !canonical_images_dir.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "save_image",
@@ -70,7 +70,7 @@ impl AttachmentManager {
             }
         }
 
-        std::fs::create_dir_all(&images_dir).map_err(|err| {
+        tokio::fs::create_dir_all(&images_dir).await.map_err(|err| {
             EngineError::storage(
                 "save_image",
                 format!("Failed to create image directory: {}", err)
@@ -78,7 +78,7 @@ impl AttachmentManager {
         })?;
 
         let image_path = images_dir.join(&file_name);
-        std::fs::write(&image_path, image_bytes).map_err(|err| {
+        tokio::fs::write(&image_path, image_bytes).await.map_err(|err| {
             EngineError::storage(
                 "save_image",
                 format!("Failed to write image file: {}", err)
@@ -89,12 +89,12 @@ impl AttachmentManager {
     }
 
     /// Reads raw image file bytes for UI rendering
-    pub fn read_image_bytes(notebook_path: &Path, rel_path: &str) -> Result<Vec<u8>, EngineError> {
+    pub async fn read_image_bytes(notebook_path: &Path, rel_path: &str) -> Result<Vec<u8>, EngineError> {
         let full_path = notebook_path.join(rel_path);
         
         // Safety check to ensure we don't escape notebook_path
-        if let Ok(canonical_notebook) = notebook_path.canonicalize() {
-            if let Ok(canonical_file) = full_path.canonicalize() {
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
+            if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
                 if !canonical_file.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "read_image_bytes",
@@ -104,7 +104,7 @@ impl AttachmentManager {
             }
         }
 
-        std::fs::read(&full_path).map_err(|err| {
+        tokio::fs::read(&full_path).await.map_err(|err| {
             EngineError::storage(
                 "read_image_bytes",
                 format!("Failed to read attachment file: {}", err)
@@ -113,12 +113,12 @@ impl AttachmentManager {
     }
 
     /// Deletes specific attachment file
-    pub fn delete_attachment(notebook_path: &Path, rel_path: &str) -> Result<(), EngineError> {
+    pub async fn delete_attachment(notebook_path: &Path, rel_path: &str) -> Result<(), EngineError> {
         let full_path = notebook_path.join(rel_path);
         
         // Safety check to ensure we don't escape notebook_path
-        if let Ok(canonical_notebook) = notebook_path.canonicalize() {
-            if let Ok(canonical_file) = full_path.canonicalize() {
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
+            if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
                 if !canonical_file.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "delete_attachment",
@@ -128,8 +128,8 @@ impl AttachmentManager {
             }
         }
         
-        if full_path.exists() {
-            std::fs::remove_file(&full_path).map_err(|err| {
+        if tokio::fs::try_exists(&full_path).await.unwrap_or(false) {
+            tokio::fs::remove_file(&full_path).await.map_err(|err| {
                 EngineError::storage(
                     "delete_attachment",
                     format!("Failed to delete attachment: {}", err)

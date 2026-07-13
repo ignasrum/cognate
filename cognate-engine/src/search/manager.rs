@@ -76,7 +76,7 @@ impl SearchIndexManager {
         }
     }
 
-    pub fn search(
+    pub async fn search(
         &mut self,
         query: &str,
         notes: &[NoteMetadata],
@@ -99,7 +99,7 @@ impl SearchIndexManager {
             let mut needs_reload = false;
 
             if in_cache && should_refresh {
-                let current_mtime = manager.get_note_modified_time(&note.rel_path);
+                let current_mtime = manager.get_note_modified_time(&note.rel_path).await;
                 let cached_mtime = self.notes_cache.get(&note.rel_path).and_then(|c| c.modified_time);
                 if current_mtime != cached_mtime {
                     needs_reload = true;
@@ -107,9 +107,9 @@ impl SearchIndexManager {
             }
 
             if !in_cache || needs_reload {
-                let content = manager.load_note_content(&note.rel_path).unwrap_or_default();
+                let content = manager.load_note_content(&note.rel_path).await.unwrap_or_default();
                 let content_lower = content.to_lowercase();
-                let modified_time = manager.get_note_modified_time(&note.rel_path);
+                let modified_time = manager.get_note_modified_time(&note.rel_path).await;
 
                 self.notes_cache.insert(
                     note.rel_path.clone(),
@@ -126,9 +126,10 @@ impl SearchIndexManager {
             self.last_external_refresh = Some(now);
         }
 
-        let mut engine_state = self.engine_state.take().unwrap_or_else(|| {
-            manager.load_engine_state()
-        });
+        let mut engine_state = match self.engine_state.take() {
+            Some(state) => state,
+            None => manager.load_engine_state().await,
+        };
 
         let mut changed = false;
         let current_paths: HashSet<&str> = notes.iter().map(|n| n.rel_path.as_str()).collect();
@@ -162,7 +163,7 @@ impl SearchIndexManager {
         }
 
         if changed {
-            manager.save_engine_state(&engine_state);
+            manager.save_engine_state(&engine_state).await;
         }
 
         self.engine_state = Some(engine_state.clone());

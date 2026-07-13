@@ -22,7 +22,9 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::Redo
         | Message::PasteFromClipboard
         | Message::EditorAction(_)
-        | Message::LoadedNoteContent(_, _, _) => MessageDomain::Text,
+        | Message::LoadedNoteContent(_, _, _)
+        | Message::AttachmentLoaded(_, _)
+        | Message::PastedImageSaved(_) => MessageDomain::Text,
 
         Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => MessageDomain::Selection,
 
@@ -67,7 +69,8 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::AboutButtonClicked
         | Message::IncreaseScale
         | Message::DecreaseScale
-        | Message::MarkdownLinkClicked(_) => MessageDomain::Ui,
+        | Message::MarkdownLinkClicked(_)
+        | Message::Dummy => MessageDomain::Ui,
     }
 }
 

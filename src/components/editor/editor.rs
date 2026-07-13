@@ -4,7 +4,7 @@ use iced::task::Task;
 use iced::widget::text_editor::Action;
 use iced::{Element, Subscription, window};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
@@ -146,8 +146,8 @@ impl Editor {
         reducer::route_message(state, message)
     }
 
-    fn sync_markdown_preview(&mut self) {
-        self.embedded_image_workflow.sync_preview_assets(
+    fn sync_markdown_preview(&mut self) -> Task<Message> {
+        let task = self.embedded_image_workflow.sync_preview_assets(
             self.state.notebook_path(),
             self.state.selected_note_path(),
             &self.markdown_text,
@@ -157,6 +157,7 @@ impl Editor {
             self.embedded_image_workflow.images(),
         );
         self.markdown_preview = iced::widget::markdown::Content::parse(&preview_markdown);
+        task
     }
 
     fn prune_embedded_images_for_current_markdown(&mut self) {
@@ -202,26 +203,33 @@ impl Editor {
                 metadata_save_task = self.touch_selected_note_last_updated_and_schedule_save_task();
             }
 
+            let mut deletion_tasks = Vec::new();
             for image_id in self.embedded_image_workflow.take_pending_deletion_ids() {
                 if let Some(image_rel_path) = self
                     .embedded_image_workflow
                     .remove_image_path_for_id(&image_id)
                 {
-                    let notebook_path = Path::new(self.state.notebook_path());
-                    if let Err(_err) = cognate_engine::storage::AttachmentManager::delete_attachment(
-                        notebook_path,
-                        &image_rel_path,
-                    ) {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to delete image file '{}': {}", image_rel_path, _err);
-                    }
+                    let path = PathBuf::from(self.state.notebook_path());
+                    let rel = image_rel_path.clone();
+                    deletion_tasks.push(Task::perform(
+                        async move {
+                            let _ = cognate_engine::storage::AttachmentManager::delete_attachment(
+                                &path,
+                                &rel,
+                            )
+                            .await;
+                        },
+                        |_| Message::Dummy,
+                    ));
                 }
             }
 
-            self.sync_markdown_preview();
+            let sync_task = self.sync_markdown_preview();
             return Task::batch(vec![
                 self.with_preview_scroll_task(save_task),
                 metadata_save_task,
+                sync_task,
+                Task::batch(deletion_tasks),
             ]);
         }
 
@@ -255,7 +263,7 @@ impl Editor {
 
         Task::perform(
             async move {
-                let result = note_coordinator::save_metadata_snapshot(&notebook_path, &notes);
+                let result = note_coordinator::save_metadata_snapshot(&notebook_path, &notes).await;
                 (generation, result)
             },
             |(generation, result)| Message::DebouncedMetadataSaveCompleted(generation, result),

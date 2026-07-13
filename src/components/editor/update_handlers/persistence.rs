@@ -71,7 +71,7 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                         content_note_path,
                         &markdown_text,
                         &notes,
-                    );
+                    ).await;
                     (window_id, result)
                 },
                 |(window_id, result)| Message::ShutdownFlushCompleted(window_id, result),
@@ -85,7 +85,7 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                     notebook::clear_search_index_for_notebook(state.state.notebook_path());
                     window::close(window_id)
                 }
-                Err(error) => {
+                Err(_error) => {
                     #[cfg(not(test))]
                     {
                         let _ = DialogBuilder::message()
@@ -93,7 +93,7 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                             .set_title("Failed to Save Before Exit")
                             .set_text(format!(
                                 "Cognate could not safely save your latest changes before exit:\n\n{}",
-                                error.ui_message()
+                                _error.ui_message()
                             ))
                             .alert()
                             .show();

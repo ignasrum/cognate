@@ -1,12 +1,12 @@
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
 use std::sync::Arc;
+use std::path::Path;
 
 use super::clipboard::{
     ClipboardPastePayload, paste_text_from_action, read_clipboard_image_file_as_base64_from_text,
     read_clipboard_paste_payload,
 };
-use super::embedded_images::save_base64_image_for_note;
 use super::*;
 use crate::components::editor::text_management::undo_manager;
 
@@ -27,10 +27,11 @@ impl Editor {
                     let metadata_save_task =
                         state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    let sync_task = state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
+                        sync_task,
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -55,10 +56,11 @@ impl Editor {
                     let metadata_save_task =
                         state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    let sync_task = state.sync_markdown_preview();
                     return Task::batch(vec![
                         task,
                         metadata_save_task,
+                        sync_task,
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -78,10 +80,11 @@ impl Editor {
                     let metadata_save_task =
                         state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    let sync_task = state.sync_markdown_preview();
                     return Task::batch(vec![
                         task,
                         metadata_save_task,
+                        sync_task,
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -119,10 +122,11 @@ impl Editor {
                     let metadata_save_task =
                         state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    let sync_task = state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
+                        sync_task,
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -144,11 +148,66 @@ impl Editor {
                     note_path,
                     new_content,
                 );
+                let mut sync_task = Task::none();
                 if state.markdown_text != previous_markdown {
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    sync_task = state.sync_markdown_preview();
                 }
-                state.with_preview_scroll_task(task)
+                state.with_preview_scroll_task(Task::batch(vec![task, sync_task]))
+            }
+            Message::AttachmentLoaded(image_id, result) => {
+                match result {
+                    Ok(bytes) => {
+                        state.embedded_image_workflow.insert_image_handle(image_id, bytes);
+                        state.sync_markdown_preview()
+                    }
+                    Err(_err) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to load image handle {}: {}", image_id, _err);
+                        Task::none()
+                    }
+                }
+            }
+            Message::PastedImageSaved(result) => {
+                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                    return Task::none();
+                };
+
+                match result {
+                    Ok(relative_path) => {
+                        state.undo_manager.add_to_history(
+                            &selected_note_path,
+                            state.markdown_text.clone(),
+                            state.content.cursor(),
+                        );
+                        let image_tag = format!("![image]({relative_path})");
+                        state.content.perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
+                        state.markdown_text = state.content.text();
+                        state.prune_embedded_images_for_current_markdown();
+                        let metadata_save_task = state.touch_selected_note_last_updated_and_schedule_save_task();
+                        let sync_task = state.sync_markdown_preview();
+
+                        let notebook_path = state.state.notebook_path().to_string();
+                        let note_path = selected_note_path;
+                        let content_text = state.markdown_text.clone();
+                        let save_content_task = Task::perform(
+                            async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
+                            Message::NoteContentSaved,
+                        );
+
+                        Task::batch(vec![
+                            save_content_task,
+                            metadata_save_task,
+                            sync_task,
+                            state.scroll_preview_to_cursor_task(),
+                        ])
+                    }
+                    Err(_err) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to save pasted image: {}", _err);
+                        Task::none()
+                    }
+                }
             }
             _ => unreachable!("text handler received non-text message"),
         }
@@ -180,49 +239,20 @@ impl Editor {
                     return Task::none();
                 };
 
-                state.undo_manager.add_to_history(
-                    &selected_note_path,
-                    state.markdown_text.clone(),
-                    state.content.cursor(),
-                );
-
-                let image_tag = match save_base64_image_for_note(
-                    state.state.notebook_path(),
-                    &selected_note_path,
-                    &image_base64,
-                ) {
-                    Ok(relative_path) => format!("![image]({relative_path})"),
-                    Err(_err) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to persist pasted image: {}", _err);
-                        return Task::none();
-                    }
-                };
-
-                state
-                    .content
-                    .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
-                state.markdown_text = state.content.text();
-                state.prune_embedded_images_for_current_markdown();
-                let metadata_save_task =
-                    state.touch_selected_note_last_updated_and_schedule_save_task();
-                state.sync_markdown_preview();
-
                 let notebook_path = state.state.notebook_path().to_string();
                 let note_path = selected_note_path;
-                let content_text = state.markdown_text.clone();
-                let save_content_task = Task::perform(
+                Task::perform(
                     async move {
-                        notebook::save_note_content(notebook_path, note_path, content_text).await
+                        cognate_engine::storage::AttachmentManager::save_image_from_base64(
+                            Path::new(&notebook_path),
+                            &note_path,
+                            &image_base64,
+                        )
+                        .await
+                        .map_err(|err| err.to_string())
                     },
-                    Message::NoteContentSaved,
-                );
-
-                Task::batch(vec![
-                    save_content_task,
-                    metadata_save_task,
-                    state.scroll_preview_to_cursor_task(),
-                ])
+                    Message::PastedImageSaved,
+                )
             }
             Some(ClipboardPastePayload::Text(text_to_paste)) => {
                 let previous_markdown = state.markdown_text.clone();
@@ -240,10 +270,11 @@ impl Editor {
                     let metadata_save_task =
                         state.touch_selected_note_last_updated_and_schedule_save_task();
                     state.prune_embedded_images_for_current_markdown();
-                    state.sync_markdown_preview();
+                    let sync_task = state.sync_markdown_preview();
                     return Task::batch(vec![
                         save_task,
                         metadata_save_task,
+                        sync_task,
                         state.scroll_preview_to_cursor_task(),
                     ]);
                 }
@@ -297,45 +328,19 @@ impl Editor {
             return Task::none();
         };
 
-        state.undo_manager.add_to_history(
-            &selected_note_path,
-            state.markdown_text.clone(),
-            state.content.cursor(),
-        );
-
-        let image_tag = match save_base64_image_for_note(
-            state.state.notebook_path(),
-            &selected_note_path,
-            &image_base64,
-        ) {
-            Ok(relative_path) => format!("![image]({relative_path})"),
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to persist pasted image: {}", _err);
-                return Task::none();
-            }
-        };
-
-        state
-            .content
-            .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
-        state.markdown_text = state.content.text();
-        state.prune_embedded_images_for_current_markdown();
-        let metadata_save_task = state.touch_selected_note_last_updated_and_schedule_save_task();
-        state.sync_markdown_preview();
-
         let notebook_path = state.state.notebook_path().to_string();
         let note_path = selected_note_path;
-        let content_text = state.markdown_text.clone();
-        let save_content_task = Task::perform(
-            async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
-            Message::NoteContentSaved,
-        );
-
-        Task::batch(vec![
-            save_content_task,
-            metadata_save_task,
-            state.scroll_preview_to_cursor_task(),
-        ])
+        Task::perform(
+            async move {
+                cognate_engine::storage::AttachmentManager::save_image_from_base64(
+                    Path::new(&notebook_path),
+                    &note_path,
+                    &image_base64,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            },
+            Message::PastedImageSaved,
+        )
     }
 }

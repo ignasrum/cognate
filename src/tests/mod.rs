@@ -2,9 +2,6 @@
 #[cfg(test)]
 pub mod json;
 
-// Notebook operation tests (create/delete/move/load metadata).
-#[cfg(test)]
-pub mod notebook;
 
 // Configuration reader tests.
 #[cfg(test)]

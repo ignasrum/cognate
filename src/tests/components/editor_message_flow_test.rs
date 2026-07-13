@@ -11,8 +11,17 @@ mod tests {
     use iced::window;
     use std::collections::HashMap;
     use std::fs;
+    use std::future::Future;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
 
     struct TestNotebookDir {
         path: PathBuf,
@@ -62,7 +71,7 @@ mod tests {
             last_updated: Some("2024-01-01T00:00:00Z".to_string()),
         }];
 
-        notebook::save_metadata(notebook_dir.as_str(), &notes).expect("Failed to seed metadata");
+        block_on(notebook::save_metadata(notebook_dir.as_str(), &notes)).expect("Failed to seed metadata");
         notes
     }
 
@@ -302,12 +311,12 @@ mod tests {
 
         let (notebook_path, content_note_path, markdown_text, notes) =
             editor.debug_shutdown_payload();
-        let flush_result = note_coordinator::flush_for_shutdown(
+        let flush_result = block_on(note_coordinator::flush_for_shutdown(
             &notebook_path,
             content_note_path,
             &markdown_text,
             &notes,
-        );
+        ));
         let _ = Editor::update(
             &mut editor,
             EditorMessage::ShutdownFlushCompleted(window_id, flush_result),

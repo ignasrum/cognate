@@ -21,7 +21,7 @@ pub async fn load_note_payload(
 ) -> LoadedNotePayload {
     let note_dir_path = Path::new(&notebook_path).join(&selected_note_path);
     let full_note_path = note_dir_path.join("note.md");
-    let loaded_content = match std::fs::read_to_string(full_note_path) {
+    let loaded_content = match tokio::fs::read_to_string(full_note_path).await {
         Ok(content) => content,
         Err(_err) => {
             #[cfg(debug_assertions)]
@@ -31,7 +31,7 @@ pub async fn load_note_payload(
     };
 
     // Legacy cleanup: embedded image state is now inferred from markdown.
-    let _ = std::fs::remove_file(note_dir_path.join("embedded_images.json"));
+    let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
 
     LoadedNotePayload {
         note_path: selected_note_path,
@@ -40,14 +40,14 @@ pub async fn load_note_payload(
     }
 }
 
-pub fn save_metadata_snapshot(
+pub async fn save_metadata_snapshot(
     notebook_path: &str,
     notes: &[NoteMetadata],
 ) -> Result<(), NotebookError> {
-    notebook::save_metadata(notebook_path, notes)
+    notebook::save_metadata(notebook_path, notes).await
 }
 
-pub fn flush_for_shutdown(
+pub async fn flush_for_shutdown(
     notebook_path: &str,
     content_note_path: Option<String>,
     markdown_text: &str,
@@ -58,8 +58,8 @@ pub fn flush_for_shutdown(
     }
 
     if let Some(note_path) = content_note_path {
-        notebook::save_note_content_sync(notebook_path, &note_path, markdown_text)?;
+        notebook::save_note_content_sync(notebook_path, &note_path, markdown_text).await?;
     }
 
-    save_metadata_snapshot(notebook_path, notes)
+    save_metadata_snapshot(notebook_path, notes).await
 }

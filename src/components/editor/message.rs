@@ -69,4 +69,9 @@ pub enum Message {
     DecreaseScale,
     MarkdownLinkClicked(String),
     ScaleSaved(Result<(), String>),
+
+    // Async attachments
+    AttachmentLoaded(String, Result<Vec<u8>, String>),
+    PastedImageSaved(Result<String, String>),
+    Dummy,
 }
