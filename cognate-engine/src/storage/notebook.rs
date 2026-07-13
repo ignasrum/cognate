@@ -192,10 +192,8 @@ async fn sync_engine_metadata(
     let mut engine_state = load_engine_state_from_disk(notebook_path).await;
     let mut changed = false;
 
-    let current_paths: HashSet<String> = validated_notes
-        .iter()
-        .map(|n| n.rel_path.clone())
-        .collect();
+    let current_paths: HashSet<String> =
+        validated_notes.iter().map(|n| n.rel_path.clone()).collect();
 
     // Remove deleted documents
     let existing_paths: Vec<String> = engine_state

@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::components::editor::{Editor, LabelMutationRollback, Message as EditorMessage};
     use crate::components::editor::actions::label_actions;
     use crate::components::editor::state::editor_state::EditorState;
+    use crate::components::editor::{Editor, LabelMutationRollback, Message as EditorMessage};
     use crate::components::note_explorer;
     use crate::components::note_explorer::NoteExplorer;
     use crate::components::visualizer::Visualizer;
@@ -83,7 +83,10 @@ mod tests {
                 },
             ))),
         );
-        let _ = Editor::update(&mut editor, EditorMessage::NoteSelected("note/a".to_string()));
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteSelected("note/a".to_string()),
+        );
 
         let rollback = LabelMutationRollback {
             note_path: "note/a".to_string(),

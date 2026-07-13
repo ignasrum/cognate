@@ -160,7 +160,9 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
 }
 
 fn restore_label_mutation(state: &mut Editor, rollback: LabelMutationRollback) {
-    state.state.set_selected_note_labels(rollback.selected_labels);
+    state
+        .state
+        .set_selected_note_labels(rollback.selected_labels);
     state.state.set_new_label_text(rollback.input_text);
 
     if let Some(note) = state

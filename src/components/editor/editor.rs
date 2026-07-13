@@ -41,8 +41,8 @@ const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(20);
 const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(1200);
 
 use self::embedded_image_service::EmbeddedImageWorkflow;
-pub use self::message::Message;
 pub use self::message::LabelMutationRollback;
+pub use self::message::Message;
 use self::metadata_debounce::MetadataDebounceScheduler;
 use self::persistence::round_scale_step;
 use self::preview::{

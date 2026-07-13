@@ -1,7 +1,7 @@
 use iced::task::Task; // Use Task instead of Command
 
-use crate::components::editor::{LabelMutationRollback, Message};
 use crate::components::editor::state::editor_state::EditorState;
+use crate::components::editor::{LabelMutationRollback, Message};
 use crate::components::note_explorer::NoteExplorer;
 use crate::components::visualizer::Visualizer;
 use crate::notebook;
