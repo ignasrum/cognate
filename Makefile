@@ -27,6 +27,13 @@ install:
 test:
 	cargo test
 
+format:
+	cargo fmt --all
+
+lint:
+	cargo clippy --all-targets -- -D warnings
+	cargo fmt --all -- --check
+
 all: build install
 
 help:

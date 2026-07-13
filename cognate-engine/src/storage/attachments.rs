@@ -60,15 +60,14 @@ impl AttachmentManager {
         let images_dir = note_dir.join("images");
 
         // Safety check to ensure images_dir is under notebook_path
-        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
-            if let Ok(canonical_images_dir) = tokio::fs::canonicalize(&images_dir).await {
-                if !canonical_images_dir.starts_with(&canonical_notebook) {
-                    return Err(EngineError::validation(
-                        "save_image",
-                        "Image directory escapes notebook boundaries",
-                    ));
-                }
-            }
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await
+            && let Ok(canonical_images_dir) = tokio::fs::canonicalize(&images_dir).await
+            && !canonical_images_dir.starts_with(&canonical_notebook)
+        {
+            return Err(EngineError::validation(
+                "save_image",
+                "Image directory escapes notebook boundaries",
+            ));
         }
 
         tokio::fs::create_dir_all(&images_dir)
@@ -98,15 +97,14 @@ impl AttachmentManager {
         let full_path = notebook_path.join(rel_path);
 
         // Safety check to ensure we don't escape notebook_path
-        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
-            if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
-                if !canonical_file.starts_with(&canonical_notebook) {
-                    return Err(EngineError::validation(
-                        "read_image_bytes",
-                        format!("Attachment path '{}' escapes notebook boundaries", rel_path),
-                    ));
-                }
-            }
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await
+            && let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await
+            && !canonical_file.starts_with(&canonical_notebook)
+        {
+            return Err(EngineError::validation(
+                "read_image_bytes",
+                format!("Attachment path '{}' escapes notebook boundaries", rel_path),
+            ));
         }
 
         tokio::fs::read(&full_path).await.map_err(|err| {
@@ -125,15 +123,14 @@ impl AttachmentManager {
         let full_path = notebook_path.join(rel_path);
 
         // Safety check to ensure we don't escape notebook_path
-        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
-            if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
-                if !canonical_file.starts_with(&canonical_notebook) {
-                    return Err(EngineError::validation(
-                        "delete_attachment",
-                        format!("Attachment path '{}' escapes notebook boundaries", rel_path),
-                    ));
-                }
-            }
+        if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await
+            && let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await
+            && !canonical_file.starts_with(&canonical_notebook)
+        {
+            return Err(EngineError::validation(
+                "delete_attachment",
+                format!("Attachment path '{}' escapes notebook boundaries", rel_path),
+            ));
         }
 
         if tokio::fs::try_exists(&full_path).await.unwrap_or(false) {

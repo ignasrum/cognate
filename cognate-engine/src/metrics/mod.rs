@@ -83,10 +83,10 @@ fn count_sentences(content: &str) -> usize {
 
     for idx in 0..chars.len() {
         let c = chars[idx];
-        if c == '.' || c == '!' || c == '?' {
-            if idx + 1 == chars.len() || chars[idx + 1].is_whitespace() {
-                count += 1;
-            }
+        if (c == '.' || c == '!' || c == '?')
+            && (idx + 1 == chars.len() || chars[idx + 1].is_whitespace())
+        {
+            count += 1;
         }
     }
     count
@@ -119,11 +119,12 @@ fn count_syllables(word: &str) -> usize {
         }
     }
 
-    // Silent 'e' at the end adjustment
-    if chars.last() == Some(&'e') && count > 1 {
-        if chars.len() >= 2 && !vowels.contains(&chars[chars.len() - 2]) {
-            count -= 1;
-        }
+    if chars.last() == Some(&'e')
+        && count > 1
+        && chars.len() >= 2
+        && !vowels.contains(&chars[chars.len() - 2])
+    {
+        count -= 1;
     }
 
     count.max(1)

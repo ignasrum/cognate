@@ -157,15 +157,14 @@ async fn ensure_path_within_notebook_if_canonicalizable(
     rel_path: &str,
     outside_error_prefix: &str,
 ) -> Result<(), EngineError> {
-    if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(notebook_path).await {
-        if let Ok(canonical_target_path) = tokio::fs::canonicalize(target_path).await {
-            if !canonical_target_path.starts_with(&canonical_notebook_path) {
-                return Err(EngineError::validation(
-                    "path containment",
-                    format!("{} '{}'", outside_error_prefix, rel_path),
-                ));
-            }
-        }
+    if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(notebook_path).await
+        && let Ok(canonical_target_path) = tokio::fs::canonicalize(target_path).await
+        && !canonical_target_path.starts_with(&canonical_notebook_path)
+    {
+        return Err(EngineError::validation(
+            "path containment",
+            format!("{} '{}'", outside_error_prefix, rel_path),
+        ));
     }
     Ok(())
 }
@@ -345,12 +344,10 @@ async fn load_engine_state_from_disk(notebook_path: &Path) -> NotebookEngineStat
     if tokio::fs::try_exists(&index_file_path)
         .await
         .unwrap_or(false)
+        && let Ok(bytes) = tokio::fs::read(&index_file_path).await
+        && let Ok(state) = NotebookEngineState::load_from_bytes(&bytes)
     {
-        if let Ok(bytes) = tokio::fs::read(&index_file_path).await {
-            if let Ok(state) = NotebookEngineState::load_from_bytes(&bytes) {
-                return state;
-            }
-        }
+        return state;
     }
     NotebookEngineState::new()
 }
@@ -933,30 +930,30 @@ impl NotebookManager {
             staged_delete_path = Some(transaction_path);
         }
 
-        if metadata_changed {
-            if let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await {
-                *metadata = previous_notes;
+        if metadata_changed
+            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+        {
+            *metadata = previous_notes;
 
-                if let Some(staged_path) = staged_delete_path
-                    && let Err(rollback_error) = rollback_rename(
-                        &staged_path,
-                        &note_dir_path,
-                        &self.notebook_path,
-                        FAIL_DELETE_ROLLBACK_MARKER,
-                    )
-                    .await
-                {
-                    return Err(EngineError::recovery(
-                        "delete note rollback",
-                        format!(
-                            "{} Rollback failed while restoring filesystem state: {}",
-                            metadata_error, rollback_error
-                        ),
-                    ));
-                }
-
-                return Err(metadata_error);
+            if let Some(staged_path) = staged_delete_path
+                && let Err(rollback_error) = rollback_rename(
+                    &staged_path,
+                    &note_dir_path,
+                    &self.notebook_path,
+                    FAIL_DELETE_ROLLBACK_MARKER,
+                )
+                .await
+            {
+                return Err(EngineError::recovery(
+                    "delete note rollback",
+                    format!(
+                        "{} Rollback failed while restoring filesystem state: {}",
+                        metadata_error, rollback_error
+                    ),
+                ));
             }
+
+            return Err(metadata_error);
         }
 
         if let Some(staged_path) = staged_delete_path
@@ -1038,18 +1035,17 @@ impl NotebookManager {
             }
         }
 
-        if let Some(parent) = new_fs_path.parent() {
-            if !tokio::fs::try_exists(parent).await.unwrap_or(false) {
-                if let Err(error) = tokio::fs::create_dir_all(parent).await {
-                    return Err(EngineError::storage(
-                        "move note",
-                        format!(
-                            "Failed to create parent directories for new path: {}",
-                            error
-                        ),
-                    ));
-                }
-            }
+        if let Some(parent) = new_fs_path.parent()
+            && !tokio::fs::try_exists(parent).await.unwrap_or(false)
+            && let Err(error) = tokio::fs::create_dir_all(parent).await
+        {
+            return Err(EngineError::storage(
+                "move note",
+                format!(
+                    "Failed to create parent directories for new path: {}",
+                    error
+                ),
+            ));
         }
 
         let previous_notes = metadata.clone();
@@ -1089,27 +1085,27 @@ impl NotebookManager {
             }
         }
 
-        if updated_metadata {
-            if let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await {
-                *metadata = previous_notes;
-                if let Err(rollback_error) = rollback_rename(
-                    &new_fs_path,
-                    &current_fs_path,
-                    &self.notebook_path,
-                    FAIL_MOVE_ROLLBACK_MARKER,
-                )
-                .await
-                {
-                    return Err(EngineError::recovery(
-                        "move note rollback",
-                        format!(
-                            "{} Rollback failed while restoring filesystem state: {}",
-                            metadata_error, rollback_error
-                        ),
-                    ));
-                }
-                return Err(metadata_error);
+        if updated_metadata
+            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+        {
+            *metadata = previous_notes;
+            if let Err(rollback_error) = rollback_rename(
+                &new_fs_path,
+                &current_fs_path,
+                &self.notebook_path,
+                FAIL_MOVE_ROLLBACK_MARKER,
+            )
+            .await
+            {
+                return Err(EngineError::recovery(
+                    "move note rollback",
+                    format!(
+                        "{} Rollback failed while restoring filesystem state: {}",
+                        metadata_error, rollback_error
+                    ),
+                ));
             }
+            return Err(metadata_error);
         }
 
         Ok(to_rel.to_string())
@@ -1123,13 +1119,13 @@ impl NotebookManager {
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let full_note_path = self.notebook_path.join(rel_path_buf).join("note.md");
 
-        if let Some(parent) = full_note_path.parent() {
-            if let Err(error) = tokio::fs::create_dir_all(parent).await {
-                return Err(EngineError::storage(
-                    "save note content",
-                    format!("Failed to create directory for note: {}", error),
-                ));
-            }
+        if let Some(parent) = full_note_path.parent()
+            && let Err(error) = tokio::fs::create_dir_all(parent).await
+        {
+            return Err(EngineError::storage(
+                "save note content",
+                format!("Failed to create directory for note: {}", error),
+            ));
         }
 
         let existing_content = match tokio::fs::read_to_string(&full_note_path).await {

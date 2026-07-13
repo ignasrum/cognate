@@ -95,7 +95,7 @@ impl EmbeddedImageWorkflow {
         let note_dir = Path::new(notebook_path).join(selected_note_path);
 
         for image_ref in extract_embedded_image_ids(markdown_text) {
-            if let Some(_) = resolve_embedded_image_reference(&note_dir, &image_ref) {
+            if resolve_embedded_image_reference(&note_dir, &image_ref).is_some() {
                 let rel_path = format!("{}/{}", selected_note_path, image_ref);
                 self.images.insert(image_ref, rel_path);
             }
