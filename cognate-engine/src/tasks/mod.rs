@@ -122,17 +122,17 @@ fn clean_task_text(text: &str) -> String {
     
     // Remove due: YYYY-MM-DD
     if let Some(idx) = cleaned.find("due:") {
-        let rest = &cleaned[idx..];
-        if rest.len() >= 14 {
-            let date_part = &rest[4..14].trim();
-            if is_valid_date_format(date_part) {
-                cleaned.replace_range(idx..idx + 14, "");
-            }
+        let after_due = &cleaned[idx + 4..];
+        let has_space = after_due.starts_with(' ');
+        let date_part = if has_space {
+            after_due.get(1..11).unwrap_or("")
         } else {
-            let date_part = &rest[4..].trim();
-            if is_valid_date_format(date_part) {
-                cleaned.replace_range(idx.., "");
-            }
+            after_due.get(0..10).unwrap_or("")
+        };
+        
+        if is_valid_date_format(date_part) {
+            let replace_len = 4 + if has_space { 11 } else { 10 };
+            cleaned.replace_range(idx..idx + replace_len, "");
         }
     }
     

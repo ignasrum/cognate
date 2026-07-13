@@ -610,11 +610,19 @@ async fn load_notes_metadata_cleans_up_stale_staged_delete_entries() {
     std::fs::write(stale_stage.join("nested").join("note.md"), "stale")
         .expect("Failed to populate stale staged delete directory");
 
+    let stale_file = harness.path().join(".cognate_txn_delete_rollback__note_2");
+    std::fs::write(&stale_file, "stale file contents")
+        .expect("Failed to create stale staged delete file");
+
     let _ = manager.load_metadata().await;
 
     assert!(
         !stale_stage.exists(),
         "Expected stale staged delete directory to be cleaned up"
+    );
+    assert!(
+        !stale_file.exists(),
+        "Expected stale staged delete file to be cleaned up"
     );
 }
 
@@ -1020,6 +1028,612 @@ async fn test_search_index_stale_refresh() {
         .unwrap();
     assert_eq!(results2.len(), 1);
     assert_eq!(results2[0].rel_path, "note");
+}
+
+#[tokio::test]
+async fn test_note_creation_path_traversal_attempts() {
+    let harness = NotebookTestHarness::new("path_traversal");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    let invalid_paths = vec![
+        "../outside",
+        "dir/../../outside",
+        "a/b/../../../c",
+        "/absolute/path",
+        "some/dir/..",
+        "..",
+        ".",
+    ];
+
+    for path in invalid_paths {
+        let res = manager.create_note(path, &mut notes).await;
+        assert!(
+            res.is_err(),
+            "Expected path '{}' to be rejected with error",
+            path
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_note_creation_empty_and_whitespace_paths() {
+    let harness = NotebookTestHarness::new("whitespace_paths");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    let invalid_paths = vec![
+        "",
+        "   ",
+        "\t",
+        "\n",
+    ];
+
+    for path in invalid_paths {
+        let res = manager.create_note(path, &mut notes).await;
+        assert!(
+            res.is_err(),
+            "Expected empty/whitespace path '{}' to be rejected",
+            path
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_note_creation_weird_characters() {
+    let harness = NotebookTestHarness::new("weird_chars");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    let weird_paths = vec![
+        "personal/note-💡-spécial",
+        "folder name with spaces/note",
+    ];
+
+    for path in weird_paths {
+        let res = manager.create_note(path, &mut notes).await;
+        let created = res.expect("Should succeed to create weird path");
+        assert_eq!(created.rel_path, path);
+        assert_note_md_exists(harness.path(), path);
+    }
+}
+
+#[tokio::test]
+async fn test_attachment_path_traversal_attempts() {
+    let temp = TempTestDir::new("attach_traversal");
+
+    // Create a real file outside the notebook directory to ensure canonicalization succeeds but boundary check fails.
+    let outside_file = temp.path().parent().unwrap().join("cognate_traversal_test.png");
+    std::fs::write(&outside_file, "dummy content").unwrap();
+
+    let read_res = AttachmentManager::read_image_bytes(temp.path(), "../cognate_traversal_test.png").await;
+    assert!(read_res.is_err(), "Expected reading outside file to fail boundary check");
+    assert!(
+        matches!(read_res.unwrap_err(), EngineError::Validation { .. }),
+        "Expected validation error for reading outside file"
+    );
+
+    let delete_res = AttachmentManager::delete_attachment(temp.path(), "../cognate_traversal_test.png").await;
+    assert!(delete_res.is_err(), "Expected deleting outside file to fail boundary check");
+    assert!(
+        matches!(delete_res.unwrap_err(), EngineError::Validation { .. }),
+        "Expected validation error for deleting outside file"
+    );
+
+    let _ = std::fs::remove_file(&outside_file);
+}
+
+#[tokio::test]
+async fn test_attachment_invalid_base64_and_corrupt_payloads() {
+    let temp = TempTestDir::new("attach_invalid");
+    let manager = NotebookManager::new(temp.path());
+
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    let invalid_payloads = vec![
+        "not_valid_base64_@@@",
+    ];
+
+    for payload in invalid_payloads {
+        let res = AttachmentManager::save_image_from_base64(temp.path(), "note", payload).await;
+        assert!(res.is_err(), "Expected invalid base64 payload to fail");
+    }
+}
+
+#[tokio::test]
+async fn test_search_cache_weird_queries() {
+    let temp = TempTestDir::new("search_weird");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+
+    let mut notes = Vec::new();
+    manager.create_note("note-a", &mut notes).await.unwrap();
+    manager.save_note_content("note-a", "apple pie banana dessert").await.unwrap();
+
+    let weird_queries = vec![
+        "NOT apple",
+        "apple NOT",
+        "apple NOT NOT banana",
+        "apple AND OR banana",
+        "",
+        "   ",
+        "a",
+        "apple pie banana dessert apple pie banana dessert",
+    ];
+
+    for query in weird_queries {
+        let res = search_index.search(query, &notes, Duration::from_secs(60)).await;
+        assert!(res.is_ok(), "Search should not crash on weird query: '{}'", query);
+    }
+}
+
+#[tokio::test]
+async fn test_create_note_directory_already_exists() {
+    let harness = NotebookTestHarness::new("dir_exists");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    let note_dir = harness.path().join("existing/dir");
+    std::fs::create_dir_all(&note_dir).unwrap();
+
+    let res = manager.create_note("existing/dir", &mut notes).await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_move_note_to_same_path() {
+    let harness = NotebookTestHarness::new("move_same");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    let res = manager.move_note("note", "note", &mut notes).await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_save_metadata_empty_list() {
+    let harness = NotebookTestHarness::new("empty_meta");
+    let manager = harness.manager();
+
+    let res = manager.save_metadata(&[]).await;
+    assert!(res.is_ok());
+
+    let loaded = manager.load_metadata().await.unwrap();
+    assert!(loaded.notes.is_empty());
+}
+
+#[tokio::test]
+async fn test_image_extension_formats() {
+    let temp = TempTestDir::new("img_formats");
+
+    let mut notes = Vec::new();
+    let manager = NotebookManager::new(temp.path());
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    // JPG payload base64: /9j/AA== (decodes to [0xFF, 0xD8, 0xFF, 0x00])
+    let jpg_base64 = "/9j/AA==";
+    let jpg_path = AttachmentManager::save_image_from_base64(temp.path(), "note", jpg_base64).await.unwrap();
+    assert!(jpg_path.ends_with(".jpg"));
+
+    // GIF payload base64: R0lGODlh (decodes to b"GIF89a")
+    let gif_base64 = "R0lGODlh";
+    let gif_path = AttachmentManager::save_image_from_base64(temp.path(), "note", gif_base64).await.unwrap();
+    assert!(gif_path.ends_with(".gif"));
+
+    // WEBP payload base64: UklGRgAAAABXRUJQ (decodes to b"RIFF\0\0\0\0WEBP")
+    let webp_base64 = "UklGRgAAAABXRUJQ";
+    let webp_path = AttachmentManager::save_image_from_base64(temp.path(), "note", webp_base64).await.unwrap();
+    assert!(webp_path.ends_with(".webp"));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_delete_note_symbolic_link_escape() {
+    let harness = NotebookTestHarness::new("symlink_escape");
+    let manager = harness.manager();
+    let mut notes = vec![NoteMetadata {
+        rel_path: "linked_folder/note".to_string(),
+        labels: Vec::new(),
+        last_updated: None,
+    }];
+
+    // 1. Create a note directory and file outside the notebook
+    let outside_dir = std::env::temp_dir().join(format!("cognate_outside_{}", now_nanos()));
+    let outside_note_dir = outside_dir.join("note");
+    std::fs::create_dir_all(&outside_note_dir).unwrap();
+    std::fs::write(outside_note_dir.join("note.md"), "outside note").unwrap();
+
+    // 2. Create a symlink pointing to the outside directory inside the notebook
+    let symlink_path = harness.path().join("linked_folder");
+    std::os::unix::fs::symlink(&outside_dir, &symlink_path).unwrap();
+
+    // 3. Trying to delete linked_folder/note should fail because it canonicalizes outside the notebook
+    let res = manager.delete_note("linked_folder/note", &mut notes).await;
+    assert!(res.is_err(), "Expected symlink note deletion to fail");
+    let error = res.unwrap_err();
+    assert!(
+        matches!(error, EngineError::Validation { .. }),
+        "Expected validation error for symlink escape, got: {:?}",
+        error
+    );
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&outside_dir);
+}
+
+#[tokio::test]
+async fn test_metadata_subsecond_precision_removal() {
+    let temp = TempTestDir::new("subsecond");
+    let manager = NotebookManager::new(temp.path());
+
+    let notes = vec![NoteMetadata {
+        rel_path: "note-1".to_string(),
+        labels: vec![],
+        last_updated: Some("2026-07-13T12:00:00.123456Z".to_string()),
+    }];
+
+    manager.save_metadata(&notes).await.unwrap();
+
+    let loaded = manager.load_metadata().await.unwrap();
+    assert_eq!(loaded.notes[0].last_updated.as_deref(), Some("2026-07-13T12:00:00Z"));
+}
+
+#[tokio::test]
+async fn test_coverage_porter_stemmer_rules_and_snippet_truncation() {
+    let temp = TempTestDir::new("stemmer_rules");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    let long_sentence = "This is a very long sentence designed specifically to trigger snippet truncation logic in the search manager. ".repeat(5);
+    let content = format!("losses flies agreed creating. {}", long_sentence);
+    manager.save_note_content("note", &content).await.unwrap();
+
+    let search_terms = vec!["losses", "flies", "agreed", "creating"];
+    for term in search_terms {
+        let results = search_index.search(term, &notes, Duration::from_secs(0)).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    let results = search_index.search("truncation", &notes, Duration::from_secs(0)).await.unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(results[0].snippet.ends_with("..."), "Expected snippet to be truncated, got: {}", results[0].snippet);
+}
+
+#[tokio::test]
+async fn test_metadata_subsecond_precision_no_timezone() {
+    let temp = TempTestDir::new("subsecond_no_tz");
+    let manager = NotebookManager::new(temp.path());
+
+    let notes = vec![NoteMetadata {
+        rel_path: "note-1".to_string(),
+        labels: vec![],
+        last_updated: Some("2026-07-13T12:00:00.123456".to_string()),
+    }];
+
+    manager.save_metadata(&notes).await.unwrap();
+
+    let loaded = manager.load_metadata().await.unwrap();
+    assert_eq!(loaded.notes[0].last_updated.as_deref(), Some("2026-07-13T12:00:00"));
+}
+
+#[tokio::test]
+async fn test_attachment_extension_fallback_and_symlink_save_escape() {
+    let temp = TempTestDir::new("attach_fallback_escape");
+
+    let dummy_fallback_base64 = "SGVsbG8=";
+    let rel_path = AttachmentManager::save_image_from_base64(temp.path(), "note", dummy_fallback_base64).await.unwrap();
+    assert!(rel_path.ends_with(".png"), "Expected fallback to png extension, got: {}", rel_path);
+
+    #[cfg(unix)]
+    {
+        let outside_dir = std::env::temp_dir().join(format!("cognate_outside_attach_{}", now_nanos()));
+        std::fs::create_dir_all(outside_dir.join("images")).unwrap();
+
+        let symlink_path = temp.path().join("linked_attach");
+        std::os::unix::fs::symlink(&outside_dir, &symlink_path).unwrap();
+
+        let res = AttachmentManager::save_image_from_base64(temp.path(), "linked_attach", "SGVsbG8=").await;
+        assert!(res.is_err(), "Expected save image inside symlink resolving outside to fail");
+        assert!(
+            matches!(res.unwrap_err(), EngineError::Validation { .. }),
+            "Expected validation error for image save escape"
+        );
+
+        let _ = std::fs::remove_dir_all(&outside_dir);
+    }
+}
+
+#[tokio::test]
+async fn test_atomic_bytes_write_rename_failure() {
+    let temp = TempTestDir::new("bytes_rollback");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    // Verify index file was created and remove it
+    let index_file = temp.path().join(".cognate_index.bin");
+    assert!(index_file.exists());
+    std::fs::remove_file(&index_file).unwrap();
+
+    // Inject rename fault AFTER note creation is complete
+    let failure_marker = temp.path().join(".cognate_fail_atomic_rename");
+    std::fs::write(&failure_marker, "fail").unwrap();
+
+    let file_path = temp.path().join("note/note.md");
+    tokio::fs::write(&file_path, "modified text").await.unwrap();
+
+    let _ = search_index.search("modified", &notes, Duration::from_secs(0)).await;
+    assert!(!temp.path().join(".cognate_index.bin").exists());
+}
+
+#[tokio::test]
+async fn test_search_cache_folder_rename_and_clear() {
+    let temp = TempTestDir::new("cache_folder_rename");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+
+    let mut notes = Vec::new();
+    manager.create_note("folder/note-1", &mut notes).await.unwrap();
+    manager.create_note("folder/note-2", &mut notes).await.unwrap();
+    
+    let _ = search_index.search("text", &notes, Duration::from_secs(60)).await;
+
+    search_index.cache_rename("folder", "renamed");
+
+    search_index.clear_cache();
+}
+
+#[test]
+fn test_direct_struct_invocations_for_coverage() {
+    let state1 = cognate_engine::NotebookEngineState::new();
+    let state2 = state1.clone();
+    assert_eq!(state1, state2);
+    let _ = format!("{:?}", state1);
+
+    let err1 = EngineError::validation("context", "detail");
+    let err2 = err1.clone();
+    assert_eq!(err1, err2);
+    let _ = format!("{:?}", err1);
+
+    let index1 = cognate_engine::search::InvertedIndex::new();
+    let _ = index1.clone();
+
+    // Trigger Deserialization error in lib.rs
+    let load_res = cognate_engine::NotebookEngineState::load_from_bytes(&[]);
+    assert!(load_res.is_err());
+    assert!(matches!(load_res.unwrap_err(), EngineError::Deserialization(_)));
+}
+
+#[tokio::test]
+async fn test_notebook_manager_misc_coverage() {
+    let temp = TempTestDir::new("misc_cov");
+    let manager = NotebookManager::new(temp.path());
+
+    // Cover notebook_path() helper
+    assert_eq!(manager.notebook_path(), temp.path());
+
+    // Cover read_image_bytes non-existent file failure path
+    let read_res = AttachmentManager::read_image_bytes(temp.path(), "images/does_not_exist.png").await;
+    assert!(read_res.is_err());
+    assert!(matches!(read_res.unwrap_err(), EngineError::Storage { .. }));
+}
+
+#[tokio::test]
+async fn test_metadata_overwrite_invalid_fails() {
+    let temp = TempTestDir::new("metadata_invalid_fails");
+    let manager = NotebookManager::new(temp.path());
+
+    // Write corrupted JSON to metadata.json
+    std::fs::write(temp.path().join("metadata.json"), "{ invalid JSON }").unwrap();
+
+    let notes = vec![NoteMetadata {
+        rel_path: "note-1".to_string(),
+        labels: vec![],
+        last_updated: None,
+    }];
+
+    // Attempting to save metadata should fail because it refuses to overwrite invalid metadata
+    let res = manager.save_metadata(&notes).await;
+    assert!(res.is_err());
+    assert!(matches!(res.unwrap_err(), EngineError::Recovery { .. }));
+}
+
+#[tokio::test]
+async fn test_delete_note_parent_not_empty() {
+    let temp = TempTestDir::new("delete_parent_not_empty");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("folder/note", &mut notes).await.unwrap();
+
+    // Create a manual file inside the same folder so it is not empty
+    let other_file = temp.path().join("folder/another.txt");
+    std::fs::write(&other_file, "content").unwrap();
+
+    // Deleting the note should succeed, but parent folder should remain because it's not empty
+    manager.delete_note("folder/note", &mut notes).await.unwrap();
+
+    assert!(temp.path().join("folder").exists());
+    assert!(other_file.exists());
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_attachment_write_storage_error() {
+    let temp = TempTestDir::new("attach_write_err");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    // Make note directory read-only (remove write permissions)
+    let note_dir = temp.path().join("note");
+    let mut perms = std::fs::metadata(&note_dir).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&note_dir, perms).unwrap();
+
+    // Saving image should fail to create/write inside the read-only directory
+    let res = AttachmentManager::save_image_from_base64(temp.path(), "note", "SGVsbG8=").await;
+    assert!(res.is_err());
+    assert!(matches!(res.unwrap_err(), EngineError::Storage { .. }));
+
+    // Restore permissions for cleanup
+    let mut perms = std::fs::metadata(&note_dir).unwrap().permissions();
+    perms.set_readonly(false);
+    let _ = std::fs::set_permissions(&note_dir, perms);
+}
+
+#[tokio::test]
+async fn test_delete_note_not_found_on_disk() {
+    let temp = TempTestDir::new("delete_not_found");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    let res = manager.delete_note("non_existent_folder/file", &mut notes).await;
+    assert!(res.is_err());
+    assert!(matches!(res.unwrap_err(), EngineError::Validation { .. }));
+}
+
+#[tokio::test]
+async fn test_move_note_source_not_found() {
+    let temp = TempTestDir::new("move_source_not_found");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    let res = manager.move_note("non_existent", "target", &mut notes).await;
+    assert!(res.is_err());
+    assert!(matches!(res.unwrap_err(), EngineError::Validation { .. }));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_load_metadata_persist_normalization_warning() {
+    let temp = TempTestDir::new("norm_warn");
+    let manager = NotebookManager::new(temp.path());
+
+    let notes = vec![NoteMetadata {
+        rel_path: "note-1".to_string(),
+        labels: vec![],
+        last_updated: Some("2026-07-13T12:00:00.123456Z".to_string()),
+    }];
+
+    manager.save_metadata(&notes).await.unwrap();
+
+    // Make the notebook directory itself read-only to prevent temporary file creation and rename
+    let mut perms = std::fs::metadata(temp.path()).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(temp.path(), perms).unwrap();
+
+    let load_res = manager.load_metadata().await.unwrap();
+    assert!(load_res.warning.is_some());
+    assert!(load_res.warning.unwrap().contains("failed to persist normalized timestamps"));
+
+    // Restore permissions so cleanup works
+    let mut perms = std::fs::metadata(temp.path()).unwrap().permissions();
+    perms.set_readonly(false);
+    let _ = std::fs::set_permissions(temp.path(), perms);
+}
+
+#[tokio::test]
+async fn test_move_note_target_exists_on_disk_only() {
+    let temp = TempTestDir::new("move_target_disk_only");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("note1", &mut notes).await.unwrap();
+
+    let target_dir = temp.path().join("note2");
+    std::fs::create_dir_all(&target_dir).unwrap();
+    std::fs::write(target_dir.join("note.md"), "target note").unwrap();
+
+    let res = manager.move_note("note1", "note2", &mut notes).await;
+    assert!(res.is_err());
+    let error = res.unwrap_err();
+    assert!(
+        matches!(error, EngineError::Validation { .. }),
+        "Expected validation error for target exists on disk, got: {:?}",
+        error
+    );
+    assert!(error.to_string().contains("already exists at the target path"));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_move_note_source_symbolic_link_escape() {
+    let temp = TempTestDir::new("move_source_symlink_escape");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = vec![NoteMetadata {
+        rel_path: "linked_move".to_string(),
+        labels: Vec::new(),
+        last_updated: None,
+    }];
+
+    let outside_dir = std::env::temp_dir().join(format!("cognate_outside_move_{}", now_nanos()));
+    std::fs::create_dir_all(&outside_dir).unwrap();
+
+    let symlink_path = temp.path().join("linked_move");
+    std::os::unix::fs::symlink(&outside_dir, &symlink_path).unwrap();
+
+    let res = manager.move_note("linked_move", "target", &mut notes).await;
+    assert!(res.is_err());
+    let error = res.unwrap_err();
+    assert!(
+        matches!(error, EngineError::Validation { .. }),
+        "Expected validation error for source symlink escape, got: {:?}",
+        error
+    );
+
+    let _ = std::fs::remove_dir_all(&outside_dir);
+}
+
+#[tokio::test]
+async fn test_search_negative_query_terms() {
+    let temp = TempTestDir::new("search_neg_query");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("note1", &mut notes).await.unwrap();
+    manager.save_note_content("note1", "apple banana cherry").await.unwrap();
+
+    // Query with negative terms: should match note1 for fruit but filter out if negative term present
+    let results = search_index.search("apple -cherry", &notes, Duration::from_secs(0)).await.unwrap();
+    assert!(results.is_empty(), "Expected no results since cherry is negative term, got: {:?}", results);
+
+    let results = search_index.search("apple -date", &notes, Duration::from_secs(0)).await.unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].rel_path, "note1");
+}
+
+#[tokio::test]
+async fn test_search_missing_note_file_on_disk() {
+    let temp = TempTestDir::new("search_missing_disk");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("note1", &mut notes).await.unwrap();
+    manager.save_note_content("note1", "apple banana").await.unwrap();
+
+    // Delete the file from disk physically, but keep it in metadata
+    let file_path = temp.path().join("note1/note.md");
+    std::fs::remove_file(&file_path).unwrap();
+
+    // Clear search cache so that it is forced to read from disk
+    search_index.clear_cache();
+
+    // Clear notes last_updated to force a refresh and index sync detection
+    notes[0].last_updated = None;
+
+    // Running search should skip reading the missing file and continue without crashing
+    let results = search_index.search("apple", &notes, Duration::from_secs(0)).await.unwrap();
+    assert!(results.is_empty());
 }
 
 use filetime::FileTime;
