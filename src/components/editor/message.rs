@@ -7,6 +7,14 @@ use crate::components::visualizer;
 use crate::notebook::{self, NoteMetadata, NotebookError};
 
 #[derive(Debug, Clone)]
+pub struct LabelMutationRollback {
+    pub note_path: String,
+    pub note_labels: Vec<String>,
+    pub selected_labels: Vec<String>,
+    pub input_text: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     // Text editing operations
     EditorAction(Action),
@@ -25,7 +33,7 @@ pub enum Message {
     NewLabelInputChanged(String),
     AddLabel,
     RemoveLabel(String),
-    MetadataSaved(Result<(), NotebookError>),
+    MetadataSaved(Result<(), NotebookError>, Option<LabelMutationRollback>),
 
     // Search
     SearchQueryChanged(String),

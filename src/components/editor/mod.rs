@@ -13,4 +13,5 @@ pub mod ui;
 mod core;
 
 pub use core::Editor;
+pub use core::LabelMutationRollback;
 pub use core::Message;

@@ -44,7 +44,7 @@ fn message_domain(message: &Message) -> MessageDomain {
             MessageDomain::Shutdown
         }
 
-        Message::MetadataSaved(_) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
+        Message::MetadataSaved(_, _) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
             MessageDomain::SaveFeedback
         }
 
@@ -84,7 +84,7 @@ pub(super) fn route_message(state: &mut Editor, message: Message) -> Task<Messag
             Editor::handle_debounced_metadata_messages(state, message)
         }
         MessageDomain::Shutdown => Editor::handle_shutdown_messages(state, message),
-        MessageDomain::SaveFeedback => Editor::handle_save_feedback_messages(message),
+        MessageDomain::SaveFeedback => Editor::handle_save_feedback_messages(state, message),
         MessageDomain::Visualizer => Editor::handle_visualizer_messages(state, message),
         MessageDomain::NoteLifecycle => Editor::handle_note_lifecycle_messages(state, message),
         MessageDomain::Ui => Editor::handle_ui_messages(state, message),

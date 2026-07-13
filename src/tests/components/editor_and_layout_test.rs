@@ -55,8 +55,8 @@ mod tests {
             EditorMessage::CancelMoveNote,
             EditorMessage::NoteMoved(Err(sample_error.clone()), "old/path".to_string()),
             EditorMessage::NoteDeleted(Err(sample_error.clone()), "to/delete".to_string()),
-            EditorMessage::MetadataSaved(Ok(())),
-            EditorMessage::MetadataSaved(Err(sample_error.clone())),
+            EditorMessage::MetadataSaved(Ok(()), None),
+            EditorMessage::MetadataSaved(Err(sample_error.clone()), None),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err(sample_error.clone())),
             EditorMessage::LoadedNoteContent(

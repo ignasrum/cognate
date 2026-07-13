@@ -42,6 +42,7 @@ const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(1200);
 
 use self::embedded_image_service::EmbeddedImageWorkflow;
 pub use self::message::Message;
+pub use self::message::LabelMutationRollback;
 use self::metadata_debounce::MetadataDebounceScheduler;
 use self::persistence::round_scale_step;
 use self::preview::{
@@ -439,6 +440,16 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn debug_markdown_text(&self) -> String {
         self.markdown_text.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_selected_labels(&self) -> Vec<String> {
+        self.state.selected_note_labels().to_vec()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_new_label_text(&self) -> String {
+        self.state.new_label_text().to_string()
     }
 
     #[cfg(test)]

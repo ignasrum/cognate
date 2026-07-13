@@ -172,6 +172,42 @@ async fn delete_note_rejects_invalid_relative_path() {
 }
 
 #[tokio::test]
+async fn load_metadata_skips_invalid_relative_paths_from_disk() {
+    let harness = NotebookTestHarness::new("load_metadata_skips_invalid_paths");
+    std::fs::write(
+        harness.path().join("metadata.json"),
+        r#"{
+  "notes": [
+    { "rel_path": "valid/note", "labels": ["ok"] },
+    { "rel_path": "../outside", "labels": ["bad"] }
+  ]
+}"#,
+    )
+    .expect("Failed to write metadata fixture");
+    std::fs::create_dir_all(harness.path().join("valid/note"))
+        .expect("Failed to create valid note directory");
+    std::fs::write(harness.path().join("valid/note/note.md"), "safe content")
+        .expect("Failed to write valid note");
+
+    let loaded = harness
+        .manager()
+        .load_metadata()
+        .await
+        .expect("Expected metadata load to succeed");
+
+    assert_eq!(loaded.notes.len(), 1);
+    assert_eq!(loaded.notes[0].rel_path, "valid/note");
+    assert!(
+        loaded
+            .warning
+            .as_deref()
+            .unwrap_or("")
+            .contains("Skipped invalid metadata entry '../outside'"),
+        "Expected warning about sanitized invalid metadata path"
+    );
+}
+
+#[tokio::test]
 async fn move_note_moves_files_and_updates_metadata() {
     let harness = NotebookTestHarness::new("move_note");
     let manager = harness.manager();

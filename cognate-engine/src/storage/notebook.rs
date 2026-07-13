@@ -100,6 +100,23 @@ fn reconcile_last_updated_timestamp(
     }
 }
 
+fn sanitize_loaded_notes(notes: Vec<NoteMetadata>) -> (Vec<NoteMetadata>, Vec<String>) {
+    let mut sanitized = Vec::with_capacity(notes.len());
+    let mut warnings = Vec::new();
+
+    for note in notes {
+        match validate_relative_path("metadata note path", &note.rel_path) {
+            Ok(_) => sanitized.push(note),
+            Err(error) => warnings.push(format!(
+                "Skipped invalid metadata entry '{}': {}",
+                note.rel_path, error
+            )),
+        }
+    }
+
+    (sanitized, warnings)
+}
+
 async fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -168,10 +185,17 @@ async fn sync_engine_metadata(
     notebook_path: &Path,
     notes: &[NoteMetadata],
 ) -> Result<(), EngineError> {
+    let validated_notes: Vec<&NoteMetadata> = notes
+        .iter()
+        .filter(|note| validate_relative_path("metadata note path", &note.rel_path).is_ok())
+        .collect();
     let mut engine_state = load_engine_state_from_disk(notebook_path).await;
     let mut changed = false;
 
-    let current_paths: HashSet<String> = notes.iter().map(|n| n.rel_path.clone()).collect();
+    let current_paths: HashSet<String> = validated_notes
+        .iter()
+        .map(|n| n.rel_path.clone())
+        .collect();
 
     // Remove deleted documents
     let existing_paths: Vec<String> = engine_state
@@ -188,7 +212,7 @@ async fn sync_engine_metadata(
     }
 
     // Sync labels and timestamps
-    for note in notes {
+    for note in validated_notes {
         let needs_indexing = match engine_state.search_index.documents.get(&note.rel_path) {
             Some(doc_meta) => {
                 doc_meta.last_updated != note.last_updated || doc_meta.labels != note.labels
@@ -441,11 +465,25 @@ impl NotebookManager {
             }
         };
 
-        let mut notes = metadata.notes;
+        let (mut notes, path_warnings) = sanitize_loaded_notes(metadata.notes);
         let mut metadata_changed = false;
+        if !path_warnings.is_empty() {
+            metadata_changed = true;
+            let path_warning_text = path_warnings.join("\n");
+            if let Some(existing) = &mut warning {
+                existing.push_str("\n\n");
+                existing.push_str(&path_warning_text);
+            } else {
+                warning = Some(path_warning_text);
+            }
+        }
 
         for note in &mut notes {
-            let note_file_path = self.notebook_path.join(&note.rel_path).join("note.md");
+            let Ok(rel_path) = validate_relative_path("metadata note path", &note.rel_path) else {
+                metadata_changed = true;
+                continue;
+            };
+            let note_file_path = self.notebook_path.join(rel_path).join("note.md");
             let note_file_modified_time = tokio::fs::metadata(note_file_path)
                 .await
                 .ok()

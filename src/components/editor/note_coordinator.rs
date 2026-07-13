@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata, NotebookError};
+use cognate_engine::storage::NotebookManager;
 
 #[derive(Debug, Clone)]
 pub struct LoadedNotePayload {
@@ -19,19 +20,24 @@ pub async fn load_note_payload(
     notebook_path: String,
     selected_note_path: String,
 ) -> LoadedNotePayload {
-    let note_dir_path = Path::new(&notebook_path).join(&selected_note_path);
-    let full_note_path = note_dir_path.join("note.md");
-    let loaded_content = match tokio::fs::read_to_string(full_note_path).await {
-        Ok(content) => content,
-        Err(_err) => {
+    let manager = NotebookManager::new(Path::new(&notebook_path));
+    let loaded_content = manager
+        .load_note_content(&selected_note_path)
+        .await
+        .unwrap_or_else(|_err| {
             #[cfg(debug_assertions)]
             eprintln!("Failed to read note file for editor: {}", _err);
             String::new()
-        }
-    };
+        });
 
     // Legacy cleanup: embedded image state is now inferred from markdown.
-    let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
+    if let Ok(rel_path) = cognate_engine::storage::fs_utils::validate_relative_path(
+        "note path",
+        &selected_note_path,
+    ) {
+        let note_dir_path = Path::new(&notebook_path).join(rel_path);
+        let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
+    }
 
     LoadedNotePayload {
         note_path: selected_note_path,

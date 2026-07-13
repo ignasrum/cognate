@@ -2,6 +2,7 @@
 use native_dialog::{DialogBuilder, MessageLevel};
 
 use super::*;
+use crate::components::editor::LabelMutationRollback;
 
 pub(super) fn handle_debounced_metadata(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
@@ -107,10 +108,13 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
     }
 }
 
-pub(super) fn handle_save_feedback(message: Message) -> Task<Message> {
+pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
-        Message::MetadataSaved(result) => {
+        Message::MetadataSaved(result, rollback) => {
             if let Err(error) = result {
+                if let Some(rollback) = rollback {
+                    restore_label_mutation(state, rollback);
+                }
                 report_persistence_error(
                     "Failed to Save Notebook Metadata",
                     &format!(
@@ -153,6 +157,22 @@ pub(super) fn handle_save_feedback(message: Message) -> Task<Message> {
         }
         _ => unreachable!("save-feedback handler received invalid message"),
     }
+}
+
+fn restore_label_mutation(state: &mut Editor, rollback: LabelMutationRollback) {
+    state.state.set_selected_note_labels(rollback.selected_labels);
+    state.state.set_new_label_text(rollback.input_text);
+
+    if let Some(note) = state
+        .note_explorer
+        .notes
+        .iter_mut()
+        .find(|note| note.rel_path == rollback.note_path)
+    {
+        note.labels = rollback.note_labels;
+    }
+
+    state.visualizer.sync_notes(&state.note_explorer.notes);
 }
 
 fn report_persistence_error(title: &str, detail: &str) {

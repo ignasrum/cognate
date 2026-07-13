@@ -138,6 +138,16 @@ async fn test_search_index_stale_refresh() {
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
+
+    let boolean_results = search_index
+        .search("modified NOT original", &notes, Duration::from_secs(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        boolean_results.len(),
+        1,
+        "external edits should rebuild the indexed document, not just the snippet cache"
+    );
 }
 
 #[tokio::test]

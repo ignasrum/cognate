@@ -99,6 +99,7 @@ impl SearchIndexManager {
             .retain(|rel_path, _| note_paths.contains(rel_path.as_str()));
 
         let manager = NotebookManager::new(&self.notebook_path);
+        let mut reloaded_paths: HashSet<String> = HashSet::new();
 
         // Process missing/changed notes
         for note in notes {
@@ -132,6 +133,7 @@ impl SearchIndexManager {
                         modified_time,
                     },
                 );
+                reloaded_paths.insert(note.rel_path.clone());
             }
         }
 
@@ -166,7 +168,9 @@ impl SearchIndexManager {
             if let Some(indexed) = self.notes_cache.get(&note.rel_path) {
                 let needs_indexing = match engine_state.search_index.documents.get(&note.rel_path) {
                     Some(doc_meta) => {
-                        doc_meta.last_updated != note.last_updated || doc_meta.labels != note.labels
+                        reloaded_paths.contains(&note.rel_path)
+                            || doc_meta.last_updated != note.last_updated
+                            || doc_meta.labels != note.labels
                     }
                     None => true,
                 };

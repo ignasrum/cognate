@@ -1,10 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use crate::components::editor::{Editor, LabelMutationRollback, Message as EditorMessage};
     use crate::components::editor::actions::label_actions;
     use crate::components::editor::state::editor_state::EditorState;
+    use crate::components::note_explorer;
     use crate::components::note_explorer::NoteExplorer;
     use crate::components::visualizer::Visualizer;
-    use crate::notebook::NoteMetadata;
+    use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
 
     fn setup() -> (EditorState, NoteExplorer, Visualizer) {
         let mut state = EditorState::new();
@@ -63,5 +65,46 @@ mod tests {
 
         label_actions::handle_label_input_changed(&mut state, "blocked".to_string());
         assert_eq!(state.new_label_text(), "");
+    }
+
+    #[test]
+    fn failed_metadata_save_rolls_back_optimistic_label_edit() {
+        let mut editor = Editor::default();
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(Ok(
+                MetadataLoadResult {
+                    notes: vec![NoteMetadata {
+                        rel_path: "note/a".to_string(),
+                        labels: vec!["tag1".to_string()],
+                        last_updated: None,
+                    }],
+                    warning: None,
+                },
+            ))),
+        );
+        let _ = Editor::update(&mut editor, EditorMessage::NoteSelected("note/a".to_string()));
+
+        let rollback = LabelMutationRollback {
+            note_path: "note/a".to_string(),
+            note_labels: vec!["tag1".to_string()],
+            selected_labels: vec!["tag1".to_string()],
+            input_text: "tag2".to_string(),
+        };
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NewLabelInputChanged("tag2".to_string()),
+        );
+        let _ = Editor::update(&mut editor, EditorMessage::AddLabel);
+
+        let save_error = NotebookError::storage("test harness", "simulated save failure");
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::MetadataSaved(Err(save_error), Some(rollback)),
+        );
+
+        assert_eq!(editor.debug_selected_labels(), vec!["tag1".to_string()]);
+        assert_eq!(editor.debug_new_label_text(), "tag2".to_string());
     }
 }
