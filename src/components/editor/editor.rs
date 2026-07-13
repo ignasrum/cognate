@@ -4,6 +4,7 @@ use iced::task::Task;
 use iced::widget::text_editor::Action;
 use iced::{Element, Subscription, window};
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
@@ -202,14 +203,18 @@ impl Editor {
             }
 
             for image_id in self.embedded_image_workflow.take_pending_deletion_ids() {
-                if let Some(image_path) = self
+                if let Some(image_rel_path) = self
                     .embedded_image_workflow
                     .remove_image_path_for_id(&image_id)
-                    && let Err(_err) = std::fs::remove_file(&image_path)
-                    && _err.kind() != std::io::ErrorKind::NotFound
                 {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Failed to delete image file '{}': {}", image_path, _err);
+                    let notebook_path = Path::new(self.state.notebook_path());
+                    if let Err(_err) = cognate_engine::storage::AttachmentManager::delete_attachment(
+                        notebook_path,
+                        &image_rel_path,
+                    ) {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to delete image file '{}': {}", image_rel_path, _err);
+                    }
                 }
             }
 

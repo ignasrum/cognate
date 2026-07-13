@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
+use cognate_engine::storage::NotebookManager;
 use super::{NoteMetadata, NoteSearchResult};
 
 #[cfg(test)]
@@ -23,6 +23,7 @@ const SEARCH_INDEX_MAX_CACHED_NOTEBOOKS: usize = 24;
 pub struct SearchNote {
     pub rel_path: String,
     pub labels: Vec<String>,
+    pub last_updated: Option<String>,
 }
 
 impl From<&NoteMetadata> for SearchNote {
@@ -30,6 +31,7 @@ impl From<&NoteMetadata> for SearchNote {
         Self {
             rel_path: note.rel_path.clone(),
             labels: note.labels.clone(),
+            last_updated: note.last_updated.clone(),
         }
     }
 }
@@ -46,6 +48,7 @@ struct NotebookSearchIndex {
     notes_by_path: HashMap<String, IndexedNoteContent>,
     last_external_refresh: Option<Instant>,
     last_accessed_at: Instant,
+    engine_state: Option<cognate_engine::NotebookEngineState>,
 }
 
 impl Default for NotebookSearchIndex {
@@ -54,6 +57,7 @@ impl Default for NotebookSearchIndex {
             notes_by_path: HashMap::new(),
             last_external_refresh: None,
             last_accessed_at: Instant::now(),
+            engine_state: None,
         }
     }
 }
@@ -132,17 +136,11 @@ fn find_matching_content_snippet(content: &str, normalized_query: &str) -> Optio
     None
 }
 
-pub(super) fn note_file_modified_time(note_file_path: &Path) -> Option<SystemTime> {
-    fs::metadata(note_file_path)
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-}
-
 fn read_note_content_for_index(notebook_path: &str, rel_path: &str) -> IndexedNoteContent {
-    let note_file_path = Path::new(notebook_path).join(rel_path).join("note.md");
-    let content = fs::read_to_string(&note_file_path).unwrap_or_default();
+    let manager = NotebookManager::new(Path::new(notebook_path));
+    let content = manager.load_note_content(rel_path).unwrap_or_default();
     let content_lower = content.to_lowercase();
-    let modified_time = note_file_modified_time(&note_file_path);
+    let modified_time = manager.get_note_modified_time(rel_path);
 
     IndexedNoteContent {
         content_lower: Arc::from(content_lower),
@@ -283,9 +281,9 @@ pub async fn search_notes_with_snapshot(
 
     let mut refreshed_entries = Vec::new();
     if should_refresh {
+        let manager = NotebookManager::new(Path::new(&notebook_path));
         for (rel_path, previous_modified_time) in refresh_candidates {
-            let note_file_path = Path::new(&notebook_path).join(&rel_path).join("note.md");
-            let modified_time = note_file_modified_time(&note_file_path);
+            let modified_time = manager.get_note_modified_time(&rel_path);
 
             if previous_modified_time != modified_time {
                 refreshed_entries.push((
@@ -297,7 +295,7 @@ pub async fn search_notes_with_snapshot(
         }
     }
 
-    let content_snapshot_by_path = with_search_indexes(|search_indexes| {
+    let (engine_state, content_snapshot_by_path) = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
         let index = search_indexes.entry(notebook_path.clone()).or_default();
         touch_search_index(index);
@@ -330,8 +328,62 @@ pub async fn search_notes_with_snapshot(
                 snapshot.insert(note.rel_path.clone(), indexed.clone());
             }
         }
-        snapshot
+
+        let mut engine_state = index.engine_state.take().unwrap_or_else(|| {
+            NotebookManager::new(Path::new(&notebook_path)).load_engine_state()
+        });
+
+        let mut changed = false;
+        let current_paths: HashSet<&str> = notes.iter().map(|n| n.rel_path.as_str()).collect();
+
+        // Remove deleted documents
+        let existing_paths: Vec<String> = engine_state
+            .search_index
+            .documents
+            .keys()
+            .cloned()
+            .collect();
+        for path in existing_paths {
+            if !current_paths.contains(path.as_str()) {
+                engine_state.remove_document(&path);
+                changed = true;
+            }
+        }
+
+        // Sync with newest snapshot note content and labels
+        for note in &notes {
+            if let Some(indexed) = index.notes_by_path.get(&note.rel_path) {
+                let needs_indexing = match engine_state.search_index.documents.get(&note.rel_path) {
+                    Some(doc_meta) => doc_meta.last_updated != note.last_updated || doc_meta.labels != note.labels,
+                    None => true,
+                };
+                if needs_indexing {
+                    engine_state.process_document(&note.rel_path, &indexed.content, &note.labels, note.last_updated.clone());
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            NotebookManager::new(Path::new(&notebook_path)).save_engine_state(&engine_state);
+        }
+
+        let cached_state = engine_state.clone();
+        index.engine_state = Some(engine_state);
+
+        (cached_state, snapshot)
     });
+
+    let hits = cognate_engine::search::execute_search(
+        &engine_state.search_index,
+        &query,
+        usize::MAX,
+    );
+
+    let mut scores_by_path: HashMap<String, f32> = hits
+        .into_iter()
+        .map(|hit| (hit.path, hit.score))
+        .collect();
 
     let mut results = Vec::new();
 
@@ -352,7 +404,9 @@ pub async fn search_notes_with_snapshot(
                 find_matching_content_snippet(indexed.content.as_ref(), &normalized_query)
             });
 
-        if rel_path_match || label_match.is_some() || content_match.is_some() {
+        let engine_score = scores_by_path.remove(&note.rel_path);
+
+        if engine_score.is_some() || rel_path_match || label_match.is_some() || content_match.is_some() {
             let snippet = if let Some(content_snippet) = content_match {
                 content_snippet
             } else if let Some(matching_label) = label_match {
@@ -364,15 +418,25 @@ pub async fn search_notes_with_snapshot(
                 "Path match".to_string()
             };
 
-            results.push(NoteSearchResult {
-                rel_path: note.rel_path.clone(),
-                snippet,
-            });
+            results.push((
+                NoteSearchResult {
+                    rel_path: note.rel_path.clone(),
+                    snippet,
+                },
+                engine_score.unwrap_or(0.0),
+            ));
         }
     }
 
-    results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-    results
+    // Sort by BM25 score descending, fallback to alphabetical order of paths
+    results.sort_by(|(a_res, a_score), (b_res, b_score)| {
+        b_score
+            .partial_cmp(a_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a_res.rel_path.cmp(&b_res.rel_path))
+    });
+
+    results.into_iter().map(|(res, _)| res).collect()
 }
 
 #[cfg(test)]
@@ -393,6 +457,7 @@ mod search_index_eviction_tests {
                 notes_by_path: HashMap::new(),
                 last_external_refresh: None,
                 last_accessed_at: stale_last_access,
+                engine_state: None,
             },
         );
         indexes.insert(
@@ -401,6 +466,7 @@ mod search_index_eviction_tests {
                 notes_by_path: HashMap::new(),
                 last_external_refresh: None,
                 last_accessed_at: now,
+                engine_state: None,
             },
         );
 
@@ -431,6 +497,7 @@ mod search_index_eviction_tests {
                     notes_by_path: HashMap::new(),
                     last_external_refresh: None,
                     last_accessed_at,
+                    engine_state: None,
                 },
             );
         }

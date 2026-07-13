@@ -3,41 +3,16 @@
 //! This module defines note metadata and re-exports notebook operations for
 //! create/delete/move/search and metadata/content persistence.
 
-use serde::{Deserialize, Serialize};
-
-const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
-const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
-
 #[path = "notebook/error.rs"]
 mod error;
 #[path = "notebook/operations.rs"]
 mod operations;
-#[path = "notebook/relative_path.rs"]
-mod relative_path;
 #[path = "notebook/search.rs"]
 mod search;
 #[path = "notebook/storage.rs"]
 mod storage;
 
-/// Metadata persisted for a single note directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteMetadata {
-    /// Note directory path relative to the notebook root.
-    pub rel_path: String,
-    /// User-defined labels attached to this note.
-    #[serde(default)]
-    pub labels: Vec<String>,
-    /// Last update timestamp in RFC3339 format.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_updated: Option<String>,
-}
-
-/// Root metadata object stored in `metadata.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotebookMetadata {
-    /// All known notes in the notebook.
-    pub notes: Vec<NoteMetadata>,
-}
+pub use cognate_engine::storage::NoteMetadata;
 
 /// Search result surface returned to the editor search UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,9 +23,9 @@ pub struct NoteSearchResult {
     pub snippet: String,
 }
 
-pub use error::{NotebookError, NotebookErrorKind};
+#[allow(unused_imports)]
+pub use error::{NotebookError, NotebookErrorKind, EngineResultExt};
 pub use operations::{create_new_note, delete_note, move_note};
-pub use relative_path::NotebookRelativePath;
 pub use search::{SearchNote, clear_search_index_for_notebook, search_notes_with_snapshot};
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,

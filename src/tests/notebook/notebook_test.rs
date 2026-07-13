@@ -61,6 +61,55 @@ mod tests {
         }
     }
 
+    struct NotebookTestHarness {
+        notebook_dir: TestNotebookDir,
+    }
+
+    impl NotebookTestHarness {
+        fn new(name: &str) -> Self {
+            Self {
+                notebook_dir: TestNotebookDir::new(name),
+            }
+        }
+
+        fn path(&self) -> &str {
+            self.notebook_dir.as_str()
+        }
+
+        fn write_metadata(&self, notes: &[NoteMetadata]) {
+            notebook::save_metadata(self.path(), notes).expect("Failed to write metadata");
+        }
+
+        fn inject_rename_fault(&self) {
+            fs::write(
+                Path::new(self.path()).join(".cognate_fail_atomic_rename"),
+                "fail",
+            )
+            .expect("Failed to create atomic-rename failure marker");
+        }
+
+        fn inject_delete_rollback_fault(&self) {
+            fs::write(
+                Path::new(self.path()).join(".cognate_fail_delete_rollback"),
+                "fail",
+            )
+            .expect("Failed to create delete-rollback failure marker");
+        }
+
+        fn inject_move_rollback_fault(&self) {
+            fs::write(
+                Path::new(self.path()).join(".cognate_fail_move_rollback"),
+                "fail",
+            )
+            .expect("Failed to create move-rollback failure marker");
+        }
+
+        fn inject_metadata_trap_directory(&self) {
+            fs::create_dir(Path::new(self.path()).join("metadata.json"))
+                .expect("Failed to create metadata trap directory");
+        }
+    }
+
     fn assert_note_md_exists(notebook: &TestNotebookDir, rel_path: &str) {
         let note_path = Path::new(notebook.as_str()).join(rel_path).join("note.md");
         assert!(
@@ -364,23 +413,22 @@ mod tests {
 
     #[test]
     fn create_new_note_rolls_back_when_metadata_save_fails() {
-        let notebook_dir = TestNotebookDir::new("create_rollback_metadata_failure");
+        let harness = NotebookTestHarness::new("create_rollback_metadata_failure");
         let mut notes: Vec<NoteMetadata> = Vec::new();
 
-        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
-            .expect("Failed to create metadata.json directory trap");
+        harness.inject_metadata_trap_directory();
 
         let result = block_on(notebook::create_new_note(
-            notebook_dir.as_str(),
+            harness.path(),
             "rollback/create",
             &mut notes,
         ));
 
         assert!(result.is_err());
         assert!(notes.is_empty(), "In-memory metadata should be rolled back");
-        assert_note_md_not_exists(&notebook_dir, "rollback/create");
+        assert_note_md_not_exists(&harness.notebook_dir, "rollback/create");
         assert!(
-            !Path::new(notebook_dir.as_str())
+            !Path::new(harness.path())
                 .join("rollback/create")
                 .exists(),
             "Created note directory should be rolled back on metadata failure"
@@ -389,21 +437,21 @@ mod tests {
 
     #[test]
     fn delete_note_rolls_back_when_metadata_save_fails() {
-        let notebook_dir = TestNotebookDir::new("delete_rollback_metadata_failure");
+        let harness = NotebookTestHarness::new("delete_rollback_metadata_failure");
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/delete".to_string(),
             labels: Vec::new(),
             last_updated: None,
         }];
 
-        let note_dir = Path::new(notebook_dir.as_str()).join("rollback/delete");
+        let note_dir = Path::new(harness.path()).join("rollback/delete");
         fs::create_dir_all(&note_dir).expect("Failed to create note directory");
         fs::write(note_dir.join("note.md"), "rollback").expect("Failed to create note file");
-        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
-            .expect("Failed to create metadata.json directory trap");
+
+        harness.inject_metadata_trap_directory();
 
         let result = block_on(notebook::delete_note(
-            notebook_dir.as_str(),
+            harness.path(),
             "rollback/delete",
             &mut notes,
         ));
@@ -411,27 +459,27 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(notes.len(), 1, "Metadata should be restored on rollback");
         assert_eq!(notes[0].rel_path, "rollback/delete");
-        assert_note_md_exists(&notebook_dir, "rollback/delete");
+        assert_note_md_exists(&harness.notebook_dir, "rollback/delete");
     }
 
     #[test]
     fn move_note_rolls_back_when_metadata_save_fails() {
-        let notebook_dir = TestNotebookDir::new("move_rollback_metadata_failure");
+        let harness = NotebookTestHarness::new("move_rollback_metadata_failure");
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/source".to_string(),
             labels: Vec::new(),
             last_updated: None,
         }];
 
-        let source_dir = Path::new(notebook_dir.as_str()).join("rollback/source");
+        let source_dir = Path::new(harness.path()).join("rollback/source");
         fs::create_dir_all(&source_dir).expect("Failed to create source note directory");
         fs::write(source_dir.join("note.md"), "rollback")
             .expect("Failed to create source note file");
-        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
-            .expect("Failed to create metadata.json directory trap");
+
+        harness.inject_metadata_trap_directory();
 
         let result = block_on(notebook::move_note(
-            notebook_dir.as_str(),
+            harness.path(),
             "rollback/source",
             "rollback/destination",
             &mut notes,
@@ -440,8 +488,8 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(notes.len(), 1, "Metadata should be restored on rollback");
         assert_eq!(notes[0].rel_path, "rollback/source");
-        assert_note_md_exists(&notebook_dir, "rollback/source");
-        assert_note_md_not_exists(&notebook_dir, "rollback/destination");
+        assert_note_md_exists(&harness.notebook_dir, "rollback/source");
+        assert_note_md_not_exists(&harness.notebook_dir, "rollback/destination");
     }
 
     #[test]
@@ -860,27 +908,22 @@ mod tests {
 
     #[test]
     fn save_metadata_keeps_last_known_good_copy_and_preserves_primary_when_atomic_rename_fails() {
-        let notebook_dir = TestNotebookDir::new("metadata_backup_and_atomic_failure");
+        let harness = NotebookTestHarness::new("metadata_backup_and_atomic_failure");
         let initial_notes = vec![NoteMetadata {
             rel_path: "stable/note".to_string(),
             labels: vec!["v1".to_string()],
             last_updated: Some("2024-01-01T00:00:00Z".to_string()),
         }];
-        notebook::save_metadata(notebook_dir.as_str(), &initial_notes)
-            .expect("Failed to save initial metadata");
+        harness.write_metadata(&initial_notes);
 
-        fs::write(
-            Path::new(notebook_dir.as_str()).join(".cognate_fail_atomic_rename"),
-            "fail",
-        )
-        .expect("Failed to create atomic-rename failure marker");
+        harness.inject_rename_fault();
 
         let updated_notes = vec![NoteMetadata {
             rel_path: "stable/note".to_string(),
             labels: vec!["v2".to_string()],
             last_updated: Some("2024-01-02T00:00:00Z".to_string()),
         }];
-        let save_result = notebook::save_metadata(notebook_dir.as_str(), &updated_notes);
+        let save_result = notebook::save_metadata(harness.path(), &updated_notes);
 
         assert!(
             save_result.is_err(),
@@ -888,7 +931,7 @@ mod tests {
         );
 
         let primary_after_failure =
-            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json"))
+            fs::read_to_string(Path::new(harness.path()).join("metadata.json"))
                 .expect("Failed to read metadata.json after simulated rename failure");
         assert!(
             primary_after_failure.contains("\"v1\""),
@@ -900,7 +943,7 @@ mod tests {
         );
 
         let backup_after_failure =
-            fs::read_to_string(Path::new(notebook_dir.as_str()).join("metadata.json.bak"))
+            fs::read_to_string(Path::new(harness.path()).join("metadata.json.bak"))
                 .expect("Failed to read metadata.json.bak after simulated rename failure");
         assert!(
             backup_after_failure.contains("\"v1\""),
@@ -910,27 +953,23 @@ mod tests {
 
     #[test]
     fn delete_note_surfaces_failed_rollback_when_rollback_rename_fails() {
-        let notebook_dir = TestNotebookDir::new("delete_rollback_failure_surface");
+        let harness = NotebookTestHarness::new("delete_rollback_failure_surface");
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/failure".to_string(),
             labels: Vec::new(),
             last_updated: None,
         }];
 
-        let note_dir = Path::new(notebook_dir.as_str()).join("rollback/failure");
+        let note_dir = Path::new(harness.path()).join("rollback/failure");
         fs::create_dir_all(&note_dir).expect("Failed to create rollback target note directory");
         fs::write(note_dir.join("note.md"), "rollback failure")
             .expect("Failed to write rollback failure note");
-        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
-            .expect("Failed to create metadata trap directory");
-        fs::write(
-            Path::new(notebook_dir.as_str()).join(".cognate_fail_delete_rollback"),
-            "fail",
-        )
-        .expect("Failed to create delete-rollback failure marker");
+
+        harness.inject_metadata_trap_directory();
+        harness.inject_delete_rollback_fault();
 
         let delete_result = block_on(notebook::delete_note(
-            notebook_dir.as_str(),
+            harness.path(),
             "rollback/failure",
             &mut notes,
         ));
@@ -946,7 +985,7 @@ mod tests {
             error
         );
 
-        let staged_entries: Vec<PathBuf> = fs::read_dir(notebook_dir.as_str())
+        let staged_entries: Vec<PathBuf> = fs::read_dir(harness.path())
             .expect("Failed to scan notebook directory")
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| {
@@ -964,27 +1003,23 @@ mod tests {
 
     #[test]
     fn move_note_surfaces_failed_rollback_when_rollback_rename_fails() {
-        let notebook_dir = TestNotebookDir::new("move_rollback_failure_surface");
+        let harness = NotebookTestHarness::new("move_rollback_failure_surface");
         let mut notes: Vec<NoteMetadata> = vec![NoteMetadata {
             rel_path: "rollback/source".to_string(),
             labels: Vec::new(),
             last_updated: None,
         }];
 
-        let source_dir = Path::new(notebook_dir.as_str()).join("rollback/source");
+        let source_dir = Path::new(harness.path()).join("rollback/source");
         fs::create_dir_all(&source_dir).expect("Failed to create source note directory");
         fs::write(source_dir.join("note.md"), "rollback failure")
             .expect("Failed to write source note file");
-        fs::create_dir(Path::new(notebook_dir.as_str()).join("metadata.json"))
-            .expect("Failed to create metadata trap directory");
-        fs::write(
-            Path::new(notebook_dir.as_str()).join(".cognate_fail_move_rollback"),
-            "fail",
-        )
-        .expect("Failed to create move-rollback failure marker");
+
+        harness.inject_metadata_trap_directory();
+        harness.inject_move_rollback_fault();
 
         let move_result = block_on(notebook::move_note(
-            notebook_dir.as_str(),
+            harness.path(),
             "rollback/source",
             "rollback/destination",
             &mut notes,
@@ -1002,11 +1037,11 @@ mod tests {
         );
 
         assert!(
-            Path::new(notebook_dir.as_str())
+            Path::new(harness.path())
                 .join("rollback/source")
                 .join("note.md")
                 .exists()
-                || Path::new(notebook_dir.as_str())
+                || Path::new(harness.path())
                     .join("rollback/destination")
                     .join("note.md")
                     .exists(),

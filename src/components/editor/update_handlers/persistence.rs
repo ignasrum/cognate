@@ -1,3 +1,4 @@
+#[cfg(not(test))]
 use native_dialog::{DialogBuilder, MessageLevel};
 
 use super::*;
@@ -85,15 +86,18 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                     window::close(window_id)
                 }
                 Err(error) => {
-                    let _ = DialogBuilder::message()
-                        .set_level(MessageLevel::Error)
-                        .set_title("Failed to Save Before Exit")
-                        .set_text(format!(
-                            "Cognate could not safely save your latest changes before exit:\n\n{}",
-                            error.ui_message()
-                        ))
-                        .alert()
-                        .show();
+                    #[cfg(not(test))]
+                    {
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Failed to Save Before Exit")
+                            .set_text(format!(
+                                "Cognate could not safely save your latest changes before exit:\n\n{}",
+                                error.ui_message()
+                            ))
+                            .alert()
+                            .show();
+                    }
                     Task::none()
                 }
             }

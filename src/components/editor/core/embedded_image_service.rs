@@ -70,7 +70,7 @@ impl EmbeddedImageWorkflow {
             selected_note_path,
             markdown_text,
         );
-        self.sync_embedded_image_handles();
+        self.sync_embedded_image_handles(notebook_path);
     }
 
     fn refresh_embedded_images_for_current_markdown(
@@ -92,23 +92,26 @@ impl EmbeddedImageWorkflow {
         let note_dir = Path::new(notebook_path).join(selected_note_path);
 
         for image_ref in extract_embedded_image_ids(markdown_text) {
-            if let Some(image_path) = resolve_embedded_image_reference(&note_dir, &image_ref) {
-                self.images
-                    .insert(image_ref, image_path.to_string_lossy().into_owned());
+            if let Some(_) = resolve_embedded_image_reference(&note_dir, &image_ref) {
+                let rel_path = format!("{}/{}", selected_note_path, image_ref);
+                self.images.insert(image_ref, rel_path);
             }
         }
     }
 
-    fn sync_embedded_image_handles(&mut self) {
+    fn sync_embedded_image_handles(&mut self, notebook_path: &str) {
         self.image_handles
             .retain(|image_id, _| self.images.contains_key(image_id));
 
-        for (image_id, image_path) in &self.images {
+        for (image_id, image_rel_path) in &self.images {
             if self.image_handles.contains_key(image_id) {
                 continue;
             }
 
-            if let Ok(image_bytes) = std::fs::read(image_path) {
+            if let Ok(image_bytes) = cognate_engine::storage::AttachmentManager::read_image_bytes(
+                Path::new(notebook_path),
+                image_rel_path,
+            ) {
                 self.image_handles.insert(
                     image_id.clone(),
                     iced::widget::image::Handle::from_bytes(image_bytes),
