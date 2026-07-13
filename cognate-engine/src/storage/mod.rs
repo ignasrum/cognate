@@ -1,5 +1,7 @@
-pub mod notebook;
 pub mod attachments;
+pub mod notebook;
 
-pub use notebook::{NotebookManager, NoteMetadata, NotebookMetadata, MetadataLoadResult, current_timestamp_rfc3339};
 pub use attachments::AttachmentManager;
+pub use notebook::{
+    MetadataLoadResult, NoteMetadata, NotebookManager, NotebookMetadata, current_timestamp_rfc3339,
+};

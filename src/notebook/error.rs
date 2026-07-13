@@ -75,11 +75,21 @@ impl NotebookError {
 impl From<cognate_engine::EngineError> for NotebookError {
     fn from(err: cognate_engine::EngineError) -> Self {
         match err {
-            cognate_engine::EngineError::Serialization(msg) => NotebookError::storage("serialization", msg),
-            cognate_engine::EngineError::Deserialization(msg) => NotebookError::storage("deserialization", msg),
-            cognate_engine::EngineError::Validation { context, detail } => NotebookError::Validation { context, detail },
-            cognate_engine::EngineError::Storage { context, detail } => NotebookError::Storage { context, detail },
-            cognate_engine::EngineError::Recovery { context, detail } => NotebookError::Recovery { context, detail },
+            cognate_engine::EngineError::Serialization(msg) => {
+                NotebookError::storage("serialization", msg)
+            }
+            cognate_engine::EngineError::Deserialization(msg) => {
+                NotebookError::storage("deserialization", msg)
+            }
+            cognate_engine::EngineError::Validation { context, detail } => {
+                NotebookError::Validation { context, detail }
+            }
+            cognate_engine::EngineError::Storage { context, detail } => {
+                NotebookError::Storage { context, detail }
+            }
+            cognate_engine::EngineError::Recovery { context, detail } => {
+                NotebookError::Recovery { context, detail }
+            }
         }
     }
 }

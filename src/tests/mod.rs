@@ -2,7 +2,6 @@
 #[cfg(test)]
 pub mod json;
 
-
 // Configuration reader tests.
 #[cfg(test)]
 pub mod configuration;

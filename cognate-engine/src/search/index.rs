@@ -1,6 +1,6 @@
+use super::tokenizer::{TermContext, tokenize_markdown};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
-use super::tokenizer::{tokenize_markdown, TermContext};
 
 pub type DocId = u32;
 
@@ -31,7 +31,13 @@ impl InvertedIndex {
         Self::default()
     }
 
-    pub fn index_document(&mut self, path: &str, content: &str, labels: &[String], last_updated: Option<String>) {
+    pub fn index_document(
+        &mut self,
+        path: &str,
+        content: &str,
+        labels: &[String],
+        last_updated: Option<String>,
+    ) {
         // Remove existing version of this document first
         self.remove_document(path);
 

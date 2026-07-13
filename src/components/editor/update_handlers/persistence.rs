@@ -71,7 +71,8 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                         content_note_path,
                         &markdown_text,
                         &notes,
-                    ).await;
+                    )
+                    .await;
                     (window_id, result)
                 },
                 |(window_id, result)| Message::ShutdownFlushCompleted(window_id, result),

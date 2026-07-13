@@ -1,10 +1,13 @@
 use std::path::Path;
 
-pub use cognate_engine::storage::{NotebookManager, MetadataLoadResult};
+use crate::notebook::{EngineResultExt, NoteMetadata, NotebookError};
 pub use cognate_engine::storage::current_timestamp_rfc3339;
-use crate::notebook::{NoteMetadata, NotebookError, EngineResultExt};
+pub use cognate_engine::storage::{MetadataLoadResult, NotebookManager};
 
-pub async fn save_metadata(notebook_path: &str, notes: &[NoteMetadata]) -> Result<(), NotebookError> {
+pub async fn save_metadata(
+    notebook_path: &str,
+    notes: &[NoteMetadata],
+) -> Result<(), NotebookError> {
     let manager = NotebookManager::new(Path::new(notebook_path));
     manager.save_metadata(notes).await.into_notebook_err()
 }
@@ -30,7 +33,10 @@ pub async fn save_note_content_sync(
     content: &str,
 ) -> Result<(), NotebookError> {
     let manager = NotebookManager::new(Path::new(notebook_path));
-    manager.save_note_content(rel_note_path, content).await.into_notebook_err()?;
+    manager
+        .save_note_content(rel_note_path, content)
+        .await
+        .into_notebook_err()?;
 
     // Update the in-memory search index cache
     super::search::cache_upsert_search_index_note_content(
@@ -38,7 +44,8 @@ pub async fn save_note_content_sync(
         rel_note_path,
         content,
         manager.get_note_modified_time(rel_note_path).await,
-    ).await;
+    )
+    .await;
 
     Ok(())
 }

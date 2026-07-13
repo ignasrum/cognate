@@ -1,7 +1,7 @@
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
-use std::sync::Arc;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::clipboard::{
     ClipboardPastePayload, paste_text_from_action, read_clipboard_image_file_as_base64_from_text,
@@ -155,19 +155,19 @@ impl Editor {
                 }
                 state.with_preview_scroll_task(Task::batch(vec![task, sync_task]))
             }
-            Message::AttachmentLoaded(image_id, result) => {
-                match result {
-                    Ok(bytes) => {
-                        state.embedded_image_workflow.insert_image_handle(image_id, bytes);
-                        state.sync_markdown_preview()
-                    }
-                    Err(_err) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to load image handle {}: {}", image_id, _err);
-                        Task::none()
-                    }
+            Message::AttachmentLoaded(image_id, result) => match result {
+                Ok(bytes) => {
+                    state
+                        .embedded_image_workflow
+                        .insert_image_handle(image_id, bytes);
+                    state.sync_markdown_preview()
                 }
-            }
+                Err(_err) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to load image handle {}: {}", image_id, _err);
+                    Task::none()
+                }
+            },
             Message::PastedImageSaved(result) => {
                 let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
                     return Task::none();
@@ -181,17 +181,23 @@ impl Editor {
                             state.content.cursor(),
                         );
                         let image_tag = format!("![image]({relative_path})");
-                        state.content.perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
+                        state
+                            .content
+                            .perform(Action::Edit(Edit::Paste(Arc::new(image_tag))));
                         state.markdown_text = state.content.text();
                         state.prune_embedded_images_for_current_markdown();
-                        let metadata_save_task = state.touch_selected_note_last_updated_and_schedule_save_task();
+                        let metadata_save_task =
+                            state.touch_selected_note_last_updated_and_schedule_save_task();
                         let sync_task = state.sync_markdown_preview();
 
                         let notebook_path = state.state.notebook_path().to_string();
                         let note_path = selected_note_path;
                         let content_text = state.markdown_text.clone();
                         let save_content_task = Task::perform(
-                            async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
+                            async move {
+                                notebook::save_note_content(notebook_path, note_path, content_text)
+                                    .await
+                            },
                             Message::NoteContentSaved,
                         );
 

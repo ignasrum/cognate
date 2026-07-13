@@ -45,7 +45,7 @@ impl NotebookSearchIndex {
     fn new(notebook_path: &str) -> Self {
         Self {
             manager: Arc::new(tokio::sync::Mutex::new(
-                cognate_engine::search::SearchIndexManager::new(Path::new(notebook_path))
+                cognate_engine::search::SearchIndexManager::new(Path::new(notebook_path)),
             )),
             last_accessed_at: Instant::now(),
         }
@@ -187,11 +187,13 @@ pub async fn search_notes_with_snapshot(
     });
 
     let mut manager = manager_arc.lock().await;
-    let engine_results = manager.search(
-        &query,
-        &engine_notes,
-        SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
-    ).await;
+    let engine_results = manager
+        .search(
+            &query,
+            &engine_notes,
+            SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
+        )
+        .await;
 
     let mut results = match engine_results {
         Ok(res) => res,
@@ -231,7 +233,7 @@ mod search_index_eviction_tests {
             "stale".to_string(),
             NotebookSearchIndex {
                 manager: Arc::new(tokio::sync::Mutex::new(
-                    cognate_engine::search::SearchIndexManager::new(Path::new("stale"))
+                    cognate_engine::search::SearchIndexManager::new(Path::new("stale")),
                 )),
                 last_accessed_at: stale_last_access,
             },
@@ -240,7 +242,7 @@ mod search_index_eviction_tests {
             "active".to_string(),
             NotebookSearchIndex {
                 manager: Arc::new(tokio::sync::Mutex::new(
-                    cognate_engine::search::SearchIndexManager::new(Path::new("active"))
+                    cognate_engine::search::SearchIndexManager::new(Path::new("active")),
                 )),
                 last_accessed_at: now,
             },
@@ -271,7 +273,9 @@ mod search_index_eviction_tests {
                 format!("notebook_{i}"),
                 NotebookSearchIndex {
                     manager: Arc::new(tokio::sync::Mutex::new(
-                        cognate_engine::search::SearchIndexManager::new(Path::new(&format!("notebook_{i}")))
+                        cognate_engine::search::SearchIndexManager::new(Path::new(&format!(
+                            "notebook_{i}"
+                        ))),
                     )),
                     last_accessed_at,
                 },

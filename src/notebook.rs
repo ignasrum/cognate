@@ -24,7 +24,7 @@ pub struct NoteSearchResult {
 }
 
 #[allow(unused_imports)]
-pub use error::{NotebookError, NotebookErrorKind, EngineResultExt};
+pub use error::{EngineResultExt, NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
 pub use search::{SearchNote, clear_search_index_for_notebook, search_notes_with_snapshot};
 pub use storage::{

@@ -1,6 +1,6 @@
+use base64::Engine;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use base64::Engine;
 
 use crate::EngineError;
 
@@ -48,57 +48,62 @@ impl AttachmentManager {
         rel_note_path: &str,
         base64_data: &str,
     ) -> Result<String, EngineError> {
-        let image_bytes = decode_base64_image_to_bytes(base64_data)
-            .ok_or_else(|| EngineError::validation("save_image", "Failed to decode image data from base64."))?;
-        
+        let image_bytes = decode_base64_image_to_bytes(base64_data).ok_or_else(|| {
+            EngineError::validation("save_image", "Failed to decode image data from base64.")
+        })?;
+
         let extension = image_extension_from_bytes(&image_bytes).unwrap_or("png");
         let image_id = generate_embedded_image_id();
         let file_name = format!("{image_id}.{extension}");
 
         let note_dir = notebook_path.join(rel_note_path);
         let images_dir = note_dir.join("images");
-        
+
         // Safety check to ensure images_dir is under notebook_path
         if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
             if let Ok(canonical_images_dir) = tokio::fs::canonicalize(&images_dir).await {
                 if !canonical_images_dir.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "save_image",
-                        "Image directory escapes notebook boundaries"
+                        "Image directory escapes notebook boundaries",
                     ));
                 }
             }
         }
 
-        tokio::fs::create_dir_all(&images_dir).await.map_err(|err| {
-            EngineError::storage(
-                "save_image",
-                format!("Failed to create image directory: {}", err)
-            )
-        })?;
+        tokio::fs::create_dir_all(&images_dir)
+            .await
+            .map_err(|err| {
+                EngineError::storage(
+                    "save_image",
+                    format!("Failed to create image directory: {}", err),
+                )
+            })?;
 
         let image_path = images_dir.join(&file_name);
-        tokio::fs::write(&image_path, image_bytes).await.map_err(|err| {
-            EngineError::storage(
-                "save_image",
-                format!("Failed to write image file: {}", err)
-            )
-        })?;
+        tokio::fs::write(&image_path, image_bytes)
+            .await
+            .map_err(|err| {
+                EngineError::storage("save_image", format!("Failed to write image file: {}", err))
+            })?;
 
         Ok(format!("images/{}", file_name))
     }
 
     /// Reads raw image file bytes for UI rendering
-    pub async fn read_image_bytes(notebook_path: &Path, rel_path: &str) -> Result<Vec<u8>, EngineError> {
+    pub async fn read_image_bytes(
+        notebook_path: &Path,
+        rel_path: &str,
+    ) -> Result<Vec<u8>, EngineError> {
         let full_path = notebook_path.join(rel_path);
-        
+
         // Safety check to ensure we don't escape notebook_path
         if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
             if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
                 if !canonical_file.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "read_image_bytes",
-                        format!("Attachment path '{}' escapes notebook boundaries", rel_path)
+                        format!("Attachment path '{}' escapes notebook boundaries", rel_path),
                     ));
                 }
             }
@@ -107,36 +112,39 @@ impl AttachmentManager {
         tokio::fs::read(&full_path).await.map_err(|err| {
             EngineError::storage(
                 "read_image_bytes",
-                format!("Failed to read attachment file: {}", err)
+                format!("Failed to read attachment file: {}", err),
             )
         })
     }
 
     /// Deletes specific attachment file
-    pub async fn delete_attachment(notebook_path: &Path, rel_path: &str) -> Result<(), EngineError> {
+    pub async fn delete_attachment(
+        notebook_path: &Path,
+        rel_path: &str,
+    ) -> Result<(), EngineError> {
         let full_path = notebook_path.join(rel_path);
-        
+
         // Safety check to ensure we don't escape notebook_path
         if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await {
             if let Ok(canonical_file) = tokio::fs::canonicalize(&full_path).await {
                 if !canonical_file.starts_with(&canonical_notebook) {
                     return Err(EngineError::validation(
                         "delete_attachment",
-                        format!("Attachment path '{}' escapes notebook boundaries", rel_path)
+                        format!("Attachment path '{}' escapes notebook boundaries", rel_path),
                     ));
                 }
             }
         }
-        
+
         if tokio::fs::try_exists(&full_path).await.unwrap_or(false) {
             tokio::fs::remove_file(&full_path).await.map_err(|err| {
                 EngineError::storage(
                     "delete_attachment",
-                    format!("Failed to delete attachment: {}", err)
+                    format!("Failed to delete attachment: {}", err),
                 )
             })?;
         }
-        
+
         Ok(())
     }
 }

@@ -214,8 +214,7 @@ impl Editor {
                     deletion_tasks.push(Task::perform(
                         async move {
                             let _ = cognate_engine::storage::AttachmentManager::delete_attachment(
-                                &path,
-                                &rel,
+                                &path, &rel,
                             )
                             .await;
                         },

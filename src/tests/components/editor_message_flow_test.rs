@@ -71,7 +71,8 @@ mod tests {
             last_updated: Some("2024-01-01T00:00:00Z".to_string()),
         }];
 
-        block_on(notebook::save_metadata(notebook_dir.as_str(), &notes)).expect("Failed to seed metadata");
+        block_on(notebook::save_metadata(notebook_dir.as_str(), &notes))
+            .expect("Failed to seed metadata");
         notes
     }
 

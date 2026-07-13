@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cognate_engine::EngineError;
-use cognate_engine::storage::{NotebookManager, NoteMetadata, AttachmentManager};
 use cognate_engine::search::SearchIndexManager;
+use cognate_engine::storage::{AttachmentManager, NoteMetadata, NotebookManager};
 
 struct TempTestDir {
     path: PathBuf,
@@ -58,27 +58,18 @@ impl NotebookTestHarness {
     }
 
     fn inject_rename_fault(&self) {
-        std::fs::write(
-            self.path().join(".cognate_fail_atomic_rename"),
-            "fail",
-        )
-        .expect("Failed to create atomic-rename failure marker");
+        std::fs::write(self.path().join(".cognate_fail_atomic_rename"), "fail")
+            .expect("Failed to create atomic-rename failure marker");
     }
 
     fn inject_delete_rollback_fault(&self) {
-        std::fs::write(
-            self.path().join(".cognate_fail_delete_rollback"),
-            "fail",
-        )
-        .expect("Failed to create delete-rollback failure marker");
+        std::fs::write(self.path().join(".cognate_fail_delete_rollback"), "fail")
+            .expect("Failed to create delete-rollback failure marker");
     }
 
     fn inject_move_rollback_fault(&self) {
-        std::fs::write(
-            self.path().join(".cognate_fail_move_rollback"),
-            "fail",
-        )
-        .expect("Failed to create move-rollback failure marker");
+        std::fs::write(self.path().join(".cognate_fail_move_rollback"), "fail")
+            .expect("Failed to create move-rollback failure marker");
     }
 
     fn inject_metadata_trap_directory(&self) {
@@ -197,8 +188,14 @@ async fn delete_note_removes_file_and_metadata() {
     let manager = harness.manager();
     let mut notes: Vec<NoteMetadata> = Vec::new();
 
-    manager.create_note("alpha", &mut notes).await.expect("Failed to create alpha");
-    manager.create_note("beta", &mut notes).await.expect("Failed to create beta");
+    manager
+        .create_note("alpha", &mut notes)
+        .await
+        .expect("Failed to create alpha");
+    manager
+        .create_note("beta", &mut notes)
+        .await
+        .expect("Failed to create beta");
 
     manager
         .delete_note("alpha", &mut notes)
@@ -309,10 +306,18 @@ async fn move_note_fails_when_target_exists() {
     let manager = harness.manager();
     let mut notes: Vec<NoteMetadata> = Vec::new();
 
-    manager.create_note("source/note", &mut notes).await.unwrap();
-    manager.create_note("target/note", &mut notes).await.unwrap();
+    manager
+        .create_note("source/note", &mut notes)
+        .await
+        .unwrap();
+    manager
+        .create_note("target/note", &mut notes)
+        .await
+        .unwrap();
 
-    let result = manager.move_note("source/note", "target/note", &mut notes).await;
+    let result = manager
+        .move_note("source/note", "target/note", &mut notes)
+        .await;
 
     assert!(result.is_err());
     assert_note_md_exists(harness.path(), "source/note");
@@ -325,7 +330,9 @@ async fn move_note_rejects_invalid_current_relative_path() {
     let manager = harness.manager();
     let mut notes: Vec<NoteMetadata> = Vec::new();
 
-    let result = manager.move_note("../outside", "target/note", &mut notes).await;
+    let result = manager
+        .move_note("../outside", "target/note", &mut notes)
+        .await;
 
     assert!(result.is_err());
     let error = result.expect_err("expected error");
@@ -396,7 +403,9 @@ async fn move_note_rolls_back_when_metadata_save_fails() {
 
     harness.inject_metadata_trap_directory();
 
-    let result = manager.move_note("rollback/source", "rollback/destination", &mut notes).await;
+    let result = manager
+        .move_note("rollback/source", "rollback/destination", &mut notes)
+        .await;
 
     assert!(result.is_err());
     assert_eq!(notes.len(), 1, "Metadata should be restored on rollback");
@@ -426,9 +435,8 @@ async fn save_note_content_creates_parent_directories_and_persists_text_without_
 
     assert_eq!(content, "hello from test");
 
-    let persisted_before_load =
-        std::fs::read_to_string(harness.path().join("metadata.json"))
-            .expect("Failed to read metadata after content save");
+    let persisted_before_load = std::fs::read_to_string(harness.path().join("metadata.json"))
+        .expect("Failed to read metadata after content save");
     assert!(
         persisted_before_load.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
         "save_note_content should not rewrite metadata immediately"
@@ -451,11 +459,8 @@ async fn save_note_content_does_not_update_last_updated_when_content_is_unchange
 
     manager.create_note("same/note", &mut notes).await.unwrap();
 
-    std::fs::write(
-        harness.path().join("same/note/note.md"),
-        "same content",
-    )
-    .expect("Failed to seed note content");
+    std::fs::write(harness.path().join("same/note/note.md"), "same content")
+        .expect("Failed to seed note content");
 
     notes[0].last_updated = Some("2000-01-01T00:00:00Z".to_string());
     manager.save_metadata(&notes).await.unwrap();
@@ -465,9 +470,8 @@ async fn save_note_content_does_not_update_last_updated_when_content_is_unchange
         .await
         .expect("save_note_content should succeed");
 
-    let persisted_metadata =
-        std::fs::read_to_string(harness.path().join("metadata.json"))
-            .expect("Expected metadata file to remain readable after no-op save");
+    let persisted_metadata = std::fs::read_to_string(harness.path().join("metadata.json"))
+        .expect("Expected metadata file to remain readable after no-op save");
     assert!(
         persisted_metadata.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
         "save_note_content should not rewrite metadata when content is unchanged"
@@ -478,11 +482,8 @@ async fn save_note_content_does_not_update_last_updated_when_content_is_unchange
 async fn load_notes_metadata_errors_for_invalid_json_without_backup() {
     let harness = NotebookTestHarness::new("invalid_metadata");
     let manager = harness.manager();
-    std::fs::write(
-        harness.path().join("metadata.json"),
-        "{ not_valid_json ",
-    )
-    .expect("Failed to write invalid metadata");
+    std::fs::write(harness.path().join("metadata.json"), "{ not_valid_json ")
+        .expect("Failed to write invalid metadata");
 
     let load_result = manager.load_metadata().await;
 
@@ -654,8 +655,14 @@ async fn search_notes_finds_matches_in_path_label_and_content() {
     let mut search_index = SearchIndexManager::new(harness.path());
 
     let mut notes: Vec<NoteMetadata> = Vec::new();
-    manager.create_note("work/todo", &mut notes).await.expect("Failed to create work/todo");
-    manager.create_note("ideas/brainstorm", &mut notes).await.expect("Failed to create ideas/brainstorm");
+    manager
+        .create_note("work/todo", &mut notes)
+        .await
+        .expect("Failed to create work/todo");
+    manager
+        .create_note("ideas/brainstorm", &mut notes)
+        .await
+        .expect("Failed to create ideas/brainstorm");
 
     if let Some(first_note) = notes.iter_mut().find(|note| note.rel_path == "work/todo") {
         first_note.labels.push("urgent".to_string());
@@ -708,8 +715,14 @@ async fn move_folder_updates_nested_note_paths() {
     let manager = harness.manager();
     let mut notes: Vec<NoteMetadata> = Vec::new();
 
-    manager.create_note("folder/note_a", &mut notes).await.expect("Failed to create folder/note_a");
-    manager.create_note("folder/sub/note_b", &mut notes).await.expect("Failed to create folder/sub/note_b");
+    manager
+        .create_note("folder/note_a", &mut notes)
+        .await
+        .expect("Failed to create folder/note_a");
+    manager
+        .create_note("folder/sub/note_b", &mut notes)
+        .await
+        .expect("Failed to create folder/sub/note_b");
 
     let moved_to = manager
         .move_note("folder", "renamed", &mut notes)
@@ -890,7 +903,9 @@ async fn move_note_surfaces_failed_rollback_when_rollback_rename_fails() {
     harness.inject_metadata_trap_directory();
     harness.inject_move_rollback_fault();
 
-    let move_result = manager.move_note("rollback/source", "rollback/destination", &mut notes).await;
+    let move_result = manager
+        .move_note("rollback/source", "rollback/destination", &mut notes)
+        .await;
 
     assert!(move_result.is_err());
     let error = move_result.expect_err("Expected move to fail");
@@ -908,8 +923,16 @@ async fn move_note_surfaces_failed_rollback_when_rollback_rename_fails() {
     );
 
     assert!(
-        harness.path().join("rollback/source").join("note.md").exists()
-            || harness.path().join("rollback/destination").join("note.md").exists(),
+        harness
+            .path()
+            .join("rollback/source")
+            .join("note.md")
+            .exists()
+            || harness
+                .path()
+                .join("rollback/destination")
+                .join("note.md")
+                .exists(),
         "Failed move rollback should leave recoverable note data on disk"
     );
 }
@@ -924,13 +947,10 @@ async fn test_async_attachments() {
 
     let dummy_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
-    let rel_image_path = AttachmentManager::save_image_from_base64(
-        temp.path(),
-        "work/notes",
-        dummy_base64,
-    )
-    .await
-    .expect("Failed to save image attachment");
+    let rel_image_path =
+        AttachmentManager::save_image_from_base64(temp.path(), "work/notes", dummy_base64)
+            .await
+            .expect("Failed to save image attachment");
 
     assert!(rel_image_path.starts_with("images/"));
     let full_image_path = temp.path().join("work/notes").join(&rel_image_path);
@@ -938,22 +958,16 @@ async fn test_async_attachments() {
 
     let notebook_rel_image_path = format!("work/notes/{}", rel_image_path);
 
-    let bytes = AttachmentManager::read_image_bytes(
-        temp.path(),
-        &notebook_rel_image_path,
-    )
-    .await
-    .expect("Failed to read image bytes");
+    let bytes = AttachmentManager::read_image_bytes(temp.path(), &notebook_rel_image_path)
+        .await
+        .expect("Failed to read image bytes");
 
     assert!(!bytes.is_empty());
     assert_eq!(&bytes[0..4], &[0x89, 0x50, 0x4E, 0x47]);
 
-    AttachmentManager::delete_attachment(
-        temp.path(),
-        &notebook_rel_image_path,
-    )
-    .await
-    .expect("Failed to delete attachment");
+    AttachmentManager::delete_attachment(temp.path(), &notebook_rel_image_path)
+        .await
+        .expect("Failed to delete attachment");
 
     assert!(!temp.path().join(&notebook_rel_image_path).exists());
 }
@@ -965,8 +979,17 @@ async fn test_search_cache_operations() {
     let mut search_index = SearchIndexManager::new(temp.path());
 
     let mut notes = Vec::new();
-    manager.create_note("ideas/project-a", &mut notes).await.unwrap();
-    manager.save_note_content("ideas/project-a", "We should build an antigravity application").await.unwrap();
+    manager
+        .create_note("ideas/project-a", &mut notes)
+        .await
+        .unwrap();
+    manager
+        .save_note_content(
+            "ideas/project-a",
+            "We should build an antigravity application",
+        )
+        .await
+        .unwrap();
 
     let results = search_index
         .search("antigravity", &notes, Duration::from_secs(60))
@@ -975,7 +998,11 @@ async fn test_search_cache_operations() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].rel_path, "ideas/project-a");
 
-    search_index.cache_upsert("ideas/project-a", "Brand new content containing teleportation", None);
+    search_index.cache_upsert(
+        "ideas/project-a",
+        "Brand new content containing teleportation",
+        None,
+    );
     let results2 = search_index
         .search("teleportation", &notes, Duration::from_secs(60))
         .await
@@ -1008,7 +1035,10 @@ async fn test_search_index_stale_refresh() {
 
     let mut notes = Vec::new();
     let _ = manager.create_note("note", &mut notes).await.unwrap();
-    manager.save_note_content("note", "original text").await.unwrap();
+    manager
+        .save_note_content("note", "original text")
+        .await
+        .unwrap();
 
     let results = search_index
         .search("original", &notes, Duration::from_secs(60))
@@ -1017,7 +1047,9 @@ async fn test_search_index_stale_refresh() {
     assert_eq!(results.len(), 1);
 
     let file_path = temp.path().join("note/note.md");
-    tokio::fs::write(&file_path, "modified external text").await.unwrap();
+    tokio::fs::write(&file_path, "modified external text")
+        .await
+        .unwrap();
 
     let future_mtime = FileTime::from_system_time(SystemTime::now() + Duration::from_secs(5));
     filetime::set_file_mtime(&file_path, future_mtime).unwrap();
@@ -1062,12 +1094,7 @@ async fn test_note_creation_empty_and_whitespace_paths() {
     let manager = harness.manager();
     let mut notes = Vec::new();
 
-    let invalid_paths = vec![
-        "",
-        "   ",
-        "\t",
-        "\n",
-    ];
+    let invalid_paths = vec!["", "   ", "\t", "\n"];
 
     for path in invalid_paths {
         let res = manager.create_note(path, &mut notes).await;
@@ -1085,10 +1112,7 @@ async fn test_note_creation_weird_characters() {
     let manager = harness.manager();
     let mut notes = Vec::new();
 
-    let weird_paths = vec![
-        "personal/note-💡-spécial",
-        "folder name with spaces/note",
-    ];
+    let weird_paths = vec!["personal/note-💡-spécial", "folder name with spaces/note"];
 
     for path in weird_paths {
         let res = manager.create_note(path, &mut notes).await;
@@ -1103,18 +1127,30 @@ async fn test_attachment_path_traversal_attempts() {
     let temp = TempTestDir::new("attach_traversal");
 
     // Create a real file outside the notebook directory to ensure canonicalization succeeds but boundary check fails.
-    let outside_file = temp.path().parent().unwrap().join("cognate_traversal_test.png");
+    let outside_file = temp
+        .path()
+        .parent()
+        .unwrap()
+        .join("cognate_traversal_test.png");
     std::fs::write(&outside_file, "dummy content").unwrap();
 
-    let read_res = AttachmentManager::read_image_bytes(temp.path(), "../cognate_traversal_test.png").await;
-    assert!(read_res.is_err(), "Expected reading outside file to fail boundary check");
+    let read_res =
+        AttachmentManager::read_image_bytes(temp.path(), "../cognate_traversal_test.png").await;
+    assert!(
+        read_res.is_err(),
+        "Expected reading outside file to fail boundary check"
+    );
     assert!(
         matches!(read_res.unwrap_err(), EngineError::Validation { .. }),
         "Expected validation error for reading outside file"
     );
 
-    let delete_res = AttachmentManager::delete_attachment(temp.path(), "../cognate_traversal_test.png").await;
-    assert!(delete_res.is_err(), "Expected deleting outside file to fail boundary check");
+    let delete_res =
+        AttachmentManager::delete_attachment(temp.path(), "../cognate_traversal_test.png").await;
+    assert!(
+        delete_res.is_err(),
+        "Expected deleting outside file to fail boundary check"
+    );
     assert!(
         matches!(delete_res.unwrap_err(), EngineError::Validation { .. }),
         "Expected validation error for deleting outside file"
@@ -1131,9 +1167,7 @@ async fn test_attachment_invalid_base64_and_corrupt_payloads() {
     let mut notes = Vec::new();
     manager.create_note("note", &mut notes).await.unwrap();
 
-    let invalid_payloads = vec![
-        "not_valid_base64_@@@",
-    ];
+    let invalid_payloads = vec!["not_valid_base64_@@@"];
 
     for payload in invalid_payloads {
         let res = AttachmentManager::save_image_from_base64(temp.path(), "note", payload).await;
@@ -1149,7 +1183,10 @@ async fn test_search_cache_weird_queries() {
 
     let mut notes = Vec::new();
     manager.create_note("note-a", &mut notes).await.unwrap();
-    manager.save_note_content("note-a", "apple pie banana dessert").await.unwrap();
+    manager
+        .save_note_content("note-a", "apple pie banana dessert")
+        .await
+        .unwrap();
 
     let weird_queries = vec![
         "NOT apple",
@@ -1163,8 +1200,14 @@ async fn test_search_cache_weird_queries() {
     ];
 
     for query in weird_queries {
-        let res = search_index.search(query, &notes, Duration::from_secs(60)).await;
-        assert!(res.is_ok(), "Search should not crash on weird query: '{}'", query);
+        let res = search_index
+            .search(query, &notes, Duration::from_secs(60))
+            .await;
+        assert!(
+            res.is_ok(),
+            "Search should not crash on weird query: '{}'",
+            query
+        );
     }
 }
 
@@ -1215,17 +1258,23 @@ async fn test_image_extension_formats() {
 
     // JPG payload base64: /9j/AA== (decodes to [0xFF, 0xD8, 0xFF, 0x00])
     let jpg_base64 = "/9j/AA==";
-    let jpg_path = AttachmentManager::save_image_from_base64(temp.path(), "note", jpg_base64).await.unwrap();
+    let jpg_path = AttachmentManager::save_image_from_base64(temp.path(), "note", jpg_base64)
+        .await
+        .unwrap();
     assert!(jpg_path.ends_with(".jpg"));
 
     // GIF payload base64: R0lGODlh (decodes to b"GIF89a")
     let gif_base64 = "R0lGODlh";
-    let gif_path = AttachmentManager::save_image_from_base64(temp.path(), "note", gif_base64).await.unwrap();
+    let gif_path = AttachmentManager::save_image_from_base64(temp.path(), "note", gif_base64)
+        .await
+        .unwrap();
     assert!(gif_path.ends_with(".gif"));
 
     // WEBP payload base64: UklGRgAAAABXRUJQ (decodes to b"RIFF\0\0\0\0WEBP")
     let webp_base64 = "UklGRgAAAABXRUJQ";
-    let webp_path = AttachmentManager::save_image_from_base64(temp.path(), "note", webp_base64).await.unwrap();
+    let webp_path = AttachmentManager::save_image_from_base64(temp.path(), "note", webp_base64)
+        .await
+        .unwrap();
     assert!(webp_path.ends_with(".webp"));
 }
 
@@ -1278,7 +1327,10 @@ async fn test_metadata_subsecond_precision_removal() {
     manager.save_metadata(&notes).await.unwrap();
 
     let loaded = manager.load_metadata().await.unwrap();
-    assert_eq!(loaded.notes[0].last_updated.as_deref(), Some("2026-07-13T12:00:00Z"));
+    assert_eq!(
+        loaded.notes[0].last_updated.as_deref(),
+        Some("2026-07-13T12:00:00Z")
+    );
 }
 
 #[tokio::test]
@@ -1296,13 +1348,23 @@ async fn test_coverage_porter_stemmer_rules_and_snippet_truncation() {
 
     let search_terms = vec!["losses", "flies", "agreed", "creating"];
     for term in search_terms {
-        let results = search_index.search(term, &notes, Duration::from_secs(0)).await.unwrap();
+        let results = search_index
+            .search(term, &notes, Duration::from_secs(0))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
-    let results = search_index.search("truncation", &notes, Duration::from_secs(0)).await.unwrap();
+    let results = search_index
+        .search("truncation", &notes, Duration::from_secs(0))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
-    assert!(results[0].snippet.ends_with("..."), "Expected snippet to be truncated, got: {}", results[0].snippet);
+    assert!(
+        results[0].snippet.ends_with("..."),
+        "Expected snippet to be truncated, got: {}",
+        results[0].snippet
+    );
 }
 
 #[tokio::test]
@@ -1319,7 +1381,10 @@ async fn test_metadata_subsecond_precision_no_timezone() {
     manager.save_metadata(&notes).await.unwrap();
 
     let loaded = manager.load_metadata().await.unwrap();
-    assert_eq!(loaded.notes[0].last_updated.as_deref(), Some("2026-07-13T12:00:00"));
+    assert_eq!(
+        loaded.notes[0].last_updated.as_deref(),
+        Some("2026-07-13T12:00:00")
+    );
 }
 
 #[tokio::test]
@@ -1327,19 +1392,32 @@ async fn test_attachment_extension_fallback_and_symlink_save_escape() {
     let temp = TempTestDir::new("attach_fallback_escape");
 
     let dummy_fallback_base64 = "SGVsbG8=";
-    let rel_path = AttachmentManager::save_image_from_base64(temp.path(), "note", dummy_fallback_base64).await.unwrap();
-    assert!(rel_path.ends_with(".png"), "Expected fallback to png extension, got: {}", rel_path);
+    let rel_path =
+        AttachmentManager::save_image_from_base64(temp.path(), "note", dummy_fallback_base64)
+            .await
+            .unwrap();
+    assert!(
+        rel_path.ends_with(".png"),
+        "Expected fallback to png extension, got: {}",
+        rel_path
+    );
 
     #[cfg(unix)]
     {
-        let outside_dir = std::env::temp_dir().join(format!("cognate_outside_attach_{}", now_nanos()));
+        let outside_dir =
+            std::env::temp_dir().join(format!("cognate_outside_attach_{}", now_nanos()));
         std::fs::create_dir_all(outside_dir.join("images")).unwrap();
 
         let symlink_path = temp.path().join("linked_attach");
         std::os::unix::fs::symlink(&outside_dir, &symlink_path).unwrap();
 
-        let res = AttachmentManager::save_image_from_base64(temp.path(), "linked_attach", "SGVsbG8=").await;
-        assert!(res.is_err(), "Expected save image inside symlink resolving outside to fail");
+        let res =
+            AttachmentManager::save_image_from_base64(temp.path(), "linked_attach", "SGVsbG8=")
+                .await;
+        assert!(
+            res.is_err(),
+            "Expected save image inside symlink resolving outside to fail"
+        );
         assert!(
             matches!(res.unwrap_err(), EngineError::Validation { .. }),
             "Expected validation error for image save escape"
@@ -1369,7 +1447,9 @@ async fn test_atomic_bytes_write_rename_failure() {
     let file_path = temp.path().join("note/note.md");
     tokio::fs::write(&file_path, "modified text").await.unwrap();
 
-    let _ = search_index.search("modified", &notes, Duration::from_secs(0)).await;
+    let _ = search_index
+        .search("modified", &notes, Duration::from_secs(0))
+        .await;
     assert!(!temp.path().join(".cognate_index.bin").exists());
 }
 
@@ -1380,10 +1460,18 @@ async fn test_search_cache_folder_rename_and_clear() {
     let mut search_index = SearchIndexManager::new(temp.path());
 
     let mut notes = Vec::new();
-    manager.create_note("folder/note-1", &mut notes).await.unwrap();
-    manager.create_note("folder/note-2", &mut notes).await.unwrap();
-    
-    let _ = search_index.search("text", &notes, Duration::from_secs(60)).await;
+    manager
+        .create_note("folder/note-1", &mut notes)
+        .await
+        .unwrap();
+    manager
+        .create_note("folder/note-2", &mut notes)
+        .await
+        .unwrap();
+
+    let _ = search_index
+        .search("text", &notes, Duration::from_secs(60))
+        .await;
 
     search_index.cache_rename("folder", "renamed");
 
@@ -1408,7 +1496,10 @@ fn test_direct_struct_invocations_for_coverage() {
     // Trigger Deserialization error in lib.rs
     let load_res = cognate_engine::NotebookEngineState::load_from_bytes(&[]);
     assert!(load_res.is_err());
-    assert!(matches!(load_res.unwrap_err(), EngineError::Deserialization(_)));
+    assert!(matches!(
+        load_res.unwrap_err(),
+        EngineError::Deserialization(_)
+    ));
 }
 
 #[tokio::test]
@@ -1420,7 +1511,8 @@ async fn test_notebook_manager_misc_coverage() {
     assert_eq!(manager.notebook_path(), temp.path());
 
     // Cover read_image_bytes non-existent file failure path
-    let read_res = AttachmentManager::read_image_bytes(temp.path(), "images/does_not_exist.png").await;
+    let read_res =
+        AttachmentManager::read_image_bytes(temp.path(), "images/does_not_exist.png").await;
     assert!(read_res.is_err());
     assert!(matches!(read_res.unwrap_err(), EngineError::Storage { .. }));
 }
@@ -1451,14 +1543,20 @@ async fn test_delete_note_parent_not_empty() {
     let manager = NotebookManager::new(temp.path());
     let mut notes = Vec::new();
 
-    manager.create_note("folder/note", &mut notes).await.unwrap();
+    manager
+        .create_note("folder/note", &mut notes)
+        .await
+        .unwrap();
 
     // Create a manual file inside the same folder so it is not empty
     let other_file = temp.path().join("folder/another.txt");
     std::fs::write(&other_file, "content").unwrap();
 
     // Deleting the note should succeed, but parent folder should remain because it's not empty
-    manager.delete_note("folder/note", &mut notes).await.unwrap();
+    manager
+        .delete_note("folder/note", &mut notes)
+        .await
+        .unwrap();
 
     assert!(temp.path().join("folder").exists());
     assert!(other_file.exists());
@@ -1495,7 +1593,9 @@ async fn test_delete_note_not_found_on_disk() {
     let manager = NotebookManager::new(temp.path());
     let mut notes = Vec::new();
 
-    let res = manager.delete_note("non_existent_folder/file", &mut notes).await;
+    let res = manager
+        .delete_note("non_existent_folder/file", &mut notes)
+        .await;
     assert!(res.is_err());
     assert!(matches!(res.unwrap_err(), EngineError::Validation { .. }));
 }
@@ -1506,7 +1606,9 @@ async fn test_move_note_source_not_found() {
     let manager = NotebookManager::new(temp.path());
     let mut notes = Vec::new();
 
-    let res = manager.move_note("non_existent", "target", &mut notes).await;
+    let res = manager
+        .move_note("non_existent", "target", &mut notes)
+        .await;
     assert!(res.is_err());
     assert!(matches!(res.unwrap_err(), EngineError::Validation { .. }));
 }
@@ -1532,7 +1634,12 @@ async fn test_load_metadata_persist_normalization_warning() {
 
     let load_res = manager.load_metadata().await.unwrap();
     assert!(load_res.warning.is_some());
-    assert!(load_res.warning.unwrap().contains("failed to persist normalized timestamps"));
+    assert!(
+        load_res
+            .warning
+            .unwrap()
+            .contains("failed to persist normalized timestamps")
+    );
 
     // Restore permissions so cleanup works
     let mut perms = std::fs::metadata(temp.path()).unwrap().permissions();
@@ -1560,7 +1667,11 @@ async fn test_move_note_target_exists_on_disk_only() {
         "Expected validation error for target exists on disk, got: {:?}",
         error
     );
-    assert!(error.to_string().contains("already exists at the target path"));
+    assert!(
+        error
+            .to_string()
+            .contains("already exists at the target path")
+    );
 }
 
 #[tokio::test]
@@ -1600,13 +1711,26 @@ async fn test_search_negative_query_terms() {
     let mut notes = Vec::new();
 
     manager.create_note("note1", &mut notes).await.unwrap();
-    manager.save_note_content("note1", "apple banana cherry").await.unwrap();
+    manager
+        .save_note_content("note1", "apple banana cherry")
+        .await
+        .unwrap();
 
     // Query with negative terms: should match note1 for fruit but filter out if negative term present
-    let results = search_index.search("apple -cherry", &notes, Duration::from_secs(0)).await.unwrap();
-    assert!(results.is_empty(), "Expected no results since cherry is negative term, got: {:?}", results);
+    let results = search_index
+        .search("apple -cherry", &notes, Duration::from_secs(0))
+        .await
+        .unwrap();
+    assert!(
+        results.is_empty(),
+        "Expected no results since cherry is negative term, got: {:?}",
+        results
+    );
 
-    let results = search_index.search("apple -date", &notes, Duration::from_secs(0)).await.unwrap();
+    let results = search_index
+        .search("apple -date", &notes, Duration::from_secs(0))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].rel_path, "note1");
 }
@@ -1619,7 +1743,10 @@ async fn test_search_missing_note_file_on_disk() {
     let mut notes = Vec::new();
 
     manager.create_note("note1", &mut notes).await.unwrap();
-    manager.save_note_content("note1", "apple banana").await.unwrap();
+    manager
+        .save_note_content("note1", "apple banana")
+        .await
+        .unwrap();
 
     // Delete the file from disk physically, but keep it in metadata
     let file_path = temp.path().join("note1/note.md");
@@ -1632,7 +1759,10 @@ async fn test_search_missing_note_file_on_disk() {
     notes[0].last_updated = None;
 
     // Running search should skip reading the missing file and continue without crashing
-    let results = search_index.search("apple", &notes, Duration::from_secs(0)).await.unwrap();
+    let results = search_index
+        .search("apple", &notes, Duration::from_secs(0))
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }
 

@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskItem {
@@ -27,31 +27,31 @@ impl TaskRegister {
         for (zero_idx, line) in content.lines().enumerate() {
             let line_number = zero_idx + 1;
             let trimmed = line.trim_start();
-            
+
             // Check list item marker (- or *)
             if !trimmed.starts_with("- ") && !trimmed.starts_with("* ") {
                 continue;
             }
-            
+
             let list_content = &trimmed[2..];
-            let is_task = list_content.starts_with("[ ]") 
-                || list_content.starts_with("[x]") 
+            let is_task = list_content.starts_with("[ ]")
+                || list_content.starts_with("[x]")
                 || list_content.starts_with("[X]");
-                
+
             if !is_task {
                 continue;
             }
 
             let is_completed = list_content.starts_with("[x]") || list_content.starts_with("[X]");
             let task_text = list_content[3..].trim();
-            
+
             if task_text.is_empty() {
                 continue;
             }
 
             // Extract due date if any
             let due_date = extract_due_date(task_text);
-            
+
             // Clean task text (remove due date indicator from display text if present)
             let cleaned_text = clean_task_text(task_text);
 
@@ -119,7 +119,7 @@ fn extract_due_date(text: &str) -> Option<String> {
 
 fn clean_task_text(text: &str) -> String {
     let mut cleaned = text.to_string();
-    
+
     // Remove due: YYYY-MM-DD
     if let Some(idx) = cleaned.find("due:") {
         let after_due = &cleaned[idx + 4..];
@@ -129,13 +129,13 @@ fn clean_task_text(text: &str) -> String {
         } else {
             after_due.get(0..10).unwrap_or("")
         };
-        
+
         if is_valid_date_format(date_part) {
             let replace_len = 4 + if has_space { 11 } else { 10 };
             cleaned.replace_range(idx..idx + replace_len, "");
         }
     }
-    
+
     // Remove @due(YYYY-MM-DD)
     if let Some(idx) = cleaned.find("@due(") {
         let rest = &cleaned[idx..];
@@ -156,9 +156,14 @@ fn is_valid_date_format(s: &str) -> bool {
         return false;
     }
     // Check YYYY-MM-DD pattern
-    bytes[4] == b'-' && bytes[7] == b'-'
-        && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit() && bytes[3].is_ascii_digit()
-        && bytes[5].is_ascii_digit() && bytes[6].is_ascii_digit()
-        && bytes[8].is_ascii_digit() && bytes[9].is_ascii_digit()
+    bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit()
+        && bytes[3].is_ascii_digit()
+        && bytes[5].is_ascii_digit()
+        && bytes[6].is_ascii_digit()
+        && bytes[8].is_ascii_digit()
+        && bytes[9].is_ascii_digit()
 }

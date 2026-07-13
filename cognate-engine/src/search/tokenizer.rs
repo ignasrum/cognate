@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser, Tag, Options};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TermContext {
@@ -67,9 +67,9 @@ fn stem_word(word: &str) -> String {
     if word.len() <= 3 {
         return word.to_string();
     }
-    
+
     let mut stemmed = word.to_string();
-    
+
     // Plurals / endings
     if stemmed.ends_with("sses") {
         stemmed.truncate(stemmed.len() - 2); // sses -> ss
@@ -78,10 +78,14 @@ fn stem_word(word: &str) -> String {
         stemmed.push('i'); // ies -> i
     } else if stemmed.ends_with("ss") {
         // Do nothing
-    } else if stemmed.ends_with('s') && !stemmed.ends_with("us") && !stemmed.ends_with("is") && !stemmed.ends_with("as") {
+    } else if stemmed.ends_with('s')
+        && !stemmed.ends_with("us")
+        && !stemmed.ends_with("is")
+        && !stemmed.ends_with("as")
+    {
         stemmed.pop(); // plurals s ->
     }
-    
+
     // Gerunds and past tense
     if stemmed.ends_with("eed") {
         if stemmed.len() > 4 {
@@ -98,6 +102,6 @@ fn stem_word(word: &str) -> String {
             stemmed.push('e');
         }
     }
-    
+
     stemmed
 }

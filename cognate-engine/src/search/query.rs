@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use super::index::{InvertedIndex, DocId};
+use super::index::{DocId, InvertedIndex};
 use super::tokenizer::tokenize_string;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct SearchHit {
@@ -8,11 +8,7 @@ pub struct SearchHit {
     pub score: f32,
 }
 
-pub fn execute_search(
-    index: &InvertedIndex,
-    query_str: &str,
-    limit: usize,
-) -> Vec<SearchHit> {
+pub fn execute_search(index: &InvertedIndex, query_str: &str, limit: usize) -> Vec<SearchHit> {
     let raw_tokens = query_str.split_whitespace().collect::<Vec<&str>>();
     if raw_tokens.is_empty() {
         return Vec::new();
@@ -20,7 +16,7 @@ pub fn execute_search(
 
     let mut positive_terms = Vec::new();
     let mut negative_terms = Vec::new();
-    
+
     let mut is_not_modifier = false;
     for token in raw_tokens {
         let cleaned = token.to_lowercase();
@@ -53,7 +49,7 @@ pub fn execute_search(
     // Gather all documents matching positive terms
     let n_total_docs = index.documents.len() as f32;
     let avg_doc_len = index.get_avg_doc_length();
-    
+
     // BM25 parameters
     let k1: f32 = 1.2;
     let b: f32 = 0.75;
@@ -117,7 +113,11 @@ pub fn execute_search(
         .collect();
 
     // Sort by score descending
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits.truncate(limit);
 
     hits

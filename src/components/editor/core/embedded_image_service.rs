@@ -119,8 +119,7 @@ impl EmbeddedImageWorkflow {
             tasks.push(Task::perform(
                 async move {
                     let result = cognate_engine::storage::AttachmentManager::read_image_bytes(
-                        &path,
-                        &rel_path,
+                        &path, &rel_path,
                     )
                     .await
                     .map_err(|err| err.to_string());
@@ -134,10 +133,8 @@ impl EmbeddedImageWorkflow {
     }
 
     pub fn insert_image_handle(&mut self, image_id: String, bytes: Vec<u8>) {
-        self.image_handles.insert(
-            image_id,
-            iced::widget::image::Handle::from_bytes(bytes),
-        );
+        self.image_handles
+            .insert(image_id, iced::widget::image::Handle::from_bytes(bytes));
     }
 
     pub fn dereferenced_for_action(

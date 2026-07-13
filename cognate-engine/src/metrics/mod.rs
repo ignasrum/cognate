@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct DocumentMetrics {
@@ -98,7 +98,7 @@ fn count_syllables(word: &str) -> usize {
         .filter(|c| c.is_alphabetic())
         .collect::<String>()
         .to_lowercase();
-        
+
     let chars: Vec<char> = cleaned.chars().collect();
     if chars.is_empty() {
         return 0;

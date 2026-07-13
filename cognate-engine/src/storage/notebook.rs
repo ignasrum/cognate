@@ -1,9 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -243,7 +243,9 @@ fn build_atomic_temp_path(target_path: &Path) -> Result<PathBuf, std::io::Error>
 
 async fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error> {
     if let Some(parent) = to.parent()
-        && tokio::fs::try_exists(&parent.join(FAIL_ATOMIC_RENAME_MARKER)).await.unwrap_or(false)
+        && tokio::fs::try_exists(&parent.join(FAIL_ATOMIC_RENAME_MARKER))
+            .await
+            .unwrap_or(false)
         && to.file_name().and_then(|name| name.to_str()) != Some(METADATA_BACKUP_FILE_NAME)
     {
         return Err(std::io::Error::other(format!(
@@ -281,16 +283,18 @@ async fn write_text_file_atomically(target_path: &Path, content: &str) -> Result
         ));
     }
 
-    atomic_write_string(target_path, content).await.map_err(|error| {
-        EngineError::storage(
-            "atomic write",
-            format!(
-                "Failed to atomically write '{}': {}",
-                target_path.display(),
-                error
-            ),
-        )
-    })
+    atomic_write_string(target_path, content)
+        .await
+        .map_err(|error| {
+            EngineError::storage(
+                "atomic write",
+                format!(
+                    "Failed to atomically write '{}': {}",
+                    target_path.display(),
+                    error
+                ),
+            )
+        })
 }
 
 async fn atomic_write_bytes(target_path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
@@ -305,7 +309,10 @@ async fn atomic_write_bytes(target_path: &Path, content: &[u8]) -> Result<(), st
     Ok(())
 }
 
-async fn write_bytes_file_atomically(target_path: &Path, content: &[u8]) -> Result<(), EngineError> {
+async fn write_bytes_file_atomically(
+    target_path: &Path,
+    content: &[u8],
+) -> Result<(), EngineError> {
     if let Some(parent) = target_path.parent()
         && let Err(error) = tokio::fs::create_dir_all(parent).await
     {
@@ -319,21 +326,26 @@ async fn write_bytes_file_atomically(target_path: &Path, content: &[u8]) -> Resu
         ));
     }
 
-    atomic_write_bytes(target_path, content).await.map_err(|error| {
-        EngineError::storage(
-            "atomic write",
-            format!(
-                "Failed to atomically write '{}': {}",
-                target_path.display(),
-                error
-            ),
-        )
-    })
+    atomic_write_bytes(target_path, content)
+        .await
+        .map_err(|error| {
+            EngineError::storage(
+                "atomic write",
+                format!(
+                    "Failed to atomically write '{}': {}",
+                    target_path.display(),
+                    error
+                ),
+            )
+        })
 }
 
 async fn load_engine_state_from_disk(notebook_path: &Path) -> NotebookEngineState {
     let index_file_path = notebook_path.join(".cognate_index.bin");
-    if tokio::fs::try_exists(&index_file_path).await.unwrap_or(false) {
+    if tokio::fs::try_exists(&index_file_path)
+        .await
+        .unwrap_or(false)
+    {
         if let Ok(bytes) = tokio::fs::read(&index_file_path).await {
             if let Ok(state) = NotebookEngineState::load_from_bytes(&bytes) {
                 return state;
@@ -351,7 +363,10 @@ async fn save_engine_state_to_disk(notebook_path: &Path, state: &NotebookEngineS
     }
 }
 
-async fn sync_engine_metadata(notebook_path: &Path, notes: &[NoteMetadata]) -> Result<(), EngineError> {
+async fn sync_engine_metadata(
+    notebook_path: &Path,
+    notes: &[NoteMetadata],
+) -> Result<(), EngineError> {
     let mut engine_state = load_engine_state_from_disk(notebook_path).await;
     let mut changed = false;
 
@@ -374,15 +389,27 @@ async fn sync_engine_metadata(notebook_path: &Path, notes: &[NoteMetadata]) -> R
     // Sync labels and timestamps
     for note in notes {
         let needs_indexing = match engine_state.search_index.documents.get(&note.rel_path) {
-            Some(doc_meta) => doc_meta.last_updated != note.last_updated || doc_meta.labels != note.labels,
+            Some(doc_meta) => {
+                doc_meta.last_updated != note.last_updated || doc_meta.labels != note.labels
+            }
             None => true,
         };
 
         if needs_indexing {
             let note_file_path = notebook_path.join(&note.rel_path).join("note.md");
-            if tokio::fs::try_exists(&note_file_path).await.unwrap_or(false) {
-                let content = tokio::fs::read_to_string(&note_file_path).await.unwrap_or_default();
-                engine_state.process_document(&note.rel_path, &content, &note.labels, note.last_updated.clone());
+            if tokio::fs::try_exists(&note_file_path)
+                .await
+                .unwrap_or(false)
+            {
+                let content = tokio::fs::read_to_string(&note_file_path)
+                    .await
+                    .unwrap_or_default();
+                engine_state.process_document(
+                    &note.rel_path,
+                    &content,
+                    &note.labels,
+                    note.last_updated.clone(),
+                );
                 changed = true;
             }
         }
@@ -403,16 +430,18 @@ async fn snapshot_known_good_metadata(
         return Ok(());
     }
 
-    let existing_metadata = tokio::fs::read_to_string(metadata_path).await.map_err(|error| {
-        EngineError::recovery(
-            "metadata snapshot",
-            format!(
-                "Failed to read existing metadata at '{}' before backup: {}",
-                metadata_path.display(),
-                error
-            ),
-        )
-    })?;
+    let existing_metadata = tokio::fs::read_to_string(metadata_path)
+        .await
+        .map_err(|error| {
+            EngineError::recovery(
+                "metadata snapshot",
+                format!(
+                    "Failed to read existing metadata at '{}' before backup: {}",
+                    metadata_path.display(),
+                    error
+                ),
+            )
+        })?;
 
     serde_json::from_str::<NotebookMetadata>(&existing_metadata).map_err(|error| {
         EngineError::recovery(
@@ -425,16 +454,18 @@ async fn snapshot_known_good_metadata(
         )
     })?;
 
-    write_text_file_atomically(backup_path, &existing_metadata).await.map_err(|error| {
-        EngineError::recovery(
-            "metadata snapshot",
-            format!(
-                "Failed to update metadata recovery copy at '{}': {}",
-                backup_path.display(),
-                error
-            ),
-        )
-    })
+    write_text_file_atomically(backup_path, &existing_metadata)
+        .await
+        .map_err(|error| {
+            EngineError::recovery(
+                "metadata snapshot",
+                format!(
+                    "Failed to update metadata recovery copy at '{}': {}",
+                    backup_path.display(),
+                    error
+                ),
+            )
+        })
 }
 
 async fn save_metadata(notebook_path: &Path, notes: &[NoteMetadata]) -> Result<(), EngineError> {
@@ -545,7 +576,10 @@ async fn rollback_rename(
     notebook_root: &Path,
     fail_marker: &str,
 ) -> Result<(), EngineError> {
-    if tokio::fs::try_exists(&notebook_root.join(fail_marker)).await.unwrap_or(false) {
+    if tokio::fs::try_exists(&notebook_root.join(fail_marker))
+        .await
+        .unwrap_or(false)
+    {
         return Err(EngineError::recovery(
             "rollback rename",
             format!(
@@ -556,17 +590,19 @@ async fn rollback_rename(
         ));
     }
 
-    tokio::fs::rename(staged_or_new_path, original_path).await.map_err(|error| {
-        EngineError::recovery(
-            "rollback rename",
-            format!(
-                "Failed to rollback filesystem rename from '{}' to '{}': {}",
-                staged_or_new_path.display(),
-                original_path.display(),
-                error
-            ),
-        )
-    })
+    tokio::fs::rename(staged_or_new_path, original_path)
+        .await
+        .map_err(|error| {
+            EngineError::recovery(
+                "rollback rename",
+                format!(
+                    "Failed to rollback filesystem rename from '{}' to '{}': {}",
+                    staged_or_new_path.display(),
+                    original_path.display(),
+                    error
+                ),
+            )
+        })
 }
 
 pub struct NotebookManager {
@@ -683,15 +719,15 @@ impl NotebookManager {
         let mut metadata_changed = false;
 
         for note in &mut notes {
-            let note_file_path = self.notebook_path
-                .join(&note.rel_path)
-                .join("note.md");
+            let note_file_path = self.notebook_path.join(&note.rel_path).join("note.md");
             let note_file_modified_time = tokio::fs::metadata(note_file_path)
                 .await
                 .ok()
                 .and_then(|file_metadata| file_metadata.modified().ok());
-            let reconciled_last_updated =
-                reconcile_last_updated_timestamp(note.last_updated.as_deref(), note_file_modified_time);
+            let reconciled_last_updated = reconcile_last_updated_timestamp(
+                note.last_updated.as_deref(),
+                note_file_modified_time,
+            );
 
             if note.last_updated != reconciled_last_updated {
                 note.last_updated = reconciled_last_updated;
@@ -741,15 +777,25 @@ impl NotebookManager {
     pub async fn load_note_content(&self, rel_path: &str) -> Result<String, EngineError> {
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let note_file_path = self.notebook_path.join(rel_path_buf).join("note.md");
-        tokio::fs::read_to_string(&note_file_path).await.map_err(|err| {
-            EngineError::storage(
-                "load note content",
-                format!("Failed to read note file '{}': {}", note_file_path.display(), err),
-            )
-        })
+        tokio::fs::read_to_string(&note_file_path)
+            .await
+            .map_err(|err| {
+                EngineError::storage(
+                    "load note content",
+                    format!(
+                        "Failed to read note file '{}': {}",
+                        note_file_path.display(),
+                        err
+                    ),
+                )
+            })
     }
 
-    pub async fn create_note(&self, rel_path: &str, metadata: &mut Vec<NoteMetadata>) -> Result<NoteMetadata, EngineError> {
+    pub async fn create_note(
+        &self,
+        rel_path: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<NoteMetadata, EngineError> {
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
         let note_file_path = note_dir_path.join("note.md");
@@ -759,7 +805,8 @@ impl NotebookManager {
             &note_dir_path,
             rel_path,
             "Cannot create note outside the notebook directory:",
-        ).await?;
+        )
+        .await?;
 
         if metadata.iter().any(|note| note.rel_path == rel_path) {
             return Err(EngineError::validation(
@@ -771,7 +818,11 @@ impl NotebookManager {
             ));
         }
 
-        if tokio::fs::try_exists(&note_dir_path).await.unwrap_or(false) || tokio::fs::try_exists(&note_file_path).await.unwrap_or(false) {
+        if tokio::fs::try_exists(&note_dir_path).await.unwrap_or(false)
+            || tokio::fs::try_exists(&note_file_path)
+                .await
+                .unwrap_or(false)
+        {
             return Err(EngineError::validation(
                 "create note",
                 format!("A directory or file already exists at '{}'.", rel_path),
@@ -810,8 +861,7 @@ impl NotebookManager {
                     "create note rollback",
                     format!(
                         "Failed to save metadata after creating note: {}. Rollback cleanup failed: {}",
-                        error,
-                        cleanup_error
+                        error, cleanup_error
                     ),
                 ));
             }
@@ -824,7 +874,11 @@ impl NotebookManager {
         Ok(new_note_metadata)
     }
 
-    pub async fn delete_note(&self, rel_path: &str, metadata: &mut Vec<NoteMetadata>) -> Result<(), EngineError> {
+    pub async fn delete_note(
+        &self,
+        rel_path: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<(), EngineError> {
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
 
@@ -889,7 +943,8 @@ impl NotebookManager {
                         &note_dir_path,
                         &self.notebook_path,
                         FAIL_DELETE_ROLLBACK_MARKER,
-                    ).await
+                    )
+                    .await
                 {
                     return Err(EngineError::recovery(
                         "delete note rollback",
@@ -915,20 +970,25 @@ impl NotebookManager {
         Ok(())
     }
 
-    pub async fn move_note(&self, from_rel: &str, to_rel: &str, metadata: &mut Vec<NoteMetadata>) -> Result<String, EngineError> {
+    pub async fn move_note(
+        &self,
+        from_rel: &str,
+        to_rel: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<String, EngineError> {
         let from_rel_buf = validate_relative_path("current relative path", from_rel)?;
         let to_rel_buf = validate_relative_path("new relative path", to_rel)?;
 
         let current_fs_path = self.notebook_path.join(&from_rel_buf);
         let new_fs_path = self.notebook_path.join(&to_rel_buf);
 
-        if !tokio::fs::try_exists(&current_fs_path).await.unwrap_or(false) {
+        if !tokio::fs::try_exists(&current_fs_path)
+            .await
+            .unwrap_or(false)
+        {
             return Err(EngineError::validation(
                 "move note",
-                format!(
-                    "Item at path '{}' not found on the filesystem.",
-                    from_rel
-                ),
+                format!("Item at path '{}' not found on the filesystem.", from_rel),
             ));
         }
 
@@ -946,10 +1006,7 @@ impl NotebookManager {
             } else {
                 return Err(EngineError::storage(
                     "move note",
-                    format!(
-                        "Failed to canonicalize current item path: '{}'",
-                        from_rel
-                    ),
+                    format!("Failed to canonicalize current item path: '{}'", from_rel),
                 ));
             }
 
@@ -958,29 +1015,25 @@ impl NotebookManager {
                 &new_fs_path,
                 to_rel,
                 "Cannot move/rename item to path outside the notebook directory:",
-            ).await?;
+            )
+            .await?;
         }
 
         if tokio::fs::try_exists(&new_fs_path).await.unwrap_or(false) {
-            if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(&self.notebook_path).await {
+            if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(&self.notebook_path).await
+            {
                 if let Ok(canonical_new_fs_path) = tokio::fs::canonicalize(&new_fs_path).await
                     && canonical_new_fs_path.starts_with(&canonical_notebook_path)
                 {
                     return Err(EngineError::validation(
                         "move note",
-                        format!(
-                            "An item already exists at the target path '{}'.",
-                            to_rel
-                        ),
+                        format!("An item already exists at the target path '{}'.", to_rel),
                     ));
                 }
             } else {
                 return Err(EngineError::validation(
                     "move note",
-                    format!(
-                        "An item already exists at the target path '{}'.",
-                        to_rel
-                    ),
+                    format!("An item already exists at the target path '{}'.", to_rel),
                 ));
             }
         }
@@ -1000,7 +1053,9 @@ impl NotebookManager {
         }
 
         let previous_notes = metadata.clone();
-        let is_moving_note_dir = tokio::fs::try_exists(&current_fs_path.join("note.md")).await.unwrap_or(false);
+        let is_moving_note_dir = tokio::fs::try_exists(&current_fs_path.join("note.md"))
+            .await
+            .unwrap_or(false);
 
         if let Err(error) = tokio::fs::rename(&current_fs_path, &new_fs_path).await {
             return Err(EngineError::storage(
@@ -1042,7 +1097,9 @@ impl NotebookManager {
                     &current_fs_path,
                     &self.notebook_path,
                     FAIL_MOVE_ROLLBACK_MARKER,
-                ).await {
+                )
+                .await
+                {
                     return Err(EngineError::recovery(
                         "move note rollback",
                         format!(
@@ -1058,7 +1115,11 @@ impl NotebookManager {
         Ok(to_rel.to_string())
     }
 
-    pub async fn save_note_content(&self, rel_path: &str, content: &str) -> Result<(), EngineError> {
+    pub async fn save_note_content(
+        &self,
+        rel_path: &str,
+        content: &str,
+    ) -> Result<(), EngineError> {
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let full_note_path = self.notebook_path.join(rel_path_buf).join("note.md");
 
