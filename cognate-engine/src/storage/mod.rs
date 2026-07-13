@@ -1,4 +1,5 @@
 pub mod attachments;
+pub mod fs_utils;
 pub mod notebook;
 
 pub use attachments::AttachmentManager;
