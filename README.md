@@ -1,6 +1,6 @@
 # cognate
 
-Cognate is a local-first note taking desktop app built with Rust and Iced. Notes are stored as folders on disk, edited as Markdown, and visualized through label-based relationships.
+Cognate is a local-first desktop note-taking app built with Rust and Iced for organizing Markdown notes on disk and exploring how they connect through labels.
 
 ## Features
 

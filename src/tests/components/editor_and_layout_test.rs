@@ -41,6 +41,7 @@ mod tests {
         let messages = vec![
             EditorMessage::AboutButtonClicked,
             EditorMessage::MarkdownLinkClicked("https://example.com".to_string()),
+            EditorMessage::Dummy,
             EditorMessage::ToggleVisualizer,
             EditorMessage::NewNote,
             EditorMessage::NewNoteInputChanged("new/path".to_string()),

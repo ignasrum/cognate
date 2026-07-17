@@ -405,7 +405,67 @@ pub(super) fn build_markdown_preview_content(
     images: &HashMap<String, String>,
 ) -> String {
     let _ = images;
-    normalize_html_line_break_tags(markdown)
+    normalize_html_line_break_tags(&linkify_bare_urls(markdown))
+}
+
+fn linkify_bare_urls(markdown: &str) -> String {
+    let mut result = String::with_capacity(markdown.len());
+    let mut in_fenced_code_block = false;
+
+    for line in markdown.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let trimmed = content.trim_start();
+
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fenced_code_block = !in_fenced_code_block;
+            result.push_str(line);
+        } else if in_fenced_code_block {
+            result.push_str(line);
+        } else {
+            result.push_str(&linkify_bare_urls_in_line(content));
+            if line.ends_with('\n') {
+                result.push('\n');
+            }
+        }
+    }
+
+    result
+}
+
+fn linkify_bare_urls_in_line(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let mut cursor = 0;
+
+    for (index, _) in line.match_indices(char::is_whitespace) {
+        let token_start = if cursor == 0 { 0 } else { cursor };
+        let token_end = index;
+        append_linkified_token(&mut result, &line[token_start..token_end]);
+        result.push_str(&line[index..index + line[index..].chars().next().unwrap().len_utf8()]);
+        cursor = index + line[index..].chars().next().unwrap().len_utf8();
+    }
+
+    append_linkified_token(&mut result, &line[cursor..]);
+    result
+}
+
+fn append_linkified_token(result: &mut String, token: &str) {
+    let is_url = token.starts_with("http://") || token.starts_with("https://");
+    if !is_url {
+        result.push_str(token);
+        return;
+    }
+
+    let punctuation_len = token
+        .chars()
+        .rev()
+        .take_while(|character| matches!(character, '.' | ',' | ';' | ':' | '!' | '?'))
+        .map(char::len_utf8)
+        .sum::<usize>();
+    let url_end = token.len().saturating_sub(punctuation_len);
+    result.push('<');
+    result.push_str(&token[..url_end]);
+    result.push('>');
+    result.push_str(&token[url_end..]);
 }
 
 pub(super) fn normalize_html_line_break_tags(markdown: &str) -> String {
