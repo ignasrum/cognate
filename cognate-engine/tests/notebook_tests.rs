@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cognate_engine::EngineError;
-use cognate_engine::storage::{NoteMetadata, NotebookManager};
+use cognate_engine::storage::{ConcurrencyManager, NoteMetadata, NotebookManager};
 use common::{
     NotebookTestHarness, TempTestDir, assert_note_md_exists, assert_note_md_not_exists,
     load_notes_or_panic, now_nanos,
@@ -410,6 +410,44 @@ async fn save_note_content_does_not_update_last_updated_when_content_is_unchange
     assert!(
         persisted_metadata.contains("\"last_updated\": \"2000-01-01T00:00:00Z\""),
         "save_note_content should not rewrite metadata when content is unchanged"
+    );
+}
+
+#[tokio::test]
+async fn note_content_save_releases_all_locks_after_completion() {
+    let harness = NotebookTestHarness::new("save_releases_locks");
+    let manager = harness.manager();
+
+    manager
+        .save_note_content("ai/summary", "generated summary")
+        .await
+        .expect("note content save should succeed");
+
+    let concurrency = ConcurrencyManager::new(harness.path());
+    assert!(concurrency.acquire_notebook().await.is_ok());
+    assert!(concurrency.acquire_note("ai/summary").await.is_ok());
+}
+
+#[tokio::test]
+async fn concurrent_note_saves_from_separate_managers_preserve_complete_files() {
+    let harness = NotebookTestHarness::new("concurrent_note_saves");
+    let first = harness.manager();
+    let second = harness.manager();
+
+    let (first_result, second_result) = tokio::join!(
+        first.save_note_content("one", "first complete content"),
+        second.save_note_content("two", "second complete content"),
+    );
+
+    first_result.expect("first concurrent note save should succeed");
+    second_result.expect("second concurrent note save should succeed");
+    assert_eq!(
+        std::fs::read_to_string(harness.path().join("one/note.md")).unwrap(),
+        "first complete content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(harness.path().join("two/note.md")).unwrap(),
+        "second complete content"
     );
 }
 

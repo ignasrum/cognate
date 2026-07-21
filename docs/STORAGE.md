@@ -12,6 +12,8 @@ A Cognate **Notebook** is represented by a single root directory on disk. Within
 <notebook_root>/
 ├── metadata.json
 ├── metadata.json.bak
+├── .cognate_index.bin
+├── .cognate_locks/
 └── <relative_note_path>/
     ├── note.md
     └── images/
@@ -24,7 +26,9 @@ A Cognate **Notebook** is represented by a single root directory on disk. Within
 3. **Note Folders (`<relative_note_path>/`)**: Every note resides inside its own subdirectory. Folders can be nested (e.g., `recipes/desert/pie`).
 4. **`note.md`**: The actual text content of the note is stored in a file named exactly `note.md` inside its corresponding note folder.
 5. **`images/`**: A subdirectory within each note folder dedicated to storing embedded media/images pasted or inserted into that specific note.
-6. **`<image_id>.<ext>`**: Automatically generated unique image files.
+6. **`.cognate_index.bin`**: Persisted search, task, and metrics state maintained by `cognate-engine`.
+7. **`.cognate_locks/`**: Stable advisory lock files used to coordinate cooperating Cognate processes. These files may remain after a process exits.
+8. **`<image_id>.<ext>`**: Automatically generated unique image files.
 
 ---
 
@@ -65,10 +69,32 @@ The metadata is serialized as a JSON object matching the `NotebookMetadata` stru
 
 ## 3. Storage Operations & Consistency Guarantees
 
-Cognate prioritizes data integrity and implements several layers of reliability mechanisms in `src/notebook/storage.rs` and `src/notebook/operations.rs`.
+Cognate prioritizes data integrity and implements several layers of reliability mechanisms in `cognate-engine/src/storage/notebook.rs`, `cognate-engine/src/storage/concurrency.rs`, and the desktop adapters under `src/notebook/`.
+
+### Concurrency and Cross-Process Writes
+
+`cognate-engine` coordinates cooperating Cognate clients with advisory lock files under
+`.cognate_locks/` in the notebook root. A notebook-wide lock protects metadata,
+structural note operations, and the shared `.cognate_index.bin` read-modify-write
+transaction. Note locks identify individual note paths. Current note-content saves
+take the notebook lock first and then the note lock because they update the shared
+index; attachment creation takes the note lock, while attachment deletion takes the
+notebook lock. Operations that need both locks always use notebook-then-note order.
+
+The lock is held for the complete logical mutation, including reads, atomic replacement,
+index synchronization, and rollback. Atomic replacement prevents partial files, while
+the advisory lock prevents a desktop, API, or TUI writer from silently overwriting a
+concurrent update. Lock files can remain after a crash; the OS releases the lock and a
+future client may reuse the same file. Clients should treat a lock timeout as a temporary
+conflict and retry or ask the user to resolve the competing edit.
+
+All writers must use `NotebookManager` (or an API built on it) rather than writing
+`note.md`, `metadata.json`, or `.cognate_index.bin` directly. These locks are advisory:
+they coordinate Cognate clients that honor this contract, but cannot stop unrelated
+programs from changing notebook files.
 
 ### A. Atomic Writes
-To prevent file corruption caused by partial writes (e.g., due to sudden application crashes or power loss), all file writes (`note.md` content and `metadata.json` files) are performed atomically:
+To prevent file corruption caused by partial writes (e.g., due to sudden application crashes or power loss), note, metadata, and engine-index writes are performed atomically:
 1. Write the payload to a temporary file in the target parent directory:
    `.{filename}.cognate_tmp_{process_id}_{timestamp_nanos}`
 2. Atomically rename the temporary file to the final destination file (using OS-level atomic rename capabilities via `fs::rename`).
@@ -102,7 +128,7 @@ During notebook load, Cognate reconciles differences between the persisted metad
 ## 4. Path Validation and Safety
 
 To prevent directory traversal attacks and unauthorized filesystem modifications:
-1. **Relative Path Constraints**: All paths are wrapped in the `NotebookRelativePath` type, which enforces validation rules:
+1. **Relative Path Constraints**: Engine paths are validated by `validate_relative_path`, which enforces:
    - Paths cannot be empty.
    - Absolute paths (starting with root or prefix) are rejected.
    - Component validation: Path components containing `.` (current directory) or `..` (parent directory) are strictly forbidden.
@@ -112,7 +138,7 @@ To prevent directory traversal attacks and unauthorized filesystem modifications
 
 ## 5. In-Memory Search Index and Cache
 
-For high-performance text searches across note contents, Cognate maintains an in-memory cache layer in `src/notebook/search.rs`:
+For high-performance text searches across note contents, Cognate maintains an in-memory cache layer in `cognate-engine/src/search/manager.rs`:
 - Note contents are cached locally alongside their filesystem modified time (`mtime`).
 - The search index automatically invalidates or refreshes entries if the note file is modified externally (validated on an interval).
 - Staging and renaming operations sync automatically with this index to ensure search results are up to date.
@@ -153,5 +179,4 @@ During text rendering or markdown preview (handled in `src/components/editor/cor
 To prevent unused image files from consuming disk space, Cognate detects when an image is deleted/replaced:
 1. When a user edit occurs, `EmbeddedImageWorkflow` compares the previous markdown image reference IDs against the new markdown text.
 2. If any image reference has been deleted/edited out, the image ID is added to a `pending_deletion_ids` queue.
-3. Upon confirming/committing the edit state change, Cognate physically removes the files from disk using `std::fs::remove_file` to keep the note's directory clean.
-
+3. Upon confirming/committing the edit state change, Cognate removes the files through `AttachmentManager`, which coordinates the deletion with the notebook lock.

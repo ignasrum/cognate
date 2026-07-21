@@ -28,6 +28,12 @@ pub enum EngineError {
         context: &'static str,
         detail: String,
     },
+    #[error("Lock unavailable for {resource} inside {context}: {detail}")]
+    LockUnavailable {
+        context: &'static str,
+        resource: String,
+        detail: String,
+    },
 }
 
 impl EngineError {
@@ -48,6 +54,18 @@ impl EngineError {
     pub fn recovery(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Recovery {
             context,
+            detail: detail.into(),
+        }
+    }
+
+    pub fn lock_unavailable(
+        context: &'static str,
+        resource: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::LockUnavailable {
+            context,
+            resource: resource.into(),
             detail: detail.into(),
         }
     }

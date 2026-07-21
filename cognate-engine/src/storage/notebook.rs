@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+use super::concurrency::ConcurrencyManager;
 use super::fs_utils::{
     ensure_path_within_notebook_if_canonicalizable, remove_empty_parent_directories,
     rollback_rename, validate_relative_path, write_bytes_file_atomically,
@@ -173,12 +174,13 @@ async fn load_engine_state_from_disk(notebook_path: &Path) -> NotebookEngineStat
     NotebookEngineState::new()
 }
 
-async fn save_engine_state_to_disk(notebook_path: &Path, state: &NotebookEngineState) {
+async fn save_engine_state_to_disk(
+    notebook_path: &Path,
+    state: &NotebookEngineState,
+) -> Result<(), EngineError> {
     let index_file_path = notebook_path.join(".cognate_index.bin");
-    if let Ok(bytes) = state.save_to_bytes() {
-        let bytes_ref: &[u8] = &bytes;
-        let _ = write_bytes_file_atomically(&index_file_path, bytes_ref).await;
-    }
+    let bytes = state.save_to_bytes()?;
+    write_bytes_file_atomically(&index_file_path, &bytes).await
 }
 
 async fn sync_engine_metadata(
@@ -239,7 +241,7 @@ async fn sync_engine_metadata(
     }
 
     if changed {
-        save_engine_state_to_disk(notebook_path, &engine_state).await;
+        save_engine_state_to_disk(notebook_path, &engine_state).await?;
     }
 
     Ok(())
@@ -355,12 +357,14 @@ fn build_transaction_staging_path(
 
 pub struct NotebookManager {
     notebook_path: PathBuf,
+    concurrency: ConcurrencyManager,
 }
 
 impl NotebookManager {
     pub fn new(path: &Path) -> Self {
         Self {
             notebook_path: path.to_path_buf(),
+            concurrency: ConcurrencyManager::new(path),
         }
     }
 
@@ -368,11 +372,13 @@ impl NotebookManager {
         &self.notebook_path
     }
 
-    pub async fn load_engine_state(&self) -> NotebookEngineState {
-        load_engine_state_from_disk(&self.notebook_path).await
+    pub async fn load_engine_state(&self) -> Result<NotebookEngineState, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
+        Ok(load_engine_state_from_disk(&self.notebook_path).await)
     }
 
-    pub async fn save_engine_state(&self, state: &NotebookEngineState) {
+    pub async fn save_engine_state(&self, state: &NotebookEngineState) -> Result<(), EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         save_engine_state_to_disk(&self.notebook_path, state).await
     }
 
@@ -385,6 +391,7 @@ impl NotebookManager {
     }
 
     pub async fn load_metadata(&self) -> Result<MetadataLoadResult, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         let file_path = self.notebook_path.join(METADATA_FILE_NAME);
         let backup_path = self.notebook_path.join(METADATA_BACKUP_FILE_NAME);
         cleanup_stale_staged_delete_entries(&self.notebook_path).await;
@@ -533,6 +540,7 @@ impl NotebookManager {
     }
 
     pub async fn save_metadata(&self, notes: &[NoteMetadata]) -> Result<(), EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         save_metadata(&self.notebook_path, notes).await
     }
 
@@ -558,6 +566,7 @@ impl NotebookManager {
         rel_path: &str,
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<NoteMetadata, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
         let note_file_path = note_dir_path.join("note.md");
@@ -641,6 +650,7 @@ impl NotebookManager {
         rel_path: &str,
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<(), EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
 
@@ -738,6 +748,7 @@ impl NotebookManager {
         to_rel: &str,
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<String, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
         let from_rel_buf = validate_relative_path("current relative path", from_rel)?;
         let to_rel_buf = validate_relative_path("new relative path", to_rel)?;
 
@@ -881,7 +892,9 @@ impl NotebookManager {
         rel_path: &str,
         content: &str,
     ) -> Result<(), EngineError> {
+        let _notebook_lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
+        let _note_lock = self.concurrency.acquire_note(rel_path).await?;
         let full_note_path = self.notebook_path.join(rel_path_buf).join("note.md");
 
         if let Some(parent) = full_note_path.parent()
@@ -920,7 +933,7 @@ impl NotebookManager {
             .map(|doc| doc.labels.clone())
             .unwrap_or_default();
         engine_state.process_document(rel_path, content, &labels, Some(last_updated));
-        save_engine_state_to_disk(&self.notebook_path, &engine_state).await;
+        save_engine_state_to_disk(&self.notebook_path, &engine_state).await?;
 
         Ok(())
     }

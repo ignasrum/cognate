@@ -90,6 +90,14 @@ impl From<cognate_engine::EngineError> for NotebookError {
             cognate_engine::EngineError::Recovery { context, detail } => {
                 NotebookError::Recovery { context, detail }
             }
+            cognate_engine::EngineError::LockUnavailable {
+                context,
+                resource,
+                detail,
+            } => NotebookError::Storage {
+                context,
+                detail: format!("{resource}: {detail}"),
+            },
         }
     }
 }

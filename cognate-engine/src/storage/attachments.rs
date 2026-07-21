@@ -2,6 +2,7 @@ use base64::Engine;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::concurrency::ConcurrencyManager;
 use crate::EngineError;
 
 fn generate_embedded_image_id() -> String {
@@ -55,6 +56,8 @@ impl AttachmentManager {
         let extension = image_extension_from_bytes(&image_bytes).unwrap_or("png");
         let image_id = generate_embedded_image_id();
         let file_name = format!("{image_id}.{extension}");
+        let concurrency = ConcurrencyManager::new(notebook_path);
+        let _lock = concurrency.acquire_note(rel_note_path).await?;
 
         let note_dir = notebook_path.join(rel_note_path);
         let images_dir = note_dir.join("images");
@@ -116,6 +119,8 @@ impl AttachmentManager {
         notebook_path: &Path,
         rel_path: &str,
     ) -> Result<(), EngineError> {
+        let concurrency = ConcurrencyManager::new(notebook_path);
+        let _lock = concurrency.acquire_notebook().await?;
         let full_path = notebook_path.join(rel_path);
 
         // Safety check to ensure we don't escape notebook_path

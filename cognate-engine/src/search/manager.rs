@@ -143,7 +143,7 @@ impl SearchIndexManager {
 
         let mut engine_state = match self.engine_state.take() {
             Some(state) => state,
-            None => manager.load_engine_state().await,
+            None => manager.load_engine_state().await?,
         };
 
         let mut changed = false;
@@ -187,7 +187,7 @@ impl SearchIndexManager {
         }
 
         if changed {
-            manager.save_engine_state(&engine_state).await;
+            manager.save_engine_state(&engine_state).await?;
         }
 
         self.engine_state = Some(engine_state.clone());

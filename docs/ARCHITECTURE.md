@@ -46,6 +46,19 @@ Visualizer:
 - `storage.rs`: metadata and note file persistence (see [STORAGE.md](STORAGE.md))
 - `search.rs`: search index cache and query matching
 
+### `cognate-engine/src/storage`
+
+- `notebook.rs`: shared async notebook persistence and transactional note mutations
+- `concurrency.rs`: cross-process advisory notebook and note locks
+- `attachments.rs`: embedded attachment persistence with lock coordination
+- `fs_utils.rs`: path validation and atomic filesystem writes
+
+All desktop, API, and TUI writers should use these engine APIs. Notebook-wide
+transactions protect metadata and the shared persisted index; note-content writes hold
+the notebook lock before the note lock so the index read-modify-write cannot overwrite
+another client's update. Lock acquisition waits up to five seconds before returning a
+typed lock-unavailable error.
+
 ## Data Model
 
 Primary persisted metadata shape (`NoteMetadata`):
@@ -69,6 +82,8 @@ This keeps UI behavior deterministic and testable through message transitions.
 ## Persistence and Consistency
 
 - Note content and metadata writes are explicit operations.
+- Cross-process advisory locks serialize mutations across cooperating Cognate clients;
+  atomic replacement prevents partial files but does not replace locking.
 - Metadata writes can be debounced in edit flows.
 - Shutdown path attempts a final flush before window close.
 - Search cache is refreshed from filesystem on interval and mutation hooks.
