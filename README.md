@@ -73,7 +73,7 @@ Example:
 - `api_url` is the API base URL, for example `http://127.0.0.1:8787`
 - `api_key` is the bearer key issued by `cognate-api`; keep this config file private and do not commit it
 
-When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, and search use `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Embedded image paste remains local-only until an API attachment endpoint is added.
+When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, search, and embedded attachments use `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Attachment uploads and downloads are authenticated and limited to supported image signatures.
 
 API note writes use content-hash revisions exposed as `ETag` values. Clients must send the revision they loaded in `If-Match`; stale writes receive `409 Conflict` and do not overwrite the server version. If the API is temporarily unreachable, API-mode note content is saved in the permissions-restricted `.cognate-api-queue.json` file beside the configuration and retried on a later save.
 

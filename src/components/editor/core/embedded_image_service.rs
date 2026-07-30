@@ -95,7 +95,12 @@ impl EmbeddedImageWorkflow {
         let note_dir = Path::new(notebook_path).join(selected_note_path);
 
         for image_ref in extract_embedded_image_ids(markdown_text) {
-            if resolve_embedded_image_reference(&note_dir, &image_ref).is_some() {
+            if crate::notebook::is_api_backend() {
+                if image_ref.starts_with("images/") && !image_ref.contains("..") {
+                    let rel_path = format!("{}/{}", selected_note_path, image_ref);
+                    self.images.insert(image_ref, rel_path);
+                }
+            } else if resolve_embedded_image_reference(&note_dir, &image_ref).is_some() {
                 let rel_path = format!("{}/{}", selected_note_path, image_ref);
                 self.images.insert(image_ref, rel_path);
             }
@@ -104,8 +109,23 @@ impl EmbeddedImageWorkflow {
 
     fn sync_embedded_image_handles(&mut self, notebook_path: &str) -> Task<Message> {
         if crate::notebook::is_api_backend() {
-            self.image_handles.clear();
-            return Task::none();
+            self.image_handles
+                .retain(|image_id, _| self.images.contains_key(image_id));
+            let mut tasks = Vec::new();
+            for (image_id, image_rel_path) in &self.images {
+                if self.image_handles.contains_key(image_id) {
+                    continue;
+                }
+                let rel_path = image_rel_path.clone();
+                let img_id = image_id.clone();
+                tasks.push(Task::perform(
+                    crate::notebook::download_attachment(notebook_path.to_string(), rel_path),
+                    move |result| {
+                        Message::AttachmentLoaded(img_id, result.map_err(|error| error.to_string()))
+                    },
+                ));
+            }
+            return Task::batch(tasks);
         }
 
         self.image_handles

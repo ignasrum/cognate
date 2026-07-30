@@ -31,6 +31,7 @@ pub use backend::configure_backend;
 pub(crate) use backend::is_api as is_api_backend;
 pub(crate) use backend::load_note_content;
 pub(crate) use backend::set_note_revision;
+pub(crate) use backend::{delete_attachment, download_attachment, upload_attachment};
 #[allow(unused_imports)]
 pub use error::{EngineResultExt, NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};

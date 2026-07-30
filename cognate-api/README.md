@@ -51,4 +51,13 @@ Authenticated client requests use:
 Authorization: Bearer cgnt_live_...
 ```
 
+Attachment clients use these authenticated routes:
+
+- `POST /v1/attachments?note=<note-path>` with raw image bytes to upload
+- `GET /v1/attachments?note=<note-path>` to list attachments
+- `GET /v1/attachments/<note-path>/images/<file>` to download an attachment
+- `DELETE /v1/attachments/<note-path>/images/<file>` to delete an attachment
+
+Uploads are limited to 16 MiB and supported image signatures. Downloads return an `ETag`; replacement requests use `If-Match`.
+
 When exposed externally, configure the reverse proxy to terminate HTTPS and forward to the configured loopback address and port. Do not expose the service’s local HTTP port directly.

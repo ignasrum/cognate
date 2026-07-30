@@ -191,3 +191,77 @@ async fn note_write_requires_a_revision_precondition() {
         .await;
     assert_eq!(response.status(), 428);
 }
+
+#[tokio::test]
+async fn attachment_lifecycle_routes_use_authenticated_engine_storage() {
+    let app = TestApp::new().await;
+    let client = app.provision("attachment-tests").await;
+    let png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+
+    let create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"with-image"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(create.status(), 201);
+
+    let upload = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/attachments?note=with-image")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "image/png")
+                .body(Body::from(png.clone()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(upload.status(), 201);
+    let upload_body = upload.into_body().collect().await.unwrap().to_bytes();
+    let metadata: serde_json::Value = serde_json::from_slice(&upload_body).unwrap();
+    let rel_path = metadata["rel_path"].as_str().unwrap().to_string();
+
+    let list = app
+        .request(bearer_request(
+            "GET",
+            "/v1/attachments?note=with-image",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(list.status(), 200);
+    let list_body = list.into_body().collect().await.unwrap().to_bytes();
+    let listed: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+
+    let download_uri = format!("/v1/attachments/with-image/{rel_path}");
+    let download = app
+        .request(bearer_request(
+            "GET",
+            &download_uri,
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(download.status(), 200);
+    assert_eq!(
+        download.into_body().collect().await.unwrap().to_bytes(),
+        png
+    );
+
+    let delete = app
+        .request(bearer_request(
+            "DELETE",
+            &download_uri,
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(delete.status(), 204);
+}

@@ -33,6 +33,28 @@ fn image_extension_from_bytes(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AttachmentMetadata {
+    pub rel_path: String,
+    pub media_type: String,
+    pub size: u64,
+    pub revision: String,
+}
+
+pub fn attachment_revision(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
+fn media_type_for_extension(extension: &str) -> &'static str {
+    match extension {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
 fn decode_base64_image_to_bytes(base64_data: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(base64_data)
@@ -54,6 +76,28 @@ impl AttachmentManager {
         })?;
 
         let extension = image_extension_from_bytes(&image_bytes).unwrap_or("png");
+        Self::save_image_bytes_with_extension(notebook_path, rel_note_path, &image_bytes, extension)
+            .await
+    }
+
+    pub async fn save_image_bytes(
+        notebook_path: &Path,
+        rel_note_path: &str,
+        image_bytes: &[u8],
+    ) -> Result<String, EngineError> {
+        let extension = image_extension_from_bytes(image_bytes).ok_or_else(|| {
+            EngineError::validation("save_image", "Unsupported or invalid image signature.")
+        })?;
+        Self::save_image_bytes_with_extension(notebook_path, rel_note_path, image_bytes, extension)
+            .await
+    }
+
+    async fn save_image_bytes_with_extension(
+        notebook_path: &Path,
+        rel_note_path: &str,
+        image_bytes: &[u8],
+        extension: &str,
+    ) -> Result<String, EngineError> {
         let image_id = generate_embedded_image_id();
         let file_name = format!("{image_id}.{extension}");
         let concurrency = ConcurrencyManager::new(notebook_path);
@@ -88,6 +132,109 @@ impl AttachmentManager {
             })?;
 
         Ok(format!("images/{}", file_name))
+    }
+
+    pub async fn list_attachments(
+        notebook_path: &Path,
+        rel_note_path: &str,
+    ) -> Result<Vec<AttachmentMetadata>, EngineError> {
+        let note_path = super::fs_utils::validate_relative_path("note path", rel_note_path)?;
+        let images_dir = notebook_path.join(note_path).join("images");
+        let mut entries = Vec::new();
+        let mut directory = match tokio::fs::read_dir(&images_dir).await {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+            Err(error) => return Err(EngineError::storage("list attachments", error.to_string())),
+        };
+        while let Some(entry) = directory
+            .next_entry()
+            .await
+            .map_err(|error| EngineError::storage("list attachments", error.to_string()))?
+        {
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|error| EngineError::storage("list attachments", error.to_string()))?;
+            if !file_type.is_file() {
+                continue;
+            }
+            let bytes = tokio::fs::read(entry.path())
+                .await
+                .map_err(|error| EngineError::storage("list attachments", error.to_string()))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let extension = name.rsplit('.').next().unwrap_or_default();
+            entries.push(AttachmentMetadata {
+                rel_path: format!("images/{name}"),
+                media_type: media_type_for_extension(extension).to_string(),
+                size: bytes.len() as u64,
+                revision: attachment_revision(&bytes),
+            });
+        }
+        entries.sort_by(|left, right| left.rel_path.cmp(&right.rel_path));
+        Ok(entries)
+    }
+
+    pub async fn read_attachment_bytes(
+        notebook_path: &Path,
+        rel_note_path: &str,
+        attachment_path: &str,
+    ) -> Result<Vec<u8>, EngineError> {
+        let note_path = super::fs_utils::validate_relative_path("note path", rel_note_path)?;
+        let attachment =
+            super::fs_utils::validate_relative_path("attachment path", attachment_path)?;
+        if !attachment.starts_with("images/") {
+            return Err(EngineError::validation(
+                "attachment path",
+                "attachment must be under images/",
+            ));
+        }
+        let full_relative_path = note_path.join(attachment);
+        Self::read_image_bytes(notebook_path, full_relative_path.to_string_lossy().as_ref()).await
+    }
+
+    pub async fn replace_attachment_bytes(
+        notebook_path: &Path,
+        rel_note_path: &str,
+        attachment_path: &str,
+        expected_revision: &str,
+        bytes: &[u8],
+    ) -> Result<String, EngineError> {
+        let note_path = super::fs_utils::validate_relative_path("note path", rel_note_path)?;
+        let attachment =
+            super::fs_utils::validate_relative_path("attachment path", attachment_path)?;
+        if !attachment.starts_with("images/") {
+            return Err(EngineError::validation(
+                "attachment path",
+                "attachment must be under images/",
+            ));
+        }
+        let concurrency = ConcurrencyManager::new(notebook_path);
+        let _lock = concurrency.acquire_note(rel_note_path).await?;
+        let full_path = notebook_path.join(&note_path).join(&attachment);
+        super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
+            notebook_path,
+            &full_path,
+            rel_note_path,
+            "Attachment path escapes notebook boundaries",
+        )
+        .await?;
+        let current = tokio::fs::read(&full_path)
+            .await
+            .map_err(|error| EngineError::storage("replace attachment", error.to_string()))?;
+        let current_revision = attachment_revision(&current);
+        if expected_revision != current_revision {
+            return Err(EngineError::conflict(
+                "replace attachment",
+                format!(
+                    "expected revision '{}' but found '{}'",
+                    expected_revision, current_revision
+                ),
+            ));
+        }
+        tokio::fs::write(&full_path, bytes)
+            .await
+            .map_err(|error| EngineError::storage("replace attachment", error.to_string()))?;
+        Ok(attachment_revision(bytes))
     }
 
     /// Reads raw image file bytes for UI rendering

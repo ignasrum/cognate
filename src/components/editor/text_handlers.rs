@@ -1,3 +1,4 @@
+use base64::Engine;
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Edit};
 use std::path::Path;
@@ -242,10 +243,25 @@ impl Editor {
         match clipboard_payload {
             Some(ClipboardPastePayload::ImageBase64(image_base64)) => {
                 if crate::notebook::is_api_backend() {
-                    return Task::done(Message::PastedImageSaved(Err(
-                        "Embedded image paste is unavailable when storage_backend is api"
-                            .to_string(),
-                    )));
+                    let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+                        return Task::none();
+                    };
+                    let notebook_path = state.state.notebook_path().to_string();
+                    return Task::perform(
+                        async move {
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(image_base64)
+                                .map_err(|error| error.to_string())?;
+                            crate::notebook::upload_attachment(
+                                notebook_path,
+                                selected_note_path,
+                                bytes,
+                            )
+                            .await
+                            .map_err(|error| error.to_string())
+                        },
+                        Message::PastedImageSaved,
+                    );
                 }
                 let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
                     return Task::none();
@@ -336,15 +352,25 @@ impl Editor {
             return state.with_preview_scroll_task(task);
         };
 
-        if crate::notebook::is_api_backend() {
-            return Task::done(Message::PastedImageSaved(Err(
-                "Embedded image paste is unavailable when storage_backend is api".to_string(),
-            )));
-        }
-
         let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
             return Task::none();
         };
+
+        if crate::notebook::is_api_backend() {
+            let notebook_path = state.state.notebook_path().to_string();
+            let note_path = selected_note_path.clone();
+            return Task::perform(
+                async move {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(image_base64)
+                        .map_err(|error| error.to_string())?;
+                    crate::notebook::upload_attachment(notebook_path, note_path, bytes)
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                Message::PastedImageSaved,
+            );
+        }
 
         let notebook_path = state.state.notebook_path().to_string();
         let note_path = selected_note_path;

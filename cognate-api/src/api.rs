@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
-use cognate_engine::storage::{NoteMetadata, NotebookManager};
+use cognate_engine::storage::{AttachmentManager, NoteMetadata, NotebookManager};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -59,6 +59,11 @@ pub struct SearchQuery {
     pub q: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AttachmentQuery {
+    pub note: String,
+}
+
 pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/v1/notes", get(list_notes).post(create_note))
@@ -68,6 +73,16 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/notes/move", post(move_note))
         .route("/v1/metadata", put(save_metadata))
+        .route(
+            "/v1/attachments",
+            get(list_attachments).post(upload_attachment),
+        )
+        .route(
+            "/v1/attachments/{*path}",
+            get(download_attachment)
+                .put(replace_attachment)
+                .delete(delete_attachment),
+        )
         .route("/v1/search", get(search))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
@@ -82,6 +97,134 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn list_attachments(
+    State(state): State<AppState>,
+    Query(query): Query<AttachmentQuery>,
+) -> Result<Json<Vec<cognate_engine::storage::AttachmentMetadata>>, ApiError> {
+    Ok(Json(
+        AttachmentManager::list_attachments(&state.notebook_path, &query.note).await?,
+    ))
+}
+
+fn split_attachment_path(path: &str) -> Result<(&str, String), ApiError> {
+    path.split_once("/images/")
+        .map(|(note, attachment)| (note, format!("images/{attachment}")))
+        .ok_or_else(|| ApiError::BadRequest("attachment path must contain /images/".to_string()))
+}
+
+async fn upload_attachment(
+    State(state): State<AppState>,
+    Query(query): Query<AttachmentQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<
+    (
+        StatusCode,
+        Json<cognate_engine::storage::AttachmentMetadata>,
+    ),
+    ApiError,
+> {
+    const MAX_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
+    if body.is_empty() || body.len() > MAX_ATTACHMENT_BYTES {
+        return Err(ApiError::BadRequest("invalid attachment size".to_string()));
+    }
+    let rel_path =
+        AttachmentManager::save_image_bytes(&state.notebook_path, &query.note, &body).await?;
+    let bytes =
+        AttachmentManager::read_attachment_bytes(&state.notebook_path, &query.note, &rel_path)
+            .await?;
+    let extension = rel_path.rsplit('.').next().unwrap_or_default().to_string();
+    let metadata = cognate_engine::storage::AttachmentMetadata {
+        rel_path,
+        media_type: headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or(match extension.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => "application/octet-stream",
+            })
+            .to_string(),
+        size: bytes.len() as u64,
+        revision: cognate_engine::storage::attachment_revision(&bytes),
+    };
+    Ok((StatusCode::CREATED, Json(metadata)))
+}
+
+async fn download_attachment(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let (note, attachment) = split_attachment_path(&path)?;
+    let bytes =
+        AttachmentManager::read_attachment_bytes(&state.notebook_path, note, &attachment).await?;
+    let revision = cognate_engine::storage::attachment_revision(&bytes);
+    let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
+    response.headers_mut().insert(
+        "etag",
+        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
+    );
+    Ok(response)
+}
+
+async fn replace_attachment(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    const MAX_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
+    if body.is_empty() || body.len() > MAX_ATTACHMENT_BYTES {
+        return Err(ApiError::BadRequest("invalid attachment size".to_string()));
+    }
+    let (note, attachment) = split_attachment_path(&path)?;
+    let current =
+        AttachmentManager::read_attachment_bytes(&state.notebook_path, note, &attachment).await?;
+    let expected = headers
+        .get("if-match")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim_matches('"'))
+        .ok_or(ApiError::PreconditionRequired)?;
+    if expected != cognate_engine::storage::attachment_revision(&current) {
+        return Err(ApiError::Conflict {
+            current_revision: cognate_engine::storage::attachment_revision(&current),
+            current_content: "attachment changed on server".to_string(),
+        });
+    }
+    AttachmentManager::replace_attachment_bytes(
+        &state.notebook_path,
+        note,
+        &attachment,
+        expected,
+        &body,
+    )
+    .await
+    .map_err(|error| match error {
+        cognate_engine::EngineError::Conflict { .. } => ApiError::Conflict {
+            current_revision: cognate_engine::storage::attachment_revision(&current),
+            current_content: "attachment changed on server".to_string(),
+        },
+        other => other.into(),
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_attachment(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let (note, attachment) = split_attachment_path(&path)?;
+    let full_path = std::path::Path::new(note).join(attachment);
+    let _ = AttachmentManager::delete_attachment(
+        &state.notebook_path,
+        full_path.to_string_lossy().as_ref(),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_client(

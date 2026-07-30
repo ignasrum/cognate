@@ -52,6 +52,11 @@ struct ApiConflict {
     current_content: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiAttachmentPayload {
+    rel_path: String,
+}
+
 static SELECTED_BACKEND: OnceLock<RwLock<SelectedBackend>> = OnceLock::new();
 
 fn backend_cell() -> &'static RwLock<SelectedBackend> {
@@ -155,6 +160,101 @@ fn note_endpoint(client: &ApiClient, rel_path: &str) -> Result<reqwest::Url, Not
         }
     }
     Ok(url)
+}
+
+fn attachment_endpoint(client: &ApiClient, rel_path: &str) -> Result<reqwest::Url, NotebookError> {
+    let mut url = endpoint(client, "/v1/attachments")?;
+    let mut segments = url
+        .path_segments_mut()
+        .map_err(|_| api_error("build attachment URL", "URL cannot be a base"))?;
+    for segment in rel_path.split('/') {
+        segments.push(segment);
+    }
+    drop(segments);
+    Ok(url)
+}
+
+pub(crate) async fn upload_attachment(
+    _notebook_path: String,
+    note_path: String,
+    bytes: Vec<u8>,
+) -> Result<String, NotebookError> {
+    let SelectedBackend::Api(client) = selected() else {
+        return Err(api_error(
+            "upload attachment",
+            "API backend is not selected",
+        ));
+    };
+    let mut url = endpoint(&client, "/v1/attachments")?;
+    url.query_pairs_mut().append_pair("note", &note_path);
+    let response = authorized(client.client.post(url).body(bytes), &client)
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .map_err(|error| api_error("upload attachment", error))?;
+    if !response.status().is_success() {
+        return Err(api_error(
+            "upload attachment",
+            format!("server returned HTTP {}", response.status()),
+        ));
+    }
+    Ok(response
+        .json::<ApiAttachmentPayload>()
+        .await
+        .map_err(|error| api_error("upload attachment", error))?
+        .rel_path)
+}
+
+pub(crate) async fn download_attachment(
+    _notebook_path: String,
+    rel_path: String,
+) -> Result<Vec<u8>, NotebookError> {
+    let SelectedBackend::Api(client) = selected() else {
+        return Err(api_error(
+            "download attachment",
+            "API backend is not selected",
+        ));
+    };
+    let response = authorized(
+        client.client.get(attachment_endpoint(&client, &rel_path)?),
+        &client,
+    )
+    .send()
+    .await
+    .map_err(|error| api_error("download attachment", error))?;
+    if !response.status().is_success() {
+        return Err(api_error(
+            "download attachment",
+            format!("server returned HTTP {}", response.status()),
+        ));
+    }
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| api_error("download attachment", error))
+}
+
+pub(crate) async fn delete_attachment(
+    _notebook_path: String,
+    rel_path: String,
+) -> Result<(), NotebookError> {
+    let SelectedBackend::Api(client) = selected() else {
+        return Err(api_error(
+            "delete attachment",
+            "API backend is not selected",
+        ));
+    };
+    send_empty(
+        authorized(
+            client
+                .client
+                .delete(attachment_endpoint(&client, &rel_path)?),
+            &client,
+        ),
+        "delete attachment",
+    )
+    .await
 }
 
 pub async fn load_metadata(notebook_path: String) -> Result<MetadataLoadResult, NotebookError> {

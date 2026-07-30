@@ -213,6 +213,15 @@ impl Editor {
                     .remove_image_path_for_id(&image_id)
                 {
                     if crate::notebook::is_api_backend() {
+                        let notebook_path = self.state.notebook_path().to_string();
+                        let rel = image_rel_path.clone();
+                        deletion_tasks.push(Task::perform(
+                            async move {
+                                let _ =
+                                    crate::notebook::delete_attachment(notebook_path, rel).await;
+                            },
+                            |_| Message::Dummy,
+                        ));
                         continue;
                     }
                     let path = PathBuf::from(self.state.notebook_path());
