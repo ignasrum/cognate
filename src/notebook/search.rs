@@ -163,6 +163,17 @@ pub async fn search_notes_with_snapshot(
     notes: Vec<SearchNote>,
     query: String,
 ) -> Vec<NoteSearchResult> {
+    if super::backend::is_api() {
+        return super::backend::search(notebook_path, notes, query).await;
+    }
+    search_notes_with_snapshot_local(notebook_path, notes, query).await
+}
+
+pub(crate) async fn search_notes_with_snapshot_local(
+    notebook_path: String,
+    notes: Vec<SearchNote>,
+    query: String,
+) -> Vec<NoteSearchResult> {
     let normalized_query = query.trim().to_lowercase();
     if normalized_query.is_empty() {
         return Vec::new();

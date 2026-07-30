@@ -16,7 +16,8 @@ base64 = "0.22.1"
 png = "0.17.16"
 thiserror = "2.0"
 tokio = { version = "1", features = ["fs", "sync", "rt"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 cognate-engine = { path = "cognate-engine" }
 
 [workspace]
-members = ["cognate-engine"]
+members = ["cognate-engine", "cognate-api"]

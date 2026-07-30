@@ -59,6 +59,14 @@ the notebook lock before the note lock so the index read-modify-write cannot ove
 another client's update. Lock acquisition waits up to five seconds before returning a
 typed lock-unavailable error.
 
+### `cognate-api`
+
+`cognate-api` is the local HTTP boundary for external clients. It binds to a configurable
+loopback address and port, authenticates Bearer client keys, stores only BLAKE3 digests
+and client metadata in SQLite, and delegates notebook mutations to `cognate-engine`.
+Public HTTPS termination is provided by an external reverse proxy; the API process does
+not expose a public listener or manage certificates.
+
 ## Data Model
 
 Primary persisted metadata shape (`NoteMetadata`):

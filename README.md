@@ -1,6 +1,6 @@
 # cognate
 
-Cognate is a local-first desktop note-taking app built with Rust and Iced for organizing Markdown notes on disk and exploring how they connect through labels.
+Cognate is a desktop personal knowledge service built with Rust and Iced for organizing Markdown notes on disk and exploring how they connect through labels.
 
 ## Features
 
@@ -59,13 +59,21 @@ Example:
 {
   "theme": "CatppuccinMacchiato",
   "notebook_path": "/home/{USER}/Documents/cognate/example_notebook",
-  "scale": 1.0
+  "scale": 1.0,
+  "storage_backend": "local",
+  "api_url": "http://127.0.0.1:8787",
+  "api_key": ""
 }
 ```
 
 - `theme` is the UI theme name
 - `notebook_path` points to your notes root directory
 - `scale` is the global UI scale and must be positive
+- `storage_backend` selects `local` filesystem storage or the Cognate API (`api`)
+- `api_url` is the API base URL, for example `http://127.0.0.1:8787`
+- `api_key` is the bearer key issued by `cognate-api`; keep this config file private and do not commit it
+
+When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, and search use `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Embedded image paste remains local-only until an API attachment endpoint is added.
 
 ## Documentation
 

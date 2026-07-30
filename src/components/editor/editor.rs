@@ -96,6 +96,7 @@ pub struct Editor {
 impl Editor {
     // Keep create method for internal use
     pub fn create(flags: Configuration) -> (Self, Task<Message>) {
+        crate::notebook::configure_backend(&flags);
         let notebook_path_clone = flags.notebook_path.clone();
         let (metadata_debounce_scheduler, metadata_debounce_events) =
             MetadataDebounceScheduler::new(METADATA_SAVE_DEBOUNCE_WINDOW);
@@ -205,11 +206,15 @@ impl Editor {
             }
 
             let mut deletion_tasks = Vec::new();
-            for image_id in self.embedded_image_workflow.take_pending_deletion_ids() {
+            let pending_deletion_ids = self.embedded_image_workflow.take_pending_deletion_ids();
+            for image_id in pending_deletion_ids {
                 if let Some(image_rel_path) = self
                     .embedded_image_workflow
                     .remove_image_path_for_id(&image_id)
                 {
+                    if crate::notebook::is_api_backend() {
+                        continue;
+                    }
                     let path = PathBuf::from(self.state.notebook_path());
                     let rel = image_rel_path.clone();
                     deletion_tasks.push(Task::perform(

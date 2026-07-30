@@ -3,7 +3,7 @@ mod tests {
     use crate::components::editor::note_coordinator;
     use crate::components::editor::{Editor, Message as EditorMessage};
     use crate::components::note_explorer;
-    use crate::configuration::Configuration;
+    use crate::configuration::{Configuration, StorageBackend};
     use crate::notebook::{
         self, MetadataLoadResult, NoteMetadata, NoteSearchResult, NotebookError,
     };
@@ -83,6 +83,9 @@ mod tests {
             scale: 1.0,
             config_path: "config.json".to_string(),
             version: "test".to_string(),
+            storage_backend: StorageBackend::Local,
+            api_url: String::new(),
+            api_key: String::new(),
         };
         let (editor, _initial_task) = Editor::create(cfg);
         editor

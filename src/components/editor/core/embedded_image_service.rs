@@ -103,6 +103,11 @@ impl EmbeddedImageWorkflow {
     }
 
     fn sync_embedded_image_handles(&mut self, notebook_path: &str) -> Task<Message> {
+        if crate::notebook::is_api_backend() {
+            self.image_handles.clear();
+            return Task::none();
+        }
+
         self.image_handles
             .retain(|image_id, _| self.images.contains_key(image_id));
 

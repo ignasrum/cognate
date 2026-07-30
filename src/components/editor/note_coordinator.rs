@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata, NotebookError};
-use cognate_engine::storage::NotebookManager;
 
 #[derive(Debug, Clone)]
 pub struct LoadedNotePayload {
@@ -20,22 +19,23 @@ pub async fn load_note_payload(
     notebook_path: String,
     selected_note_path: String,
 ) -> LoadedNotePayload {
-    let manager = NotebookManager::new(Path::new(&notebook_path));
-    let loaded_content = manager
-        .load_note_content(&selected_note_path)
-        .await
-        .unwrap_or_else(|_err| {
-            #[cfg(debug_assertions)]
-            eprintln!("Failed to read note file for editor: {}", _err);
-            String::new()
-        });
+    let loaded_content =
+        notebook::load_note_content(notebook_path.clone(), selected_note_path.clone())
+            .await
+            .unwrap_or_else(|_err| {
+                #[cfg(debug_assertions)]
+                eprintln!("Failed to read note file for editor: {}", _err);
+                String::new()
+            });
 
     // Legacy cleanup: embedded image state is now inferred from markdown.
     if let Ok(rel_path) =
         cognate_engine::storage::fs_utils::validate_relative_path("note path", &selected_note_path)
     {
-        let note_dir_path = Path::new(&notebook_path).join(rel_path);
-        let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
+        if !notebook::is_api_backend() {
+            let note_dir_path = Path::new(&notebook_path).join(rel_path);
+            let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
+        }
     }
 
     LoadedNotePayload {
@@ -63,7 +63,12 @@ pub async fn flush_for_shutdown(
     }
 
     if let Some(note_path) = content_note_path {
-        notebook::save_note_content_sync(notebook_path, &note_path, markdown_text).await?;
+        notebook::save_note_content(
+            notebook_path.to_string(),
+            note_path,
+            markdown_text.to_string(),
+        )
+        .await?;
     }
 
     save_metadata_snapshot(notebook_path, notes).await

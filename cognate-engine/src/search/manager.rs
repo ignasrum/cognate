@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use serde::Serialize;
+
 use crate::storage::{NoteMetadata, NotebookManager};
 use crate::{EngineError, NotebookEngineState};
 
@@ -13,7 +15,7 @@ struct CachedNote {
     modified_time: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchResultEntry {
     pub rel_path: String,
     pub snippet: String,

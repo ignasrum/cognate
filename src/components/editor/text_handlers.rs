@@ -241,6 +241,12 @@ impl Editor {
 
         match clipboard_payload {
             Some(ClipboardPastePayload::ImageBase64(image_base64)) => {
+                if crate::notebook::is_api_backend() {
+                    return Task::done(Message::PastedImageSaved(Err(
+                        "Embedded image paste is unavailable when storage_backend is api"
+                            .to_string(),
+                    )));
+                }
                 let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
                     return Task::none();
                 };
@@ -329,6 +335,12 @@ impl Editor {
             );
             return state.with_preview_scroll_task(task);
         };
+
+        if crate::notebook::is_api_backend() {
+            return Task::done(Message::PastedImageSaved(Err(
+                "Embedded image paste is unavailable when storage_backend is api".to_string(),
+            )));
+        }
 
         let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
             return Task::none();

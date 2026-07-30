@@ -5,7 +5,7 @@ mod tests {
     use crate::components::editor::{Editor, Message as EditorMessage};
     use crate::components::note_explorer;
     use crate::components::visualizer;
-    use crate::configuration::Configuration;
+    use crate::configuration::{Configuration, StorageBackend};
     use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
     use iced::widget::text_editor::Content;
 
@@ -17,6 +17,9 @@ mod tests {
             scale: 1.0,
             config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
+            storage_backend: StorageBackend::Local,
+            api_url: String::new(),
+            api_key: String::new(),
         };
         let _ = Editor::create(cfg_known);
 
@@ -26,6 +29,9 @@ mod tests {
             scale: 1.0,
             config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
+            storage_backend: StorageBackend::Local,
+            api_url: String::new(),
+            api_key: String::new(),
         };
         let _ = Editor::create(cfg_unknown);
     }

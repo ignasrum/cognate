@@ -15,6 +15,22 @@ pub struct Configuration {
     pub scale: f32,
     pub config_path: String,
     pub version: String,
+    pub storage_backend: StorageBackend,
+    pub api_url: String,
+    pub api_key: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    Local,
+    Api,
+}
+
+impl Default for StorageBackend {
+    fn default() -> Self {
+        Self::Local
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +40,12 @@ struct RawConfiguration {
     notebook_path: Option<String>,
     #[serde(default)]
     scale: Option<f32>,
+    #[serde(default)]
+    storage_backend: StorageBackend,
+    #[serde(default)]
+    api_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
 }
 
 #[cfg(test)]
@@ -114,12 +136,25 @@ pub fn read_configuration(file_path: &str) -> Result<Configuration, Box<dyn std:
         }
     };
 
+    let api_url = raw.api_url.unwrap_or_default();
+    let api_key = raw.api_key.unwrap_or_default();
+    if raw.storage_backend == StorageBackend::Api
+        && (api_url.trim().is_empty() || api_key.trim().is_empty())
+    {
+        return Err(invalid_config(
+            "API storage requires non-empty api_url and api_key values.",
+        ));
+    }
+
     Ok(Configuration {
         theme: raw.theme,
         notebook_path: raw.notebook_path.unwrap_or_default(),
         scale,
         config_path: file_path.to_string(),
         version,
+        storage_backend: raw.storage_backend,
+        api_url,
+        api_key,
     })
 }
 
