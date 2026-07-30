@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::components::editor::state::editor_state::EditorState;
+    use crate::components::editor::state::editor_state::{EditorState, NoteConflict};
     use crate::notebook::NoteMetadata;
 
     #[test]
@@ -122,5 +122,25 @@ mod tests {
         assert!(state.is_folder_path("work/sub", &notes));
         assert!(!state.is_folder_path("top", &notes));
         assert!(!state.is_folder_path("missing", &notes));
+    }
+
+    #[test]
+    fn conflict_dialog_preserves_both_versions_until_resolution() {
+        let mut state = EditorState::new();
+        state.show_conflict_dialog(NoteConflict {
+            note_path: "note".into(),
+            local_content: "local".into(),
+            server_content: "server".into(),
+            server_revision: "revision".into(),
+        });
+
+        assert!(state.is_conflict_dialog_open());
+        assert!(state.is_any_dialog_open());
+        assert_eq!(state.conflict().unwrap().local_content, "local");
+        assert_eq!(state.conflict().unwrap().server_content, "server");
+
+        state.hide_conflict_dialog();
+        assert!(!state.is_conflict_dialog_open());
+        assert!(state.conflict().is_none());
     }
 }

@@ -3,6 +3,8 @@ use native_dialog::{DialogBuilder, MessageLevel};
 
 use super::*;
 use crate::components::editor::LabelMutationRollback;
+use crate::components::editor::state::editor_state::NoteConflict;
+use crate::notebook::NotebookError;
 
 pub(super) fn handle_debounced_metadata(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
@@ -130,6 +132,23 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
         }
         Message::NoteContentSaved(result) => {
             if let Err(error) = result {
+                if let NotebookError::Conflict {
+                    context: _,
+                    local_content,
+                    server_content,
+                    server_revision,
+                } = error
+                {
+                    if let Some(note_path) = state.state.selected_note_path().cloned() {
+                        state.state.show_conflict_dialog(NoteConflict {
+                            note_path,
+                            local_content,
+                            server_content,
+                            server_revision,
+                        });
+                    }
+                    return Task::none();
+                }
                 report_persistence_error(
                     "Failed to Save Note Content",
                     &format!(
@@ -143,6 +162,20 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
             }
             Task::none()
         }
+        Message::ConflictCopySaved(result) => match result {
+            Ok(path) => {
+                state.state.hide_conflict_dialog();
+                eprintln!("Saved conflict copy as {path}");
+                state
+                    .note_explorer
+                    .update(note_explorer::Message::LoadNotes)
+                    .map(Message::NoteExplorerMsg)
+            }
+            Err(error) => {
+                report_persistence_error("Failed to Save Conflict Copy", &error.ui_message());
+                Task::none()
+            }
+        },
         Message::ScaleSaved(result) => {
             if let Err(error) = result {
                 report_persistence_error(

@@ -5,6 +5,7 @@ pub enum NotebookErrorKind {
     Validation,
     Storage,
     Recovery,
+    Conflict,
 }
 
 impl NotebookErrorKind {
@@ -13,6 +14,7 @@ impl NotebookErrorKind {
             Self::Validation => "Validation",
             Self::Storage => "Storage",
             Self::Recovery => "Recovery",
+            Self::Conflict => "Conflict",
         }
     }
 }
@@ -33,6 +35,13 @@ pub enum NotebookError {
     Recovery {
         context: &'static str,
         detail: String,
+    },
+    #[error("{context}: server revision {server_revision} conflicts with the local draft")]
+    Conflict {
+        context: &'static str,
+        local_content: String,
+        server_content: String,
+        server_revision: String,
     },
 }
 
@@ -59,11 +68,26 @@ impl NotebookError {
         }
     }
 
+    pub fn conflict(
+        context: &'static str,
+        local_content: impl Into<String>,
+        server_content: impl Into<String>,
+        server_revision: impl Into<String>,
+    ) -> Self {
+        Self::Conflict {
+            context,
+            local_content: local_content.into(),
+            server_content: server_content.into(),
+            server_revision: server_revision.into(),
+        }
+    }
+
     pub fn kind(&self) -> NotebookErrorKind {
         match self {
             Self::Validation { .. } => NotebookErrorKind::Validation,
             Self::Storage { .. } => NotebookErrorKind::Storage,
             Self::Recovery { .. } => NotebookErrorKind::Recovery,
+            Self::Conflict { .. } => NotebookErrorKind::Conflict,
         }
     }
 
@@ -98,6 +122,9 @@ impl From<cognate_engine::EngineError> for NotebookError {
                 context,
                 detail: format!("{resource}: {detail}"),
             },
+            cognate_engine::EngineError::Conflict { context, detail } => {
+                NotebookError::Storage { context, detail }
+            }
         }
     }
 }

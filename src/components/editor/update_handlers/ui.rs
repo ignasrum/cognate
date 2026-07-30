@@ -1,4 +1,5 @@
 use super::*;
+use crate::notebook;
 use std::process::Command;
 
 fn open_markdown_link(uri: &str) -> Result<(), String> {
@@ -61,6 +62,66 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
                 }
                 Message::Dummy
             })
+        }
+        Message::ConflictKeepServer => {
+            let Some(conflict) = state.state.conflict().cloned() else {
+                return Task::none();
+            };
+            notebook::set_note_revision(&conflict.note_path, &conflict.server_revision);
+            state.content = iced::widget::text_editor::Content::with_text(&conflict.server_content);
+            state.markdown_text = conflict.server_content;
+            state.undo_manager.initialize_history(&conflict.note_path);
+            state.state.hide_conflict_dialog();
+            state.sync_markdown_preview()
+        }
+        Message::ConflictRetryLocal => {
+            let Some(conflict) = state.state.conflict().cloned() else {
+                return Task::none();
+            };
+            notebook::set_note_revision(&conflict.note_path, &conflict.server_revision);
+            state.state.hide_conflict_dialog();
+            let notebook_path = state.state.notebook_path().to_string();
+            Task::perform(
+                async move {
+                    notebook::save_note_content(
+                        notebook_path,
+                        conflict.note_path,
+                        conflict.local_content,
+                    )
+                    .await
+                },
+                Message::NoteContentSaved,
+            )
+        }
+        Message::ConflictSaveCopy => {
+            let Some(conflict) = state.state.conflict().cloned() else {
+                return Task::none();
+            };
+            let notebook_path = state.state.notebook_path().to_string();
+            let mut notes = state.note_explorer.notes.clone();
+            let mut copy_path = format!("{}.conflict", conflict.note_path);
+            let mut suffix = 2;
+            while notes.iter().any(|note| note.rel_path == copy_path) {
+                copy_path = format!("{}.conflict-{suffix}", conflict.note_path);
+                suffix += 1;
+            }
+            Task::perform(
+                async move {
+                    notebook::create_new_note(&notebook_path, &copy_path, &mut notes).await?;
+                    notebook::save_note_content(
+                        notebook_path,
+                        copy_path.clone(),
+                        conflict.local_content,
+                    )
+                    .await?;
+                    Ok(copy_path)
+                },
+                Message::ConflictCopySaved,
+            )
+        }
+        Message::ConflictDismiss => {
+            state.state.hide_conflict_dialog();
+            Task::none()
         }
         Message::Dummy => Task::none(),
         _ => unreachable!("ui handler received invalid message"),

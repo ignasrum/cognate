@@ -30,11 +30,25 @@ pub enum ApiError {
     #[allow(dead_code)]
     #[error("not found")]
     NotFound,
+    #[error("revision conflict")]
+    Conflict {
+        current_revision: String,
+        current_content: String,
+    },
+    #[error("missing revision precondition")]
+    PreconditionRequired,
 }
 
 #[derive(Debug, Serialize)]
 struct ErrorBody {
     error: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ConflictBody {
+    error: &'static str,
+    current_revision: String,
+    current_content: String,
 }
 
 impl IntoResponse for ApiError {
@@ -47,9 +61,27 @@ impl IntoResponse for ApiError {
             Self::Engine(EngineError::Validation { .. }) => {
                 (StatusCode::BAD_REQUEST, "bad_request")
             }
+            Self::Conflict {
+                current_revision,
+                current_content,
+            } => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ConflictBody {
+                        error: "conflict",
+                        current_revision,
+                        current_content,
+                    }),
+                )
+                    .into_response();
+            }
+            Self::PreconditionRequired => {
+                (StatusCode::PRECONDITION_REQUIRED, "precondition_required")
+            }
             Self::Engine(EngineError::LockUnavailable { .. }) => {
                 (StatusCode::CONFLICT, "lock_conflict")
             }
+            Self::Engine(EngineError::Conflict { .. }) => (StatusCode::CONFLICT, "conflict"),
             Self::Config(_)
             | Self::Database(_)
             | Self::Migration(_)

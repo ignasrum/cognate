@@ -34,6 +34,11 @@ pub enum EngineError {
         resource: String,
         detail: String,
     },
+    #[error("conflict inside {context}: {detail}")]
+    Conflict {
+        context: &'static str,
+        detail: String,
+    },
 }
 
 impl EngineError {
@@ -66,6 +71,13 @@ impl EngineError {
         Self::LockUnavailable {
             context,
             resource: resource.into(),
+            detail: detail.into(),
+        }
+    }
+
+    pub fn conflict(context: &'static str, detail: impl Into<String>) -> Self {
+        Self::Conflict {
+            context,
             detail: detail.into(),
         }
     }

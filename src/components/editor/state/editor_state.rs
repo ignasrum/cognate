@@ -10,7 +10,16 @@ enum UiMode {
     NewNoteDialog,
     MoveNoteDialog,
     EmbeddedImageDeleteDialog,
+    ConflictDialog,
     About,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteConflict {
+    pub note_path: String,
+    pub local_content: String,
+    pub server_content: String,
+    pub server_revision: String,
 }
 
 #[derive(Debug)]
@@ -36,6 +45,7 @@ pub struct EditorState {
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
     pending_embedded_image_delete_count: usize,
+    conflict: Option<NoteConflict>,
 
     // Flag indicating if we're loading a new note
     loading_note: bool,
@@ -58,6 +68,7 @@ impl EditorState {
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
             pending_embedded_image_delete_count: 0,
+            conflict: None,
             loading_note: false,
         }
     }
@@ -131,6 +142,14 @@ impl EditorState {
         self.ui_mode == UiMode::EmbeddedImageDeleteDialog
     }
 
+    pub fn is_conflict_dialog_open(&self) -> bool {
+        self.ui_mode == UiMode::ConflictDialog
+    }
+
+    pub fn conflict(&self) -> Option<&NoteConflict> {
+        self.conflict.as_ref()
+    }
+
     pub fn pending_embedded_image_delete_count(&self) -> usize {
         self.pending_embedded_image_delete_count
     }
@@ -146,6 +165,7 @@ impl EditorState {
             UiMode::NewNoteDialog
                 | UiMode::MoveNoteDialog
                 | UiMode::EmbeddedImageDeleteDialog
+                | UiMode::ConflictDialog
                 | UiMode::About
         )
     }
@@ -270,6 +290,18 @@ impl EditorState {
     pub fn show_embedded_image_delete_dialog(&mut self, count: usize) {
         self.pending_embedded_image_delete_count = count;
         self.ui_mode = UiMode::EmbeddedImageDeleteDialog;
+    }
+
+    pub fn show_conflict_dialog(&mut self, conflict: NoteConflict) {
+        self.conflict = Some(conflict);
+        self.ui_mode = UiMode::ConflictDialog;
+    }
+
+    pub fn hide_conflict_dialog(&mut self) {
+        self.conflict = None;
+        if self.ui_mode == UiMode::ConflictDialog {
+            self.ui_mode = UiMode::Editor;
+        }
     }
 
     pub fn hide_embedded_image_delete_dialog(&mut self) {

@@ -21,3 +21,6 @@ cognate-engine = { path = "cognate-engine" }
 
 [workspace]
 members = ["cognate-engine", "cognate-api"]
+
+[dev-dependencies]
+tempfile = "3"

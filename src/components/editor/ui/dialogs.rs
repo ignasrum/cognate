@@ -1,7 +1,8 @@
-use iced::widget::{Column, Container, Row, Text, TextInput as IcedTextInput, button};
+use iced::widget::{Column, Container, Row, Text, TextInput as IcedTextInput, button, scrollable};
 use iced::{Element, Length};
 
 use crate::components::editor::Message;
+use crate::components::editor::state::editor_state::NoteConflict;
 
 // About dialog
 pub fn about_dialog<'a>(app_version: &str) -> Element<'a, Message> {
@@ -117,5 +118,63 @@ pub fn confirm_embedded_image_delete_dialog<'a>(count: usize) -> Element<'a, Mes
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(iced::Alignment::Center)
+        .into()
+}
+
+pub fn conflict_dialog<'a>(conflict: &'a NoteConflict) -> Element<'a, Message> {
+    let local = scrollable(
+        Column::new()
+            .push(Text::new("Your local draft").size(18))
+            .push(Text::new(conflict.local_content.clone()).font(iced::Font::MONOSPACE)),
+    )
+    .height(Length::Fill);
+    let server = scrollable(
+        Column::new()
+            .push(Text::new("Server version").size(18))
+            .push(Text::new(conflict.server_content.clone()).font(iced::Font::MONOSPACE)),
+    )
+    .height(Length::Fill);
+
+    Column::new()
+        .push(Text::new(format!("Conflict: {}", conflict.note_path)).size(24))
+        .push(Text::new(
+            "This note changed on the server while you were editing. Choose how to resolve it.",
+        ))
+        .push(
+            Row::new()
+                .push(local)
+                .push(server)
+                .spacing(16)
+                .height(Length::Fill),
+        )
+        .push(Text::new(format!("Server revision: {}", conflict.server_revision)).size(12))
+        .push(
+            Row::new()
+                .push(
+                    button("Keep server version")
+                        .padding(6)
+                        .on_press(Message::ConflictKeepServer),
+                )
+                .push(
+                    button("Retry local draft")
+                        .padding(6)
+                        .on_press(Message::ConflictRetryLocal),
+                )
+                .push(
+                    button("Save local as copy")
+                        .padding(6)
+                        .on_press(Message::ConflictSaveCopy),
+                )
+                .push(
+                    button("Dismiss")
+                        .padding(6)
+                        .on_press(Message::ConflictDismiss),
+                )
+                .spacing(10),
+        )
+        .spacing(12)
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
         .into()
 }

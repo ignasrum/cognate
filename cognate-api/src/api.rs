@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{delete, get, post, put},
@@ -177,43 +177,83 @@ fn require_admin(state: &AppState, headers: &axum::http::HeaderMap) -> Result<()
     }
 }
 
-async fn list_notes(State(state): State<AppState>) -> Result<Json<Vec<NoteMetadata>>, ApiError> {
+async fn list_notes(
+    State(state): State<AppState>,
+) -> Result<(HeaderMap, Json<Vec<NoteMetadata>>), ApiError> {
     let result = NotebookManager::new(&state.notebook_path)
         .load_metadata()
         .await?;
-    Ok(Json(result.notes))
+    let revision = metadata_revision(&result.notes);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
+    );
+    Ok((headers, Json(result.notes)))
 }
 
 async fn save_metadata(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(notes): Json<Vec<NoteMetadata>>,
 ) -> Result<StatusCode, ApiError> {
-    NotebookManager::new(&state.notebook_path)
-        .save_metadata(&notes)
-        .await?;
+    let expected_revision = headers
+        .get("if-match")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim_matches('"'))
+        .ok_or(ApiError::PreconditionRequired)?;
+    let manager = NotebookManager::new(&state.notebook_path);
+    let current = manager.load_metadata().await?.notes;
+    if expected_revision != "*" && expected_revision != metadata_revision(&current) {
+        return Err(ApiError::Conflict {
+            current_revision: metadata_revision(&current),
+            current_content: serde_json::to_string(&current).unwrap_or_default(),
+        });
+    }
+    manager.save_metadata(&notes).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn metadata_revision(notes: &[NoteMetadata]) -> String {
+    let serialized = serde_json::to_string(notes).unwrap_or_default();
+    cognate_engine::storage::note_content_revision(&serialized)
 }
 
 async fn get_note(
     State(state): State<AppState>,
     Path(rel_path): Path<String>,
-) -> Result<Json<NotePayload>, ApiError> {
+) -> Result<(HeaderMap, Json<NotePayload>), ApiError> {
     let manager = NotebookManager::new(&state.notebook_path);
     let content = manager.load_note_content(&rel_path).await?;
-    Ok(Json(NotePayload { rel_path, content }))
+    let revision = cognate_engine::storage::note_content_revision(&content);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
+    );
+    Ok((
+        headers,
+        Json(NotePayload {
+            rel_path,
+            content,
+            revision,
+        }),
+    ))
 }
 
 #[derive(Debug, Serialize)]
 pub struct NotePayload {
     pub rel_path: String,
     pub content: String,
+    pub revision: String,
 }
 
 async fn save_note(
     State(state): State<AppState>,
     Path(rel_path): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
-) -> Result<StatusCode, ApiError> {
+) -> Result<(StatusCode, HeaderMap), ApiError> {
     const MAX_NOTE_BYTES: usize = 4 * 1024 * 1024;
     if body.len() > MAX_NOTE_BYTES {
         return Err(ApiError::BadRequest(
@@ -222,10 +262,38 @@ async fn save_note(
     }
     let content = String::from_utf8(body.to_vec())
         .map_err(|_| ApiError::BadRequest("note content must be UTF-8".to_string()))?;
-    NotebookManager::new(&state.notebook_path)
-        .save_note_content(&rel_path, &content)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
+    let expected_revision = headers
+        .get("if-match")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim_matches('"'));
+    let Some(expected_revision) = expected_revision else {
+        return Err(ApiError::PreconditionRequired);
+    };
+    let manager = NotebookManager::new(&state.notebook_path);
+    let revision = match manager
+        .save_note_content_if_match(&rel_path, &content, Some(expected_revision))
+        .await
+    {
+        Ok(revision) => revision,
+        Err(cognate_engine::EngineError::Conflict { .. }) => {
+            let current_content = manager
+                .load_note_content(&rel_path)
+                .await
+                .unwrap_or_default();
+            let current_revision = cognate_engine::storage::note_content_revision(&current_content);
+            return Err(ApiError::Conflict {
+                current_revision,
+                current_content,
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        "etag",
+        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
+    );
+    Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
 async fn create_note(

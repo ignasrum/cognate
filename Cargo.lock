@@ -750,6 +750,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
  "tokio",
@@ -780,6 +781,7 @@ name = "cognate-engine"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "blake3",
  "filetime",
  "pulldown-cmark 0.13.1",
  "serde",

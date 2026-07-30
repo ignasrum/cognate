@@ -43,6 +43,11 @@ pub enum Message {
 
     // Content management
     NoteContentSaved(Result<(), NotebookError>),
+    ConflictKeepServer,
+    ConflictRetryLocal,
+    ConflictSaveCopy,
+    ConflictDismiss,
+    ConflictCopySaved(Result<String, NotebookError>),
     DebouncedMetadataSaveElapsed(u64),
     DebouncedMetadataSaveCompleted(u64, Result<(), NotebookError>),
     WindowCloseRequested(window::Id),

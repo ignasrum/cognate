@@ -1,9 +1,11 @@
-use std::sync::{OnceLock, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use cognate_engine::storage::NoteMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::configuration::{Configuration, StorageBackend};
+use crate::notebook::offline_queue::{self, QueuedNoteWrite};
 use crate::notebook::{MetadataLoadResult, NoteSearchResult, NotebookError};
 
 #[derive(Clone)]
@@ -17,6 +19,9 @@ struct ApiClient {
     client: reqwest::Client,
     base_url: String,
     api_key: String,
+    revisions: Arc<Mutex<HashMap<String, String>>>,
+    metadata_revision: Arc<Mutex<Option<String>>>,
+    queue_path: std::path::PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +46,12 @@ struct ApiSearchResult {
     snippet: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiConflict {
+    current_revision: String,
+    current_content: String,
+}
+
 static SELECTED_BACKEND: OnceLock<RwLock<SelectedBackend>> = OnceLock::new();
 
 fn backend_cell() -> &'static RwLock<SelectedBackend> {
@@ -51,6 +62,16 @@ pub(crate) fn is_api() -> bool {
     matches!(selected(), SelectedBackend::Api(_))
 }
 
+pub(crate) fn set_note_revision(rel_path: &str, revision: &str) {
+    if let SelectedBackend::Api(client) = selected() {
+        client
+            .revisions
+            .lock()
+            .unwrap()
+            .insert(rel_path.to_string(), revision.to_string());
+    }
+}
+
 pub fn configure_backend(configuration: &Configuration) {
     let selected = match configuration.storage_backend {
         StorageBackend::Local => SelectedBackend::Local,
@@ -58,6 +79,9 @@ pub fn configure_backend(configuration: &Configuration) {
             client: reqwest::Client::new(),
             base_url: configuration.api_url.trim_end_matches('/').to_string(),
             api_key: configuration.api_key.clone(),
+            revisions: Arc::new(Mutex::new(HashMap::new())),
+            metadata_revision: Arc::new(Mutex::new(None)),
+            queue_path: offline_queue::queue_path(&configuration.config_path),
         }),
     };
 
@@ -140,7 +164,26 @@ pub async fn load_metadata(notebook_path: String) -> Result<MetadataLoadResult, 
         }
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes")?;
-            let notes = send(authorized(client.client.get(url), &client), "load metadata").await?;
+            let response = authorized(client.client.get(url), &client)
+                .send()
+                .await
+                .map_err(|error| api_error("load metadata", error))?;
+            if !response.status().is_success() {
+                return Err(api_error(
+                    "load metadata",
+                    format!("server returned HTTP {}", response.status()),
+                ));
+            }
+            let revision = response
+                .headers()
+                .get("etag")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.trim_matches('"').to_string());
+            let notes = response
+                .json::<Vec<NoteMetadata>>()
+                .await
+                .map_err(|error| api_error("load metadata", error))?;
+            *client.metadata_revision.lock().unwrap() = revision;
             Ok(MetadataLoadResult {
                 notes,
                 warning: None,
@@ -159,11 +202,21 @@ pub async fn save_metadata(
         }
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/metadata")?;
-            send_empty(
-                authorized(client.client.put(url).json(notes), &client),
-                "save metadata",
-            )
-            .await
+            let revision = client.metadata_revision.lock().unwrap().clone();
+            let request = authorized(client.client.put(url).json(notes), &client).header(
+                "if-match",
+                revision
+                    .as_deref()
+                    .map(|revision| format!("\"{revision}\""))
+                    .unwrap_or_else(|| "*".to_string()),
+            );
+            let result = send_empty(request, "save metadata").await;
+            if result.is_ok() {
+                let serialized = serde_json::to_string(notes).unwrap_or_default();
+                *client.metadata_revision.lock().unwrap() =
+                    Some(cognate_engine::storage::note_content_revision(&serialized));
+            }
+            result
         }
     }
 }
@@ -178,11 +231,31 @@ pub async fn load_note_content(
         }
         SelectedBackend::Api(client) => {
             let url = note_endpoint(&client, &rel_path)?;
-            Ok(
-                send::<ApiNotePayload>(authorized(client.client.get(url), &client), "load note")
-                    .await?
-                    .content,
-            )
+            let response = authorized(client.client.get(url), &client)
+                .send()
+                .await
+                .map_err(|error| api_error("load note", error))?;
+            if !response.status().is_success() {
+                return Err(api_error(
+                    "load note",
+                    format!("server returned HTTP {}", response.status()),
+                ));
+            }
+            let revision = response
+                .headers()
+                .get("etag")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            let payload = response
+                .json::<ApiNotePayload>()
+                .await
+                .map_err(|error| api_error("load note", error))?;
+            if !revision.is_empty() {
+                client.revisions.lock().unwrap().insert(rel_path, revision);
+            }
+            Ok(payload.content)
         }
     }
 }
@@ -198,14 +271,118 @@ pub async fn save_note_content(
                 .await
         }
         SelectedBackend::Api(client) => {
+            replay_queued_writes(&client).await?;
+            if offline_queue::read(&client.queue_path)
+                .map_err(|error| api_error("offline queue", error))?
+                .iter()
+                .any(|entry| entry.rel_path == rel_path)
+            {
+                return Err(api_error(
+                    "save note",
+                    "note has an unresolved offline write or conflict",
+                ));
+            }
             let url = note_endpoint(&client, &rel_path)?;
-            send_empty(
-                authorized(client.client.put(url).body(content), &client),
-                "save note",
-            )
-            .await
+            let revision = client.revisions.lock().unwrap().get(&rel_path).cloned();
+            let request = authorized(client.client.put(url).body(content.clone()), &client);
+            let request = request.header(
+                "if-match",
+                revision
+                    .as_deref()
+                    .map(|revision| format!("\"{revision}\""))
+                    .unwrap_or_else(|| "*".to_string()),
+            );
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    offline_queue::enqueue(
+                        &client.queue_path,
+                        QueuedNoteWrite {
+                            rel_path,
+                            content,
+                            expected_revision: revision,
+                        },
+                    )
+                    .map_err(|queue_error| api_error("offline queue", queue_error))?;
+                    return Err(api_error("save note", error));
+                }
+            };
+            if !response.status().is_success() {
+                if response.status() == reqwest::StatusCode::CONFLICT {
+                    let status = response.status();
+                    if let Ok(conflict) = response.json::<ApiConflict>().await {
+                        return Err(NotebookError::conflict(
+                            "save note",
+                            content,
+                            conflict.current_content,
+                            conflict.current_revision,
+                        ));
+                    }
+                    return Err(api_error(
+                        "save note",
+                        format!("server returned HTTP {status}"),
+                    ));
+                }
+                return Err(api_error(
+                    "save note",
+                    format!("server returned HTTP {}", response.status()),
+                ));
+            }
+            if let Some(revision) = response
+                .headers()
+                .get("etag")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.trim_matches('"').to_string())
+            {
+                client.revisions.lock().unwrap().insert(rel_path, revision);
+            }
+            Ok(())
         }
     }
+}
+
+async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
+    let entries = offline_queue::read(&client.queue_path)
+        .map_err(|error| api_error("offline queue", error))?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut remaining = Vec::new();
+    for entry in entries {
+        let url = note_endpoint(client, &entry.rel_path)?;
+        let mut request = authorized(client.client.put(url).body(entry.content.clone()), client);
+        if let Some(revision) = entry.expected_revision.as_deref() {
+            request = request.header("if-match", format!("\"{revision}\""));
+        }
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                remaining.push(entry);
+                offline_queue::write(&client.queue_path, &remaining)
+                    .map_err(|queue_error| api_error("offline queue", queue_error))?;
+                return Err(api_error("offline queue retry", error));
+            }
+        };
+        if response.status().is_success() {
+            if let Some(revision) = response
+                .headers()
+                .get("etag")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.trim_matches('"').to_string())
+            {
+                client
+                    .revisions
+                    .lock()
+                    .unwrap()
+                    .insert(entry.rel_path.clone(), revision);
+            }
+        } else {
+            remaining.push(entry);
+        }
+    }
+    offline_queue::write(&client.queue_path, &remaining)
+        .map_err(|error| api_error("offline queue", error))
 }
 
 pub async fn create_note(

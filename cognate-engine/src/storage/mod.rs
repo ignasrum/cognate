@@ -7,4 +7,5 @@ pub use attachments::AttachmentManager;
 pub use concurrency::{ConcurrencyManager, FileLockGuard};
 pub use notebook::{
     MetadataLoadResult, NoteMetadata, NotebookManager, NotebookMetadata, current_timestamp_rfc3339,
+    note_content_revision,
 };

@@ -44,9 +44,15 @@ fn message_domain(message: &Message) -> MessageDomain {
             MessageDomain::Shutdown
         }
 
-        Message::MetadataSaved(_, _) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
-            MessageDomain::SaveFeedback
-        }
+        Message::MetadataSaved(_, _)
+        | Message::NoteContentSaved(_)
+        | Message::ConflictCopySaved(_)
+        | Message::ScaleSaved(_) => MessageDomain::SaveFeedback,
+
+        Message::ConflictKeepServer
+        | Message::ConflictRetryLocal
+        | Message::ConflictSaveCopy
+        | Message::ConflictDismiss => MessageDomain::Ui,
 
         Message::ToggleVisualizer | Message::VisualizerMsg(_) => MessageDomain::Visualizer,
 

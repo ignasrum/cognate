@@ -892,6 +892,17 @@ impl NotebookManager {
         rel_path: &str,
         content: &str,
     ) -> Result<(), EngineError> {
+        self.save_note_content_if_match(rel_path, content, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn save_note_content_if_match(
+        &self,
+        rel_path: &str,
+        content: &str,
+        expected_revision: Option<&str>,
+    ) -> Result<String, EngineError> {
         let _notebook_lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let _note_lock = self.concurrency.acquire_note(rel_path).await?;
@@ -917,8 +928,25 @@ impl NotebookManager {
             }
         };
 
+        let current_revision = existing_content
+            .as_deref()
+            .map(note_content_revision)
+            .unwrap_or_else(|| note_content_revision(""));
+        if let Some(expected_revision) = expected_revision
+            && expected_revision != "*"
+            && expected_revision != current_revision
+        {
+            return Err(EngineError::conflict(
+                "save note content",
+                format!(
+                    "expected revision '{}' but found '{}'",
+                    expected_revision, current_revision
+                ),
+            ));
+        }
+
         if existing_content.as_deref() == Some(content) {
-            return Ok(());
+            return Ok(current_revision);
         }
 
         write_text_file_atomically(&full_note_path, content).await?;
@@ -935,6 +963,10 @@ impl NotebookManager {
         engine_state.process_document(rel_path, content, &labels, Some(last_updated));
         save_engine_state_to_disk(&self.notebook_path, &engine_state).await?;
 
-        Ok(())
+        Ok(note_content_revision(content))
     }
+}
+
+pub fn note_content_revision(content: &str) -> String {
+    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
