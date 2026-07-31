@@ -3,6 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotebookErrorKind {
     Initialization,
+    Api,
     Validation,
     Storage,
     Recovery,
@@ -14,6 +15,7 @@ impl NotebookErrorKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Initialization => "Initialization",
+            Self::Api => "API",
             Self::Validation => "Validation",
             Self::Storage => "Storage",
             Self::Recovery => "Recovery",
@@ -29,6 +31,14 @@ pub enum NotebookError {
     Initialization {
         context: &'static str,
         detail: String,
+    },
+    #[error("{operation}: {detail}")]
+    Api {
+        operation: &'static str,
+        status: Option<u16>,
+        code: Option<String>,
+        detail: String,
+        retryable: bool,
     },
     #[error("{context}: {detail}")]
     Validation {
@@ -66,6 +76,22 @@ impl NotebookError {
         Self::Initialization {
             context,
             detail: detail.into(),
+        }
+    }
+
+    pub fn api(
+        operation: &'static str,
+        status: Option<u16>,
+        code: Option<String>,
+        detail: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self::Api {
+            operation,
+            status,
+            code,
+            detail: detail.into(),
+            retryable,
         }
     }
 
@@ -131,6 +157,7 @@ impl NotebookError {
     pub fn kind(&self) -> NotebookErrorKind {
         match self {
             Self::Initialization { .. } => NotebookErrorKind::Initialization,
+            Self::Api { .. } => NotebookErrorKind::Api,
             Self::Validation { .. } => NotebookErrorKind::Validation,
             Self::Storage { .. } => NotebookErrorKind::Storage,
             Self::Recovery { .. } => NotebookErrorKind::Recovery,
@@ -174,5 +201,39 @@ impl From<cognate_engine::EngineError> for NotebookError {
                 NotebookError::Storage { context, detail }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NotebookError, NotebookErrorKind};
+
+    #[test]
+    fn initialization_errors_preserve_embedded_api_context() {
+        let error = NotebookError::initialization(
+            "embedded API",
+            "Could not start embedded API: failed to bind loopback",
+        );
+        assert_eq!(error.kind(), NotebookErrorKind::Initialization);
+        assert!(error.ui_message().contains("failed to bind loopback"));
+    }
+
+    #[test]
+    fn api_errors_preserve_status_code_and_retryability() {
+        let error = NotebookError::api(
+            "load notes",
+            Some(503),
+            Some("search_unavailable".to_string()),
+            "service unavailable",
+            true,
+        );
+        assert!(matches!(
+            error,
+            NotebookError::Api {
+                status: Some(503),
+                retryable: true,
+                ..
+            }
+        ));
     }
 }

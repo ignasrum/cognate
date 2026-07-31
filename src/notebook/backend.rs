@@ -66,6 +66,12 @@ struct ApiSearchError {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiErrorBody {
+    error: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ApiConflict {
     current_revision: String,
     current_content: String,
@@ -145,10 +151,20 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
     Ok(())
 }
 
-pub fn shutdown_backend() {
-    *backend_cell()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = SelectedBackend::Unconfigured(None);
+pub fn shutdown_backend() -> Result<(), String> {
+    let previous = std::mem::replace(
+        &mut *backend_cell()
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        SelectedBackend::Unconfigured(None),
+    );
+    if let SelectedBackend::Api(client) = previous
+        && let Some(runtime) = client._embedded_runtime
+        && let Ok(mut runtime) = Arc::try_unwrap(runtime)
+    {
+        return runtime.shutdown();
+    }
+    Ok(())
 }
 
 fn selected() -> SelectedBackend {
@@ -175,17 +191,14 @@ fn endpoint(client: &ApiClient, path: &str) -> Result<reqwest::Url, NotebookErro
 
 async fn send<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
-    context: &str,
+    context: &'static str,
 ) -> Result<T, NotebookError> {
     let response = request
         .send()
         .await
-        .map_err(|error| api_error(context, error))?;
+        .map_err(|error| NotebookError::api(context, None, None, error.to_string(), true))?;
     if !response.status().is_success() {
-        return Err(api_error(
-            context,
-            format!("server returned HTTP {}", response.status()),
-        ));
+        return Err(api_response_error(response, context).await);
     }
     response
         .json::<T>()
@@ -193,18 +206,39 @@ async fn send<T: for<'de> Deserialize<'de>>(
         .map_err(|error| api_error(context, error))
 }
 
-async fn send_empty(request: reqwest::RequestBuilder, context: &str) -> Result<(), NotebookError> {
+async fn send_empty(
+    request: reqwest::RequestBuilder,
+    context: &'static str,
+) -> Result<(), NotebookError> {
     let response = request
         .send()
         .await
-        .map_err(|error| api_error(context, error))?;
+        .map_err(|error| NotebookError::api(context, None, None, error.to_string(), true))?;
     if !response.status().is_success() {
-        return Err(api_error(
-            context,
-            format!("server returned HTTP {}", response.status()),
-        ));
+        return Err(api_response_error(response, context).await);
     }
     Ok(())
+}
+
+fn status_is_retryable(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
+async fn api_response_error(response: reqwest::Response, operation: &'static str) -> NotebookError {
+    let status = response.status().as_u16();
+    let parsed = response.json::<ApiErrorBody>().await.ok();
+    let code = parsed.as_ref().and_then(|body| body.error.clone());
+    let detail = parsed
+        .as_ref()
+        .and_then(|body| body.detail.clone())
+        .unwrap_or_else(|| format!("server returned HTTP {status}"));
+    NotebookError::api(
+        operation,
+        Some(status),
+        code,
+        detail,
+        status_is_retryable(status),
+    )
 }
 
 async fn send_search(request: reqwest::RequestBuilder) -> Result<ApiSearchResponse, NotebookError> {
@@ -273,12 +307,11 @@ pub(crate) async fn upload_attachment(
         .header("content-type", "application/octet-stream")
         .send()
         .await
-        .map_err(|error| api_error("upload attachment", error))?;
+        .map_err(|error| {
+            NotebookError::api("upload attachment", None, None, error.to_string(), true)
+        })?;
     if !response.status().is_success() {
-        return Err(api_error(
-            "upload attachment",
-            format!("server returned HTTP {}", response.status()),
-        ));
+        return Err(api_response_error(response, "upload attachment").await);
     }
     Ok(response
         .json::<ApiAttachmentPayload>()
@@ -303,12 +336,11 @@ pub(crate) async fn download_attachment(
     )
     .send()
     .await
-    .map_err(|error| api_error("download attachment", error))?;
+    .map_err(|error| {
+        NotebookError::api("download attachment", None, None, error.to_string(), true)
+    })?;
     if !response.status().is_success() {
-        return Err(api_error(
-            "download attachment",
-            format!("server returned HTTP {}", response.status()),
-        ));
+        return Err(api_response_error(response, "download attachment").await);
     }
     response
         .bytes()
@@ -333,12 +365,11 @@ pub(crate) async fn delete_attachment(
     )
     .send()
     .await
-    .map_err(|error| api_error("delete attachment", error))?;
+    .map_err(|error| {
+        NotebookError::api("delete attachment", None, None, error.to_string(), true)
+    })?;
     if !get_response.status().is_success() {
-        return Err(api_error(
-            "delete attachment",
-            format!("server returned HTTP {}", get_response.status()),
-        ));
+        return Err(api_response_error(get_response, "delete attachment").await);
     }
     let revision = get_response
         .headers()
@@ -366,12 +397,11 @@ pub async fn load_metadata(_notebook_path: String) -> Result<MetadataLoadResult,
             let response = authorized(client.client.get(url), &client)
                 .send()
                 .await
-                .map_err(|error| api_error("load metadata", error))?;
+                .map_err(|error| {
+                    NotebookError::api("load metadata", None, None, error.to_string(), true)
+                })?;
             if !response.status().is_success() {
-                return Err(api_error(
-                    "load metadata",
-                    format!("server returned HTTP {}", response.status()),
-                ));
+                return Err(api_response_error(response, "load metadata").await);
             }
             let revision = response
                 .headers()
@@ -429,12 +459,11 @@ pub async fn load_note_content(
             let response = authorized(client.client.get(url), &client)
                 .send()
                 .await
-                .map_err(|error| api_error("load note", error))?;
+                .map_err(|error| {
+                    NotebookError::api("load note", None, None, error.to_string(), true)
+                })?;
             if !response.status().is_success() {
-                return Err(api_error(
-                    "load note",
-                    format!("server returned HTTP {}", response.status()),
-                ));
+                return Err(api_response_error(response, "load note").await);
             }
             let revision = response
                 .headers()
@@ -516,7 +545,13 @@ pub async fn save_note_content(
                         },
                     )
                     .map_err(|queue_error| api_error("offline queue", queue_error))?;
-                    return Err(api_error("save note", error));
+                    return Err(NotebookError::api(
+                        "save note",
+                        None,
+                        None,
+                        error.to_string(),
+                        true,
+                    ));
                 }
             };
             if !response.status().is_success() {

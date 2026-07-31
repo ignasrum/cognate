@@ -33,18 +33,24 @@ pub enum AuthStore {
 }
 
 impl AppState {
+    pub fn has_persistent_auth(&self) -> bool {
+        matches!(&self.auth_store, AuthStore::Sqlite)
+    }
+
     pub fn new(db: SqlitePool, notebook_path: PathBuf, admin_token: String) -> Self {
         Self::with_store(Some(db), notebook_path, admin_token, AuthStore::Sqlite)
     }
 
     pub fn new_in_memory(notebook_path: PathBuf) -> Self {
-        let admin_token = format!("local-admin-{}", std::process::id());
-        Self::with_store(
-            None,
+        let mut admin_digest = [0_u8; 32];
+        let _ = getrandom::fill(&mut admin_digest);
+        Self {
+            db: None,
             notebook_path,
-            admin_token,
-            AuthStore::InMemory(InMemoryClients::default()),
-        )
+            admin_digest,
+            auth_store: AuthStore::InMemory(InMemoryClients::default()),
+            search_managers: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     fn with_store(

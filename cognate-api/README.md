@@ -12,6 +12,9 @@ SQLite. The desktop generates a fresh client secret for each launch and keeps it
 only in process memory. Standalone self-hosted deployments continue to use the
 SQLite-backed client store described below.
 
+Embedded mode does not expose the admin client provisioning, listing, or revocation
+routes; those routes are available only to standalone SQLite-backed deployments.
+
 ## Configuration
 
 Required:

@@ -164,7 +164,8 @@ Pasting imagery (handled in `src/components/editor/core/clipboard.rs`) supports 
 2. **Raw Bitmap Paste**: If the clipboard contains direct image data (e.g., from taking a screenshot), Cognate uses the `png` crate to encode the raw pixel bytes into a standard PNG byte vector, then base64-encodes it.
 
 ### B. Persistent Storage and Magic Byte Detection
-Once base64 image payload data is retrieved, it is written to the note's storage directory (handled in `src/components/editor/core/embedded_images.rs`):
+Once base64 image payload data is retrieved, it is uploaded through the authenticated
+attachment API and written by `cognate-engine` inside the note's storage directory:
 1. **Format/Extension Resolution**: The raw bytes are decoded from base64. Cognate inspects the magic bytes at the beginning of the binary payload to determine the image format/extension:
    - `\x89PNG\r\n\x1a\n` -> `.png`
    - `\xFF\xD8\xFF` -> `.jpg`
@@ -180,12 +181,11 @@ Once base64 image payload data is retrieved, it is written to the note's storage
 ### C. Resolution and UI Rendering
 During text rendering or markdown preview (handled in `src/components/editor/core/embedded_image_service.rs`):
 - Cognate parses the current Markdown text for image reference IDs (e.g. `images/img_<id>.<ext>`) using regular expressions (`extract_embedded_image_ids`).
-- The `EmbeddedImageWorkflow` struct maps these IDs to their absolute paths:
-  `<notebook_root>/<relative_note_path>/images/img_<id>.<ext>`.
-- The service loads these files from disk and produces Iced UI image handles (`iced::widget::image::Handle::from_bytes`) to render them in the preview canvas.
+- The `EmbeddedImageWorkflow` struct maps these IDs to API attachment paths.
+- The service downloads attachment bytes through the API and produces Iced UI image handles (`iced::widget::image::Handle::from_bytes`) to render them in the preview canvas.
 
 ### D. Dereferencing and Cleanup
 To prevent unused image files from consuming disk space, Cognate detects when an image is deleted/replaced:
 1. When a user edit occurs, `EmbeddedImageWorkflow` compares the previous markdown image reference IDs against the new markdown text.
 2. If any image reference has been deleted/edited out, the image ID is added to a `pending_deletion_ids` queue.
-3. Upon confirming/committing the edit state change, Cognate removes the files through `AttachmentManager`, which coordinates the deletion with the notebook lock.
+3. Upon confirming/committing the edit state change, Cognate removes the attachment through the authenticated API, which coordinates deletion with the notebook lock.

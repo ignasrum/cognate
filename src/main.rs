@@ -65,6 +65,8 @@ pub fn main() -> iced::Result {
     .subscription(Editor::subscription);
 
     let result = app.run();
-    notebook::shutdown_backend();
+    if let Err(error) = notebook::shutdown_backend() {
+        eprintln!("[cognate] embedded API shutdown failed: {error}");
+    }
     result
 }

@@ -4,11 +4,12 @@ This document explains how Cognate is structured and where to implement changes.
 
 ## High-level Shape
 
-Cognate is a desktop app with a message-driven UI and a file-backed notebook domain:
+Cognate is a desktop app with a message-driven UI and an API-backed notebook domain:
 
 - UI layer: Iced components (`editor`, `note_explorer`, `visualizer`)
-- Domain layer: notebook operations (`create`, `delete`, `move`, `search`)
-- Infrastructure layer: JSON/config parsing and disk persistence
+- Client layer: HTTP notebook operations, revisions, offline queue, and embedded API lifecycle
+- Service layer: `cognate-api` authentication, routing, and notebook API
+- Engine layer: `cognate-engine` filesystem persistence, locks, attachments, and search
 
 ## Core Modules
 
@@ -42,9 +43,10 @@ Visualizer:
 
 ### `src/notebook`
 
-- `operations.rs`: create/delete/move with path safety and metadata updates
-- `storage.rs`: metadata and note file persistence (see [STORAGE.md](STORAGE.md))
-- `search.rs`: search index cache and query matching
+- `backend.rs`: authenticated API requests, revisions, offline queue, and error mapping
+- `embedded_api.rs`: embedded loopback API lifecycle for local mode
+- `operations.rs` and `storage.rs`: API-facing notebook operation adapters
+- `search.rs`: search request metadata/result types used by the API client
 
 ### `cognate-engine/src/storage`
 
@@ -66,6 +68,11 @@ and port (loopback by default), authenticates Bearer client keys, stores only BL
 and client metadata in SQLite, and delegates notebook mutations to `cognate-engine`.
 Public HTTPS termination is provided by an external reverse proxy; the API process does
 not manage certificates.
+
+In local mode, Cognate embeds this service on an ephemeral loopback port with an
+in-memory authentication store. No SQLite database or persistent client secret is
+created. In remote mode, the standalone service uses SQLite for client metadata and
+hashed secrets.
 
 ## Data Model
 
@@ -94,7 +101,8 @@ This keeps UI behavior deterministic and testable through message transitions.
   atomic replacement prevents partial files but does not replace locking.
 - Metadata writes can be debounced in edit flows.
 - Shutdown path attempts a final flush before window close.
-- Search cache is refreshed from filesystem on interval and mutation hooks.
+- Search indexes are owned by the API/engine process and refreshed from the filesystem
+  on interval with targeted mutation hooks.
 
 ## Where to Add Features
 

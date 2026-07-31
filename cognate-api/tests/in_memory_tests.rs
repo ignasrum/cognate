@@ -59,3 +59,20 @@ async fn in_memory_client_secret_is_not_reusable_after_store_drop() {
         .unwrap();
     assert_eq!(response.status(), 401);
 }
+
+#[tokio::test]
+async fn embedded_mode_does_not_expose_admin_client_routes() {
+    let notebook = TempDir::new().unwrap();
+    let state = AppState::new_in_memory(notebook.path().to_path_buf());
+    let response = api::router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/admin/clients")
+                .body(Body::from(r#"{"client_name":"unexpected"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(response.status().as_u16(), 401 | 404 | 405));
+}

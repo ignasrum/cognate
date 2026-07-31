@@ -40,7 +40,7 @@ The CI workflow runs formatting, clippy, build, and tests. Keeping these green l
 - `src/components/editor`: main editor update loop and UI composition
 - `src/components/note_explorer`: notebook tree and selection UX
 - `src/components/visualizer`: label graph rendering
-- `src/notebook`: file-backed notebook operations and metadata
+- `src/notebook`: authenticated API client, embedded API lifecycle, offline queue, and UI-facing notebook types
 - `src/configuration`: config reader and theme conversion
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for deeper boundaries and data flow.

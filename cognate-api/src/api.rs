@@ -91,10 +91,13 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/search/page", get(search_page))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
-    Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/admin/clients", post(create_client).get(list_clients))
-        .route("/v1/admin/clients/{id}", delete(delete_client_route))
+    let mut public = Router::new().route("/v1/health", get(health));
+    if state.has_persistent_auth() {
+        public = public
+            .route("/v1/admin/clients", post(create_client).get(list_clients))
+            .route("/v1/admin/clients/{id}", delete(delete_client_route));
+    }
+    public
         .merge(protected)
         .layer(DefaultBodyLimit::max(MAX_PAYLOAD_BYTES))
         .with_state(state)

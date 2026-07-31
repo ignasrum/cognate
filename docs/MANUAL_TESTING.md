@@ -29,7 +29,7 @@ Use this checklist before releases or significant UI changes.
 - Search matches path, label, and content
 - Search filters work: `label:`, `path:`, `updated:FROM..TO`, quoted phrases, and `-` exclusions
 - Rapid typing waits briefly before searching and never displays stale results
-- API search returns the same matches and match types as local search
+- Embedded-local and remote API search return the same matches and match types
 - API search pagination returns stable, non-duplicated pages
 - Legacy `/v1/search` and paginated `/v1/search/page` responses both work
 - Search matches are visually highlighted, including Unicode text
@@ -37,6 +37,15 @@ Use this checklist before releases or significant UI changes.
 - Invalid paginated searches return a machine-readable `invalid_query` or `invalid_cursor` error
 - Editing, moving, deleting, or relabeling a note updates search results immediately
 - Clearing search restores normal explorer state
+
+## API Runtime and Security
+
+- Embedded local mode starts on loopback without creating SQLite or credential files
+- Embedded API startup failures identify the failed operation and remain visible in the UI
+- Embedded local admin client routes are unavailable
+- Remote API admin client provisioning and revocation continue to work
+- Closing the UI flushes pending writes before the embedded API shuts down
+- The embedded API port can be rebound after shutdown
 
 ## Embedded Images
 
