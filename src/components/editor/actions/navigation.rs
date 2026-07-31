@@ -147,6 +147,7 @@ pub fn handle_note_explorer_message(
     if let Some(load_feedback) = notes_loaded_feedback {
         match load_feedback {
             Ok(load_warning) => {
+                state.clear_connection_error();
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "Editor: NoteExplorer finished loading {} notes. Updating editor state.",
@@ -158,13 +159,12 @@ pub fn handle_note_explorer_message(
                 }
             }
             Err(load_error) => {
-                report_metadata_load_issue(
-                    "Failed to Load Notebook Metadata",
-                    &format!(
-                        "Cognate could not read notebook metadata safely:\n\n{}",
-                        load_error
-                    ),
+                let error_detail = format!(
+                    "Cognate could not read notebook metadata safely:\n\n{}",
+                    load_error
                 );
+                eprintln!("[cognate] could not connect to server: {load_error}");
+                state.set_connection_error(error_detail);
             }
         }
 

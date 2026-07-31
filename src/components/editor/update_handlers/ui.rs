@@ -41,6 +41,15 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
             state.state.show_rename_folder_dialog(folder_path);
             Task::none()
         }
+        Message::RetryConnection => {
+            state
+                .state
+                .set_connection_error("Checking connection to server...".to_string());
+            Task::perform(
+                crate::notebook::check_connection(),
+                Message::ConnectionChecked,
+            )
+        }
         Message::AboutButtonClicked => {
             state.state.toggle_about_info();
             Task::none()

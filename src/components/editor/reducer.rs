@@ -26,7 +26,9 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::AttachmentLoaded(_, _)
         | Message::PastedImageSaved(_) => MessageDomain::Text,
 
-        Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => MessageDomain::Selection,
+        Message::NoteExplorerMsg(_) | Message::NoteSelected(_) | Message::ConnectionChecked(_) => {
+            MessageDomain::Selection
+        }
 
         Message::NewLabelInputChanged(_) | Message::AddLabel | Message::RemoveLabel(_) => {
             MessageDomain::Label
@@ -76,6 +78,7 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::NoteMoved(_, _) => MessageDomain::NoteLifecycle,
 
         Message::InitiateFolderRename(_)
+        | Message::RetryConnection
         | Message::AboutButtonClicked
         | Message::IncreaseScale
         | Message::DecreaseScale

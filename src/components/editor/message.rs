@@ -28,6 +28,7 @@ pub enum Message {
     // Note explorer interaction
     NoteExplorerMsg(note_explorer::Message),
     NoteSelected(String),
+    ConnectionChecked(Result<(), NotebookError>),
 
     // Label management
     NewLabelInputChanged(String),
@@ -82,6 +83,7 @@ pub enum Message {
     InitiateFolderRename(String),
 
     // UI interactions
+    RetryConnection,
     AboutButtonClicked,
     IncreaseScale,
     DecreaseScale,

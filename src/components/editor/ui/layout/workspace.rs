@@ -1,4 +1,4 @@
-use iced::widget::{Column, Container, Row, Text, text_editor};
+use iced::widget::{Button, Column, Container, Row, Text, text_editor};
 use iced::{Element, Length};
 use std::collections::HashMap;
 
@@ -11,6 +11,26 @@ use crate::components::visualizer;
 
 use super::preview;
 use super::search_results;
+
+pub(super) fn build_connection_error_page<'a>(error: &'a str) -> Element<'a, Message> {
+    let content = Column::new()
+        .spacing(16)
+        .align_x(iced::Alignment::Center)
+        .push(Text::new("Could not connect to server").size(32))
+        .push(Text::new(error).size(16))
+        .push(
+            Button::new(Text::new("Retry connection"))
+                .padding(10)
+                .on_press(Message::RetryConnection),
+        );
+
+    Container::new(content)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
 pub(super) fn build_main_content<'a>(
     state: &'a EditorState,

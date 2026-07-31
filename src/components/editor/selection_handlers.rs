@@ -6,6 +6,19 @@ impl Editor {
     pub(super) fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
         let previous_markdown = state.markdown_text.clone();
         let task = match message {
+            Message::ConnectionChecked(result) => match result {
+                Ok(()) => state
+                    .note_explorer
+                    .update(note_explorer::Message::LoadNotes)
+                    .map(Message::NoteExplorerMsg),
+                Err(error) => {
+                    eprintln!("[cognate] could not connect to server: {error}");
+                    state.state.set_connection_error(format!(
+                        "Cognate could not connect to the configured server:\n\n{error}"
+                    ));
+                    Task::none()
+                }
+            },
             Message::NoteExplorerMsg(note_explorer_message) => {
                 note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,

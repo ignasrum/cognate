@@ -5,6 +5,7 @@ use super::*;
 use crate::components::editor::LabelMutationRollback;
 use crate::components::editor::state::editor_state::NoteConflict;
 use crate::notebook::NotebookError;
+use std::time::Duration;
 
 pub(super) fn handle_debounced_metadata(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
@@ -60,6 +61,10 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                 return Task::none();
             }
 
+            if state.state.connection_error().is_some() {
+                return window::close(window_id);
+            }
+
             state.shutdown_in_progress = true;
 
             let notebook_path = state.state.notebook_path().to_string();
@@ -69,13 +74,26 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
 
             Task::perform(
                 async move {
-                    let result = note_coordinator::flush_for_shutdown(
-                        &notebook_path,
-                        content_note_path,
-                        &markdown_text,
-                        &notes,
+                    let result = match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        note_coordinator::flush_for_shutdown(
+                            &notebook_path,
+                            content_note_path,
+                            &markdown_text,
+                            &notes,
+                        ),
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(NotebookError::api(
+                            "shutdown flush",
+                            None,
+                            None,
+                            "request timed out after 5 seconds",
+                            true,
+                        )),
+                    };
                     (window_id, result)
                 },
                 |(window_id, result)| Message::ShutdownFlushCompleted(window_id, result),
@@ -87,19 +105,11 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
             match result {
                 Ok(()) => window::close(window_id),
                 Err(_error) => {
-                    #[cfg(not(test))]
-                    {
-                        let _ = DialogBuilder::message()
-                            .set_level(MessageLevel::Error)
-                            .set_title("Failed to Save Before Exit")
-                            .set_text(format!(
-                                "Cognate could not safely save your latest changes before exit:\n\n{}",
-                                _error.ui_message()
-                            ))
-                            .alert()
-                            .show();
-                    }
-                    Task::none()
+                    eprintln!(
+                        "[cognate] shutdown flush failed; closing without confirmation: {}",
+                        _error.ui_message()
+                    );
+                    window::close(window_id)
                 }
             }
         }

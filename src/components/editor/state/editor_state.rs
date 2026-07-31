@@ -29,6 +29,7 @@ pub struct EditorState {
     config_path: String,
     ui_scale: f32,
     app_version: String,
+    connection_error: Option<String>,
 
     // Note selection and metadata
     selected_note_path: Option<String>,
@@ -62,6 +63,7 @@ impl EditorState {
             config_path: String::new(),
             ui_scale: 1.0,
             app_version: String::new(),
+            connection_error: None,
             selected_note_path: None,
             selected_note_labels: Vec::new(),
             new_label_text: String::new(),
@@ -88,6 +90,10 @@ impl EditorState {
 
     pub fn app_version(&self) -> &str {
         &self.app_version
+    }
+
+    pub fn connection_error(&self) -> Option<&str> {
+        self.connection_error.as_deref()
     }
 
     pub fn config_path(&self) -> &str {
@@ -201,6 +207,14 @@ impl EditorState {
 
     pub fn set_app_version(&mut self, version: String) {
         self.app_version = version;
+    }
+
+    pub fn set_connection_error(&mut self, error: String) {
+        self.connection_error = Some(error);
+    }
+
+    pub fn clear_connection_error(&mut self) {
+        self.connection_error = None;
     }
 
     pub fn set_config_path(&mut self, path: String) {

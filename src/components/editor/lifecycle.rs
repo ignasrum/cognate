@@ -41,11 +41,17 @@ impl Editor {
         editor_instance.state.set_ui_scale(flags.scale);
         editor_instance.state.set_app_version(flags.version);
 
-        let initial_command = if !editor_instance.state.notebook_path().is_empty() {
+        if !editor_instance.state.notebook_path().is_empty() {
             editor_instance
-                .note_explorer
-                .update(note_explorer::Message::LoadNotes)
-                .map(Message::NoteExplorerMsg)
+                .state
+                .set_connection_error("Checking connection to server...".to_string());
+        }
+
+        let initial_command = if !editor_instance.state.notebook_path().is_empty() {
+            Task::perform(
+                crate::notebook::check_connection(),
+                Message::ConnectionChecked,
+            )
         } else {
             Task::none()
         };

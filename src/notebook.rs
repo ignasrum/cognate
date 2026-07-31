@@ -40,6 +40,7 @@ pub struct NoteSearchPage {
     pub total: usize,
 }
 
+pub(crate) use backend::check_connection;
 pub use backend::configure_backend;
 pub(crate) use backend::is_api as is_api_backend;
 pub(crate) use backend::load_note_content;

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::Duration;
 
 use cognate_engine::storage::NoteMetadata;
 
@@ -151,6 +152,36 @@ pub async fn load_metadata(_notebook_path: String) -> Result<MetadataLoadResult,
                 notes,
                 warning: None,
             })
+        }
+    }
+}
+
+pub async fn check_connection() -> Result<(), NotebookError> {
+    match selected() {
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
+        SelectedBackend::Api(client) => {
+            let url = endpoint(&client, "/v1/health")?;
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                authorized(client.client.get(url), &client).send(),
+            )
+            .await
+            .map_err(|_| {
+                NotebookError::api(
+                    "connect to server",
+                    None,
+                    None,
+                    "request timed out after 5 seconds",
+                    true,
+                )
+            })?
+            .map_err(|error| {
+                NotebookError::api("connect to server", None, None, error.to_string(), true)
+            })?;
+            if !response.status().is_success() {
+                return Err(api_response_error(response, "connect to server").await);
+            }
+            Ok(())
         }
     }
 }
