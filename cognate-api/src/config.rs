@@ -22,7 +22,7 @@ impl Config {
             .map_err(|error| ApiError::Config(format!("invalid COGNATE_API_BIND_PORT: {error}")))?;
         if port == 0 {
             return Err(ApiError::Config(
-                "COGNATE_API_PORT must be non-zero".to_string(),
+                "COGNATE_API_BIND_PORT must be non-zero".to_string(),
             ));
         }
 
