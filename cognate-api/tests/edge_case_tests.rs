@@ -144,8 +144,42 @@ async fn empty_search_query_returns_a_valid_result() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(payload["results"], serde_json::json!([]));
+    assert_eq!(payload, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn paginated_search_returns_cursor_contract() {
+    let app = TestApp::new().await;
+    let client = app.provision("search-page").await;
+    let response = app
+        .request(bearer_request(
+            "GET",
+            "/v1/search/page?q=",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(payload["results"].is_array());
     assert_eq!(payload["total"], 0);
+    assert!(payload.get("next_cursor").is_some());
+}
+
+#[tokio::test]
+async fn paginated_search_rejects_a_malformed_cursor() {
+    let app = TestApp::new().await;
+    let client = app.provision("search-cursor").await;
+    let response = app
+        .request(bearer_request(
+            "GET",
+            "/v1/search/page?q=term&cursor=not-a-cursor",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(response.status(), 400);
 }
 
 #[tokio::test]

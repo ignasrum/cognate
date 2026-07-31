@@ -33,6 +33,13 @@ pub struct NoteSearchResult {
     pub highlights: Vec<cognate_engine::search::SearchHighlight>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSearchPage {
+    pub results: Vec<NoteSearchResult>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
 pub use backend::configure_backend;
 pub(crate) use backend::is_api as is_api_backend;
 pub(crate) use backend::load_note_content;
@@ -42,8 +49,23 @@ pub(crate) use backend::{delete_attachment, download_attachment, upload_attachme
 #[allow(unused_imports)]
 pub use error::{EngineResultExt, NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
-pub use search::{SearchNote, clear_search_index_for_notebook, search_notes_with_snapshot};
+pub use search::{SearchNote, clear_search_index_for_notebook};
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
     save_note_content,
 };
+
+pub(crate) async fn search_notes_page(
+    notebook_path: String,
+    notes: Vec<SearchNote>,
+    query: String,
+    limit: usize,
+    cursor: Option<String>,
+) -> Result<NoteSearchPage, NotebookError> {
+    if is_api_backend() {
+        backend::search_page(notebook_path, notes, query, limit, cursor).await
+    } else {
+        search::search_notes_page_with_snapshot_local(notebook_path, notes, query, limit, cursor)
+            .await
+    }
+}

@@ -38,6 +38,10 @@ pub struct EditorState {
     new_label_text: String,
     search_query: String,
     search_results: Vec<NoteSearchResult>,
+    search_next_cursor: Option<String>,
+    search_total: usize,
+    search_loading: bool,
+    search_error: Option<String>,
 
     // UI mode and dialog-specific state
     ui_mode: UiMode,
@@ -63,6 +67,10 @@ impl EditorState {
             new_label_text: String::new(),
             search_query: String::new(),
             search_results: Vec::new(),
+            search_next_cursor: None,
+            search_total: 0,
+            search_loading: false,
+            search_error: None,
             ui_mode: UiMode::Editor,
             new_note_path_input: String::new(),
             move_note_current_path: None,
@@ -108,6 +116,22 @@ impl EditorState {
 
     pub fn search_results(&self) -> &[NoteSearchResult] {
         &self.search_results
+    }
+
+    pub fn search_next_cursor(&self) -> Option<&str> {
+        self.search_next_cursor.as_deref()
+    }
+
+    pub fn search_total(&self) -> usize {
+        self.search_total
+    }
+
+    pub fn search_loading(&self) -> bool {
+        self.search_loading
+    }
+
+    pub fn search_error(&self) -> Option<&str> {
+        self.search_error.as_deref()
     }
 
     pub fn show_visualizer(&self) -> bool {
@@ -213,9 +237,35 @@ impl EditorState {
         self.search_results = results;
     }
 
+    pub fn begin_search(&mut self) {
+        self.search_loading = true;
+        self.search_error = None;
+    }
+
+    pub fn complete_search(&mut self, page: crate::notebook::NoteSearchPage, append: bool) {
+        if append {
+            self.search_results.extend(page.results);
+        } else {
+            self.search_results = page.results;
+        }
+        self.search_next_cursor = page.next_cursor;
+        self.search_total = page.total;
+        self.search_loading = false;
+        self.search_error = None;
+    }
+
+    pub fn fail_search(&mut self, error: String) {
+        self.search_loading = false;
+        self.search_error = Some(error);
+    }
+
     pub fn clear_search(&mut self) {
         self.search_query.clear();
         self.search_results.clear();
+        self.search_next_cursor = None;
+        self.search_total = 0;
+        self.search_loading = false;
+        self.search_error = None;
     }
 
     pub fn set_loading_note(&mut self, loading: bool) {

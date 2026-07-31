@@ -39,7 +39,10 @@ pub enum Message {
     SearchQueryChanged(String),
     SearchDebounced(u64),
     RunSearch,
+    #[allow(dead_code)]
     SearchCompleted(u64, Vec<notebook::NoteSearchResult>),
+    SearchPageCompleted(u64, bool, Result<notebook::NoteSearchPage, NotebookError>),
+    LoadMoreSearchResults,
     ClearSearch,
 
     // Content management

@@ -31,6 +31,7 @@ Use this checklist before releases or significant UI changes.
 - Rapid typing waits briefly before searching and never displays stale results
 - API search returns the same matches and match types as local search
 - API search pagination returns stable, non-duplicated pages
+- Legacy `/v1/search` and paginated `/v1/search/page` responses both work
 - Clearing search restores normal explorer state
 
 ## Embedded Images

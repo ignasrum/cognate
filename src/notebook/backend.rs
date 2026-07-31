@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::configuration::{Configuration, StorageBackend};
 use crate::notebook::offline_queue::{self, QueueStatus, QueuedNoteWrite};
 use crate::notebook::write_coordinator::WriteCoordinator;
-use crate::notebook::{MetadataLoadResult, NoteSearchResult, NotebookError};
+use crate::notebook::{MetadataLoadResult, NoteSearchPage, NoteSearchResult, NotebookError};
 
 #[derive(Clone)]
 enum SelectedBackend {
@@ -731,45 +731,59 @@ pub async fn move_note(
     }
 }
 
+#[allow(dead_code)]
 pub async fn search(
     notebook_path: String,
     notes: Vec<crate::notebook::SearchNote>,
     query: String,
 ) -> Vec<NoteSearchResult> {
+    search_page(notebook_path, notes, query, 100, None)
+        .await
+        .map(|page| page.results)
+        .unwrap_or_default()
+}
+
+pub async fn search_page(
+    notebook_path: String,
+    notes: Vec<crate::notebook::SearchNote>,
+    query: String,
+    limit: usize,
+    cursor: Option<String>,
+) -> Result<NoteSearchPage, NotebookError> {
     let SelectedBackend::Api(client) = selected() else {
-        return crate::notebook::search::search_notes_with_snapshot_local(
+        return crate::notebook::search::search_notes_page_with_snapshot_local(
             notebook_path,
             notes,
             query,
+            limit,
+            cursor,
         )
         .await;
     };
-    let Ok(url) = endpoint(&client, "/v1/search") else {
-        return Vec::new();
+    let Ok(url) = endpoint(&client, "/v1/search/page") else {
+        return Err(api_error("search", "invalid API URL"));
     };
-    let Ok(response) = send::<ApiSearchResponse>(
-        authorized(
-            client
-                .client
-                .get(url)
-                .query(&[("q", query.as_str()), ("limit", "100")]),
-            &client,
-        ),
+    let mut query_parameters = vec![("q", query), ("limit", limit.to_string())];
+    if let Some(cursor) = cursor {
+        query_parameters.push(("cursor", cursor));
+    }
+    let response = send::<ApiSearchResponse>(
+        authorized(client.client.get(url).query(&query_parameters), &client),
         "search",
     )
-    .await
-    else {
-        return Vec::new();
-    };
-    let _ = (response.next_cursor, response.total);
-    response
-        .results
-        .into_iter()
-        .map(|result| NoteSearchResult {
-            rel_path: result.rel_path,
-            snippet: result.snippet,
-            match_type: result.match_type,
-            highlights: result.highlights,
-        })
-        .collect()
+    .await?;
+    Ok(NoteSearchPage {
+        results: response
+            .results
+            .into_iter()
+            .map(|result| NoteSearchResult {
+                rel_path: result.rel_path,
+                snippet: result.snippet,
+                match_type: result.match_type,
+                highlights: result.highlights,
+            })
+            .collect(),
+        next_cursor: response.next_cursor,
+        total: response.total,
+    })
 }

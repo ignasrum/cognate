@@ -75,7 +75,7 @@ Example:
 
 When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, search, and embedded attachments use `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Attachment uploads and downloads are authenticated and limited to supported image signatures.
 
-Search accepts plain text plus optional filters such as `label:work`, `path:projects/`, `updated:2026-01-01..2026-12-31`, quoted phrases, and negation (`-label:archive`). API searches use `GET /v1/search?q=...&limit=25&cursor=...`; limits are bounded to 100 results per page. Results include a match type, snippet, score, and character-based highlight ranges.
+Search accepts plain text plus optional filters such as `label:work`, `path:projects/`, `updated:2026-01-01..2026-12-31`, quoted phrases, and negation (`-label:archive`). Existing clients can use `GET /v1/search?q=...` for a legacy result array; paginated clients should use `GET /v1/search/page?q=...&limit=25&cursor=...`. Limits are bounded to 100 results per page. Results include a match type, snippet, score, and character-based highlight ranges.
 
 API note writes use content-hash revisions exposed as `ETag` values. Clients must send the revision they loaded in `If-Match`; stale writes receive `409 Conflict` and do not overwrite the server version. If the API is temporarily unreachable, API-mode note content is saved in the permissions-restricted `.cognate-api-queue.json` file beside the configuration and retried on a later save.
 

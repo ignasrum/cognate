@@ -88,6 +88,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_attachment),
         )
         .route("/v1/search", get(search))
+        .route("/v1/search/page", get(search_page))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
     Router::new()
@@ -396,6 +397,7 @@ async fn save_metadata(
         });
     }
     manager.save_metadata(&notes).await?;
+    invalidate_search_index(&state).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -483,6 +485,7 @@ async fn save_note(
         HeaderValue::from_str(&format!("\"{}\"", save_result.metadata_revision))
             .expect("hash is header-safe"),
     );
+    invalidate_search_index(&state).await;
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -494,6 +497,7 @@ async fn create_note(
     let loaded = manager.load_metadata().await?;
     let mut notes = loaded.notes;
     let note = manager.create_note(&payload.rel_path, &mut notes).await?;
+    invalidate_search_index(&state).await;
     Ok((StatusCode::CREATED, Json(note)))
 }
 
@@ -505,6 +509,7 @@ async fn delete_note(
     let loaded = manager.load_metadata().await?;
     let mut notes = loaded.notes;
     manager.delete_note(&rel_path, &mut notes).await?;
+    invalidate_search_index(&state).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -518,7 +523,13 @@ async fn move_note(
     let new_path = manager
         .move_note(&payload.from_rel_path, &payload.to_rel_path, &mut notes)
         .await?;
+    invalidate_search_index(&state).await;
     Ok(Json(serde_json::json!({ "rel_path": new_path })))
+}
+
+async fn invalidate_search_index(state: &AppState) {
+    let manager = state.search_manager().await;
+    manager.lock().await.clear_cache();
 }
 
 fn current_timestamp() -> String {
@@ -530,6 +541,15 @@ fn current_timestamp() -> String {
 }
 
 async fn search(
+    State(state): State<AppState>,
+    Query(mut query): Query<SearchQuery>,
+) -> Result<Json<Vec<cognate_engine::search::SearchResultEntry>>, ApiError> {
+    query.limit = Some(query.limit.unwrap_or(100).min(100));
+    let Json(response) = search_page(State(state), Query(query)).await?;
+    Ok(Json(response.results))
+}
+
+async fn search_page(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<cognate_engine::search::SearchResponse>, ApiError> {
@@ -545,7 +565,7 @@ async fn search(
     if query
         .cursor
         .as_deref()
-        .is_some_and(|cursor| cursor.len() > 32)
+        .is_some_and(|cursor| cursor.len() > 80)
     {
         return Err(ApiError::BadRequest("cursor is too long".to_string()));
     }

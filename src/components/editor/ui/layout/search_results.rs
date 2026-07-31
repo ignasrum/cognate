@@ -7,17 +7,25 @@ use crate::notebook::NoteSearchResult;
 pub(super) fn render_search_results(
     search_query: &str,
     results: &[NoteSearchResult],
+    next_cursor: Option<&str>,
+    total: usize,
+    loading: bool,
+    error: Option<&str>,
 ) -> Element<'static, Message> {
     let mut results_column = Column::new().spacing(4).push(
         Text::new(format!(
             "Search results for '{}': {}",
             search_query,
-            results.len()
+            if total == 0 { results.len() } else { total }
         ))
         .size(14),
     );
 
-    if results.is_empty() {
+    if let Some(error) = error {
+        results_column = results_column.push(Text::new(error.to_string()).size(13));
+        results_column =
+            results_column.push(button(Text::new("Retry")).on_press(Message::RunSearch));
+    } else if results.is_empty() && !loading {
         results_column = results_column.push(Text::new("No matches found.").size(13));
     } else {
         let max_results_to_render = 8;
@@ -27,24 +35,46 @@ pub(super) fn render_search_results(
                     .on_press(Message::NoteSelected(result.rel_path.clone()))
                     .padding(3),
             );
-            results_column = results_column.push(Text::new(result.snippet.clone()).size(12));
+            results_column = results_column.push(Text::new(highlighted_snippet(result)).size(12));
             results_column =
                 results_column.push(Text::new(format!("Match: {:?}", result.match_type)).size(11));
         }
 
         if results.len() > max_results_to_render {
-            results_column = results_column.push(
-                Text::new(format!(
-                    "... and {} more matches",
-                    results.len() - max_results_to_render
-                ))
-                .size(12),
-            );
+            results_column = results_column.push(Text::new("More results available...").size(12));
         }
+    }
+    if loading {
+        results_column = results_column.push(Text::new("Searching...").size(12));
+    } else if next_cursor.is_some() {
+        results_column = results_column
+            .push(button(Text::new("Load more results")).on_press(Message::LoadMoreSearchResults));
     }
 
     Container::new(results_column)
         .padding(6)
         .width(Length::Fill)
         .into()
+}
+
+fn highlighted_snippet(result: &NoteSearchResult) -> String {
+    if result.highlights.is_empty() {
+        return result.snippet.clone();
+    }
+    let chars = result.snippet.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut cursor = 0;
+    for range in &result.highlights {
+        let start = range.start.min(chars.len());
+        let end = range.end.min(chars.len()).max(start);
+        if start > cursor {
+            output.extend(&chars[cursor..start]);
+        }
+        output.push('⟦');
+        output.extend(&chars[start..end]);
+        output.push('⟧');
+        cursor = end;
+    }
+    output.extend(&chars[cursor..]);
+    output
 }

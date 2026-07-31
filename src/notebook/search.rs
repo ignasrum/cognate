@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
-use super::{NoteMetadata, NoteSearchResult};
+use super::{NoteMetadata, NoteSearchPage, NoteSearchResult, NotebookError};
 
 #[cfg(test)]
 const SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_millis(150);
@@ -158,6 +158,7 @@ pub(super) async fn cache_rename_search_index_entries(
     }
 }
 
+#[allow(dead_code)]
 pub async fn search_notes_with_snapshot(
     notebook_path: String,
     notes: Vec<SearchNote>,
@@ -169,16 +170,13 @@ pub async fn search_notes_with_snapshot(
     search_notes_with_snapshot_local(notebook_path, notes, query).await
 }
 
-pub(crate) async fn search_notes_with_snapshot_local(
+pub(crate) async fn search_notes_page_with_snapshot_local(
     notebook_path: String,
     notes: Vec<SearchNote>,
     query: String,
-) -> Vec<NoteSearchResult> {
-    let normalized_query = query.trim().to_lowercase();
-    if normalized_query.is_empty() {
-        return Vec::new();
-    }
-
+    limit: usize,
+    cursor: Option<String>,
+) -> Result<NoteSearchPage, NotebookError> {
     let engine_notes: Vec<cognate_engine::storage::NoteMetadata> = notes
         .iter()
         .map(|n| cognate_engine::storage::NoteMetadata {
@@ -187,7 +185,6 @@ pub(crate) async fn search_notes_with_snapshot_local(
             last_updated: n.last_updated.clone(),
         })
         .collect();
-
     let manager_arc = with_search_indexes(|search_indexes| {
         prune_search_indexes(search_indexes);
         let index = search_indexes
@@ -196,38 +193,49 @@ pub(crate) async fn search_notes_with_snapshot_local(
         touch_search_index(index);
         index.manager.clone()
     });
-
     let mut manager = manager_arc.lock().await;
-    let engine_results = manager
-        .search(
-            &query,
+    let response = manager
+        .search_request(
+            &cognate_engine::search::SearchRequest {
+                query,
+                limit,
+                cursor,
+            },
             &engine_notes,
             SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
         )
-        .await;
+        .await
+        .map_err(NotebookError::from)?;
+    Ok(NoteSearchPage {
+        results: response
+            .results
+            .into_iter()
+            .map(|res| NoteSearchResult {
+                rel_path: res.rel_path,
+                snippet: res.snippet,
+                match_type: res.match_type,
+                highlights: res.highlights,
+            })
+            .collect(),
+        next_cursor: response.next_cursor,
+        total: response.total,
+    })
+}
 
-    let mut results = match engine_results {
-        Ok(res) => res,
-        Err(_) => return Vec::new(),
-    };
+#[allow(dead_code)]
+pub(crate) async fn search_notes_with_snapshot_local(
+    notebook_path: String,
+    notes: Vec<SearchNote>,
+    query: String,
+) -> Vec<NoteSearchResult> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
 
-    // Sort by BM25 score descending, fallback to alphabetical order of paths
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.rel_path.cmp(&b.rel_path))
-    });
-
-    results
-        .into_iter()
-        .map(|res| NoteSearchResult {
-            rel_path: res.rel_path,
-            snippet: res.snippet,
-            match_type: res.match_type,
-            highlights: res.highlights,
-        })
-        .collect()
+    search_notes_page_with_snapshot_local(notebook_path, notes, query, 100, None)
+        .await
+        .map(|page| page.results)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

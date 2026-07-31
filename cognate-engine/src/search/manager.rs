@@ -144,12 +144,26 @@ impl SearchIndexManager {
     ) -> Result<SearchResponse, EngineError> {
         let parsed = parse_query(&request.query)
             .map_err(|error| EngineError::validation("search query", error.to_string()))?;
-        let offset = request
-            .cursor
-            .as_deref()
-            .unwrap_or("0")
-            .parse::<usize>()
-            .map_err(|_| EngineError::validation("search cursor", "invalid cursor"))?;
+        let query_key = blake3::hash(request.query.trim().as_bytes())
+            .to_hex()
+            .to_string();
+        let offset = match request.cursor.as_deref() {
+            None => 0,
+            Some(cursor) => {
+                let Some((cursor_key, offset)) = cursor.split_once(':') else {
+                    return Err(EngineError::validation("search cursor", "invalid cursor"));
+                };
+                if cursor_key != query_key {
+                    return Err(EngineError::validation(
+                        "search cursor",
+                        "cursor does not belong to this query",
+                    ));
+                }
+                offset
+                    .parse::<usize>()
+                    .map_err(|_| EngineError::validation("search cursor", "invalid cursor"))?
+            }
+        };
         let limit = request.limit.clamp(1, 100);
         let now = Instant::now();
         let should_refresh = match self.last_external_refresh {
@@ -305,9 +319,10 @@ impl SearchIndexManager {
                 || (!parsed.path_filters.is_empty() && !rel_path_match)
                 || (!parsed.label_filters.is_empty() && label_match.is_none())
                 || parsed.updated_range.as_ref().is_some_and(|(from, to)| {
-                    note.last_updated
-                        .as_deref()
-                        .is_none_or(|date| date < from.as_str() || date > to.as_str())
+                    note.last_updated.as_deref().is_none_or(|date| {
+                        let date = date.get(..10).unwrap_or(date);
+                        date < from.as_str() || date > to.as_str()
+                    })
                 })
             {
                 continue;
@@ -339,8 +354,8 @@ impl SearchIndexManager {
                 || label_match.is_some()
                 || content_match.is_some()
             {
-                let (snippet, highlights, match_type) = if let Some(content_snippet) = content_match
-                {
+                let has_content_match = content_match.is_some();
+                let (snippet, highlights, _) = if let Some(content_snippet) = content_match {
                     (
                         content_snippet.0,
                         content_snippet.1,
@@ -362,6 +377,17 @@ impl SearchIndexManager {
                     };
                     let highlights = highlight_ranges(&snippet, &parsed);
                     (snippet, highlights, SearchMatchType::Path)
+                };
+
+                let match_type = match [has_content_match, has_label_match, rel_path_match]
+                    .into_iter()
+                    .filter(|matched| *matched)
+                    .count()
+                {
+                    0 | 1 if has_content_match => SearchMatchType::Content,
+                    0 | 1 if has_label_match => SearchMatchType::Label,
+                    _ if has_content_match || has_label_match => SearchMatchType::Multiple,
+                    _ => SearchMatchType::Path,
                 };
 
                 results.push(SearchResultEntry {
@@ -392,7 +418,7 @@ impl SearchIndexManager {
         };
         Ok(SearchResponse {
             results: page,
-            next_cursor: (end < total).then(|| end.to_string()),
+            next_cursor: (end < total).then(|| format!("{query_key}:{end}")),
             total,
         })
     }
@@ -452,5 +478,15 @@ fn highlight_ranges(text: &str, query: &ParsedSearchQuery) -> Vec<SearchHighligh
         }
     }
     ranges.sort_by_key(|range| range.start);
-    ranges
+    let mut merged: Vec<SearchHighlight> = Vec::new();
+    for range in ranges {
+        if let Some(previous) = merged.last_mut()
+            && range.start <= previous.end
+        {
+            previous.end = previous.end.max(range.end);
+        } else {
+            merged.push(range);
+        }
+    }
+    merged
 }

@@ -102,6 +102,10 @@ fn build_editor_workspace<'a>(
         explorer_column = explorer_column.push(search_results::render_search_results(
             state.search_query(),
             state.search_results(),
+            state.search_next_cursor(),
+            state.search_total(),
+            state.search_loading(),
+            state.search_error(),
         ));
     }
 
