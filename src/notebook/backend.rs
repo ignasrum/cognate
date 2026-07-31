@@ -5,7 +5,8 @@ use cognate_engine::storage::NoteMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::configuration::{Configuration, StorageBackend};
-use crate::notebook::offline_queue::{self, QueuedNoteWrite};
+use crate::notebook::offline_queue::{self, QueueStatus, QueuedNoteWrite};
+use crate::notebook::write_coordinator::WriteCoordinator;
 use crate::notebook::{MetadataLoadResult, NoteSearchResult, NotebookError};
 
 #[derive(Clone)]
@@ -22,6 +23,7 @@ struct ApiClient {
     revisions: Arc<Mutex<HashMap<String, String>>>,
     metadata_revision: Arc<Mutex<Option<String>>>,
     queue_path: std::path::PathBuf,
+    write_coordinator: WriteCoordinator,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +89,7 @@ pub fn configure_backend(configuration: &Configuration) {
             revisions: Arc::new(Mutex::new(HashMap::new())),
             metadata_revision: Arc::new(Mutex::new(None)),
             queue_path: offline_queue::queue_path(&configuration.config_path),
+            write_coordinator: WriteCoordinator::default(),
         }),
     };
 
@@ -371,6 +374,18 @@ pub async fn save_note_content(
                 .await
         }
         SelectedBackend::Api(client) => {
+            let write_ticket = client.write_coordinator.begin(&rel_path);
+            let _write_guard = write_ticket.acquire().await;
+            // Give edits already queued by the UI event loop a chance to replace
+            // this payload before reading the cached revision and sending it.
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            if write_ticket.was_superseded() {
+                eprintln!(
+                    "[cognate] note_write_coalesced note={} reason=newer_local_generation",
+                    rel_path
+                );
+                return Ok(());
+            }
             replay_queued_writes(&client).await?;
             if offline_queue::read(&client.queue_path)
                 .map_err(|error| api_error("offline queue", error))?
@@ -395,12 +410,20 @@ pub async fn save_note_content(
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(error) => {
+                    eprintln!(
+                        "[cognate] note_write_transport_error note={} expected_revision={}",
+                        rel_path,
+                        revision_prefix(revision.as_deref())
+                    );
                     offline_queue::enqueue(
                         &client.queue_path,
                         QueuedNoteWrite {
                             rel_path,
                             content,
                             expected_revision: revision,
+                            status: QueueStatus::Pending,
+                            retry_count: 0,
+                            next_retry_at: None,
                         },
                     )
                     .map_err(|queue_error| api_error("offline queue", queue_error))?;
@@ -411,6 +434,12 @@ pub async fn save_note_content(
                 if response.status() == reqwest::StatusCode::CONFLICT {
                     let status = response.status();
                     if let Ok(conflict) = response.json::<ApiConflict>().await {
+                        eprintln!(
+                            "[cognate] note_write_conflict note={} expected_revision={} server_revision={}",
+                            rel_path,
+                            revision_prefix(revision.as_deref()),
+                            revision_prefix(Some(&conflict.current_revision))
+                        );
                         return Err(NotebookError::conflict(
                             "save note",
                             content,
@@ -423,6 +452,11 @@ pub async fn save_note_content(
                         format!("server returned HTTP {status}"),
                     ));
                 }
+                eprintln!(
+                    "[cognate] note_write_failed note={} status={}",
+                    rel_path,
+                    response.status()
+                );
                 return Err(api_error(
                     "save note",
                     format!("server returned HTTP {}", response.status()),
@@ -434,7 +468,11 @@ pub async fn save_note_content(
                 .and_then(|value| value.to_str().ok())
                 .map(|value| value.trim_matches('"').to_string())
             {
-                client.revisions.lock().unwrap().insert(rel_path, revision);
+                client
+                    .revisions
+                    .lock()
+                    .unwrap()
+                    .insert(rel_path.clone(), revision);
             }
             if let Some(metadata_revision) = response
                 .headers()
@@ -444,9 +482,26 @@ pub async fn save_note_content(
             {
                 *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
             }
+            eprintln!("[cognate] note_write_succeeded note={}", rel_path);
             Ok(())
         }
     }
+}
+
+fn revision_prefix(revision: Option<&str>) -> String {
+    revision.unwrap_or("none").chars().take(12).collect()
+}
+
+pub(crate) async fn replay_offline_queue() -> Result<(), NotebookError> {
+    let SelectedBackend::Api(client) = selected() else {
+        return Ok(());
+    };
+    let _write_guard = client
+        .write_coordinator
+        .begin("__offline_queue__")
+        .acquire()
+        .await;
+    replay_queued_writes(&client).await
 }
 
 async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
@@ -457,7 +512,20 @@ async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
     }
 
     let mut remaining = Vec::new();
-    for entry in entries {
+    let now = offline_queue::now_seconds();
+    for mut entry in entries {
+        if entry.status == QueueStatus::Conflict {
+            eprintln!(
+                "[cognate] offline_write_conflict_paused note={}",
+                entry.rel_path
+            );
+            remaining.push(entry);
+            continue;
+        }
+        if entry.next_retry_at.is_some_and(|retry_at| retry_at > now) {
+            remaining.push(entry);
+            continue;
+        }
         let url = note_endpoint(client, &entry.rel_path)?;
         let mut request = authorized(client.client.put(url).body(entry.content.clone()), client);
         if let Some(revision) = entry.expected_revision.as_deref() {
@@ -466,6 +534,13 @@ async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
+                eprintln!(
+                    "[cognate] offline_write_transport_error note={}",
+                    entry.rel_path
+                );
+                entry.retry_count = entry.retry_count.saturating_add(1);
+                entry.next_retry_at =
+                    Some(now.saturating_add(offline_queue::retry_delay_seconds(entry.retry_count)));
                 remaining.push(entry);
                 offline_queue::write(&client.queue_path, &remaining)
                     .map_err(|queue_error| api_error("offline queue", queue_error))?;
@@ -485,7 +560,52 @@ async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
                     .unwrap()
                     .insert(entry.rel_path.clone(), revision);
             }
+            if let Some(metadata_revision) = response
+                .headers()
+                .get("x-metadata-etag")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.trim_matches('"').to_string())
+            {
+                *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
+            }
+            eprintln!("[cognate] offline_write_replayed note={}", entry.rel_path);
         } else {
+            if response.status() == reqwest::StatusCode::CONFLICT {
+                let status = response.status();
+                if let Ok(conflict) = response.json::<ApiConflict>().await {
+                    eprintln!(
+                        "[cognate] offline_write_conflict note={} server_revision={}",
+                        entry.rel_path,
+                        revision_prefix(Some(&conflict.current_revision))
+                    );
+                    entry.status = QueueStatus::Conflict;
+                    entry.next_retry_at = None;
+                    remaining.push(entry.clone());
+                    offline_queue::write(&client.queue_path, &remaining)
+                        .map_err(|error| api_error("offline queue", error))?;
+                    return Err(NotebookError::conflict(
+                        "offline write",
+                        entry.content,
+                        conflict.current_content,
+                        conflict.current_revision,
+                    ));
+                }
+                remaining.push(entry);
+                offline_queue::write(&client.queue_path, &remaining)
+                    .map_err(|error| api_error("offline queue", error))?;
+                return Err(api_error(
+                    "offline queue retry",
+                    format!("server returned HTTP {status}"),
+                ));
+            }
+            eprintln!(
+                "[cognate] offline_write_failed note={} status={}",
+                entry.rel_path,
+                response.status()
+            );
+            entry.retry_count = entry.retry_count.saturating_add(1);
+            entry.next_retry_at =
+                Some(now.saturating_add(offline_queue::retry_delay_seconds(entry.retry_count)));
             remaining.push(entry);
         }
     }

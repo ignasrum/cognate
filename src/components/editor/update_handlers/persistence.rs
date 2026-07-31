@@ -140,12 +140,23 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
                 } = error
                 {
                     if let Some(note_path) = state.state.selected_note_path().cloned() {
-                        state.state.show_conflict_dialog(NoteConflict {
-                            note_path,
-                            local_content,
-                            server_content,
-                            server_revision,
+                        let duplicate = state.state.conflict().is_some_and(|existing| {
+                            existing.note_path == note_path
+                                && existing.server_revision == server_revision
                         });
+                        if !duplicate {
+                            eprintln!(
+                                "[cognate] conflict_dialog_open note={} server_revision={}",
+                                note_path,
+                                server_revision.chars().take(12).collect::<String>()
+                            );
+                            state.state.show_conflict_dialog(NoteConflict {
+                                note_path,
+                                local_content,
+                                server_content,
+                                server_revision,
+                            });
+                        }
                     }
                     return Task::none();
                 }

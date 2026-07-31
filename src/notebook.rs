@@ -15,6 +15,8 @@ mod operations;
 mod search;
 #[path = "notebook/storage.rs"]
 mod storage;
+#[path = "notebook/write_coordinator.rs"]
+mod write_coordinator;
 
 pub use cognate_engine::storage::NoteMetadata;
 
@@ -30,6 +32,7 @@ pub struct NoteSearchResult {
 pub use backend::configure_backend;
 pub(crate) use backend::is_api as is_api_backend;
 pub(crate) use backend::load_note_content;
+pub(crate) use backend::replay_offline_queue;
 pub(crate) use backend::set_note_revision;
 pub(crate) use backend::{delete_attachment, download_attachment, upload_attachment};
 #[allow(unused_imports)]

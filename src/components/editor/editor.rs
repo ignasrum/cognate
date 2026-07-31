@@ -137,9 +137,24 @@ impl Editor {
             Task::none()
         };
 
+        let offline_replay_command = if notebook::is_api_backend() {
+            Task::perform(notebook::replay_offline_queue(), |result| {
+                if let Err(error) = result {
+                    eprintln!("[cognate] startup_offline_replay_failed: {error}");
+                }
+                Message::NoteExplorerMsg(note_explorer::Message::LoadNotes)
+            })
+        } else {
+            Task::none()
+        };
+
         (
             editor_instance,
-            Task::batch(vec![initial_command, metadata_debounce_task]),
+            Task::batch(vec![
+                initial_command,
+                offline_replay_command,
+                metadata_debounce_task,
+            ]),
         )
     }
 

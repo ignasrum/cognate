@@ -62,13 +62,29 @@ pub async fn flush_for_shutdown(
     }
 
     if let Some(note_path) = content_note_path {
-        notebook::save_note_content(
+        let result = notebook::save_note_content(
             notebook_path.to_string(),
             note_path,
             markdown_text.to_string(),
         )
-        .await?;
+        .await;
+        if let Err(error) = result {
+            if notebook::is_api_backend() && is_transient_api_error(&error) {
+                eprintln!("[cognate] shutdown_saved_to_offline_queue: {error}");
+                return Ok(());
+            }
+            return Err(error);
+        }
     }
 
     save_metadata_snapshot(notebook_path, notes).await
+}
+
+fn is_transient_api_error(error: &NotebookError) -> bool {
+    matches!(
+        error,
+        NotebookError::Storage { context: "api", detail }
+            if detail.contains("error sending request")
+                || detail.contains("offline queue")
+    )
 }

@@ -1,11 +1,36 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum QueueStatus {
+    #[default]
+    Pending,
+    Conflict,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct QueuedNoteWrite {
     pub rel_path: String,
     pub content: String,
     pub expected_revision: Option<String>,
+    #[serde(default)]
+    pub status: QueueStatus,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub next_retry_at: Option<u64>,
+}
+
+pub(crate) fn now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+pub(crate) fn retry_delay_seconds(retry_count: u32) -> u64 {
+    2_u64.saturating_pow(retry_count.min(9)).min(300)
 }
 
 pub(crate) fn queue_path(config_path: &str) -> PathBuf {
@@ -71,6 +96,9 @@ mod tests {
                 rel_path: "note".into(),
                 content: "first".into(),
                 expected_revision: None,
+                status: QueueStatus::Pending,
+                retry_count: 0,
+                next_retry_at: None,
             },
         )
         .unwrap();
@@ -80,10 +108,38 @@ mod tests {
                 rel_path: "note".into(),
                 content: "latest".into(),
                 expected_revision: Some("rev".into()),
+                status: QueueStatus::Pending,
+                retry_count: 0,
+                next_retry_at: None,
             },
         )
         .unwrap();
         assert_eq!(read(&path).unwrap().len(), 1);
         assert_eq!(read(&path).unwrap()[0].content, "latest");
+    }
+
+    #[test]
+    fn retry_backoff_is_bounded_and_queue_status_round_trips() {
+        assert_eq!(retry_delay_seconds(0), 1);
+        assert_eq!(retry_delay_seconds(3), 8);
+        assert_eq!(retry_delay_seconds(99), 300);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("queue.json");
+        write(
+            &path,
+            &[QueuedNoteWrite {
+                rel_path: "note".into(),
+                content: "pending".into(),
+                expected_revision: Some("revision".into()),
+                status: QueueStatus::Conflict,
+                retry_count: 4,
+                next_retry_at: None,
+            }],
+        )
+        .unwrap();
+        let entry = read(&path).unwrap().remove(0);
+        assert_eq!(entry.status, QueueStatus::Conflict);
+        assert_eq!(entry.retry_count, 4);
     }
 }
