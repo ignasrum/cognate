@@ -34,6 +34,26 @@ async fn note_lifecycle_and_move_routes_use_the_engine() {
         )
         .await;
     assert_eq!(save.status(), 204);
+    let content_metadata_revision = save
+        .headers()
+        .get("x-metadata-etag")
+        .expect("content saves should return the resulting metadata revision")
+        .clone();
+
+    let metadata = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(metadata.status(), 200);
+    assert_eq!(
+        metadata.headers().get("etag"),
+        Some(&content_metadata_revision),
+        "content and metadata revisions must advance atomically"
+    );
 
     let move_response = app
         .request(

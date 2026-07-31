@@ -45,6 +45,12 @@ pub struct MetadataLoadResult {
     pub warning: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteContentSaveResult {
+    pub note_revision: String,
+    pub metadata_revision: String,
+}
+
 pub fn current_timestamp_rfc3339() -> String {
     OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
         .ok()
@@ -392,6 +398,10 @@ impl NotebookManager {
 
     pub async fn load_metadata(&self) -> Result<MetadataLoadResult, EngineError> {
         let _lock = self.concurrency.acquire_notebook().await?;
+        self.load_metadata_unlocked().await
+    }
+
+    async fn load_metadata_unlocked(&self) -> Result<MetadataLoadResult, EngineError> {
         let file_path = self.notebook_path.join(METADATA_FILE_NAME);
         let backup_path = self.notebook_path.join(METADATA_BACKUP_FILE_NAME);
         cleanup_stale_staged_delete_entries(&self.notebook_path).await;
@@ -892,7 +902,7 @@ impl NotebookManager {
         rel_path: &str,
         content: &str,
     ) -> Result<(), EngineError> {
-        self.save_note_content_if_match(rel_path, content, None)
+        self.save_note_content_internal(rel_path, content, None, false)
             .await
             .map(|_| ())
     }
@@ -902,7 +912,18 @@ impl NotebookManager {
         rel_path: &str,
         content: &str,
         expected_revision: Option<&str>,
-    ) -> Result<String, EngineError> {
+    ) -> Result<NoteContentSaveResult, EngineError> {
+        self.save_note_content_internal(rel_path, content, expected_revision, true)
+            .await
+    }
+
+    async fn save_note_content_internal(
+        &self,
+        rel_path: &str,
+        content: &str,
+        expected_revision: Option<&str>,
+        update_metadata: bool,
+    ) -> Result<NoteContentSaveResult, EngineError> {
         let _notebook_lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let _note_lock = self.concurrency.acquire_note(rel_path).await?;
@@ -946,7 +967,17 @@ impl NotebookManager {
         }
 
         if existing_content.as_deref() == Some(content) {
-            return Ok(current_revision);
+            let metadata_revision = if update_metadata {
+                let metadata = self.load_metadata_unlocked().await?;
+                let serialized = serde_json::to_string(&metadata.notes).unwrap_or_default();
+                note_content_revision(&serialized)
+            } else {
+                String::new()
+            };
+            return Ok(NoteContentSaveResult {
+                note_revision: current_revision,
+                metadata_revision,
+            });
         }
 
         write_text_file_atomically(&full_note_path, content).await?;
@@ -963,7 +994,27 @@ impl NotebookManager {
         engine_state.process_document(rel_path, content, &labels, Some(last_updated));
         save_engine_state_to_disk(&self.notebook_path, &engine_state).await?;
 
-        Ok(note_content_revision(content))
+        if !update_metadata {
+            return Ok(NoteContentSaveResult {
+                note_revision: note_content_revision(content),
+                metadata_revision: String::new(),
+            });
+        }
+
+        // Keep the metadata timestamp in the same notebook lock transaction as the content
+        // write. Otherwise a subsequent metadata save can observe a newer file mtime and
+        // unexpectedly invalidate the UI's metadata ETag.
+        let mut metadata = self.load_metadata_unlocked().await?.notes;
+        if let Some(note) = metadata.iter_mut().find(|note| note.rel_path == rel_path) {
+            note.last_updated = Some(current_timestamp_rfc3339());
+        }
+        save_metadata(&self.notebook_path, &metadata).await?;
+        let serialized = serde_json::to_string(&metadata).unwrap_or_default();
+
+        Ok(NoteContentSaveResult {
+            note_revision: note_content_revision(content),
+            metadata_revision: note_content_revision(&serialized),
+        })
     }
 }
 

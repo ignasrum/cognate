@@ -66,6 +66,10 @@ Authenticated client requests use:
 Authorization: Bearer cgnt_live_...
 ```
 
+Note content writes update the note timestamp and metadata revision in the same engine
+transaction. The response includes the note `ETag` and an `X-Metadata-ETag` for clients
+that cache metadata preconditions.
+
 Attachment clients use these authenticated routes:
 
 - `POST /v1/attachments?note=<note-path>` with raw image bytes to upload

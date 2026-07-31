@@ -436,6 +436,14 @@ pub async fn save_note_content(
             {
                 client.revisions.lock().unwrap().insert(rel_path, revision);
             }
+            if let Some(metadata_revision) = response
+                .headers()
+                .get("x-metadata-etag")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.trim_matches('"').to_string())
+            {
+                *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
+            }
             Ok(())
         }
     }

@@ -20,17 +20,12 @@ pub struct Configuration {
     pub api_key: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
+    #[default]
     Local,
     Api,
-}
-
-impl Default for StorageBackend {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 #[derive(Debug, Deserialize)]

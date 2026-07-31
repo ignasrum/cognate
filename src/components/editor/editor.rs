@@ -286,6 +286,12 @@ impl Editor {
 
     fn touch_selected_note_last_updated_and_schedule_save_task(&mut self) -> Task<Message> {
         if self.touch_selected_note_last_updated() {
+            // API note writes update last_updated atomically with note content and return
+            // the new metadata revision. A separate metadata request here races with that
+            // write and only creates avoidable 409 responses.
+            if notebook::is_api_backend() {
+                return Task::none();
+            }
             self.schedule_debounced_metadata_save_task()
         } else {
             Task::none()

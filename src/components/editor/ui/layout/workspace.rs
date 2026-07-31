@@ -55,10 +55,10 @@ pub(super) fn build_main_content<'a>(
         );
     }
 
-    if state.is_conflict_dialog_open() {
-        if let Some(conflict) = state.conflict() {
-            return dialogs::conflict_dialog(conflict);
-        }
+    if state.is_conflict_dialog_open()
+        && let Some(conflict) = state.conflict()
+    {
+        return dialogs::conflict_dialog(conflict);
     }
 
     if state.notebook_path().is_empty() {

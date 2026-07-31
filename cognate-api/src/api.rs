@@ -413,11 +413,11 @@ async fn save_note(
         return Err(ApiError::PreconditionRequired);
     };
     let manager = NotebookManager::new(&state.notebook_path);
-    let revision = match manager
+    let save_result = match manager
         .save_note_content_if_match(&rel_path, &content, Some(expected_revision))
         .await
     {
-        Ok(revision) => revision,
+        Ok(result) => result,
         Err(cognate_engine::EngineError::Conflict { .. }) => {
             let current_content = manager
                 .load_note_content(&rel_path)
@@ -434,7 +434,13 @@ async fn save_note(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
-        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
+        HeaderValue::from_str(&format!("\"{}\"", save_result.note_revision))
+            .expect("hash is header-safe"),
+    );
+    response_headers.insert(
+        "x-metadata-etag",
+        HeaderValue::from_str(&format!("\"{}\"", save_result.metadata_revision))
+            .expect("hash is header-safe"),
     );
     Ok((StatusCode::NO_CONTENT, response_headers))
 }

@@ -32,6 +32,8 @@ test:
 
 format:
 	cargo fmt --all
+	cargo clippy --all-targets --fix --allow-dirty --allow-staged
+	cargo fmt --all
 
 lint:
 	cargo clippy --all-targets -- -D warnings
