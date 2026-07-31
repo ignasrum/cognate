@@ -113,6 +113,27 @@ pub(super) async fn send_empty(
     Ok(())
 }
 
+pub(super) fn required_etag(
+    response: &reqwest::Response,
+    operation: &'static str,
+) -> Result<String, NotebookError> {
+    let value = response
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| api_error(operation, "successful response omitted ETag"))?;
+    let revision = value.trim_matches('"').trim();
+    if revision.is_empty() {
+        return Err(api_error(
+            operation,
+            "successful response contained an empty ETag",
+        ));
+    }
+    Ok(revision.to_string())
+}
+
 fn status_is_retryable(status: u16) -> bool {
     matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }

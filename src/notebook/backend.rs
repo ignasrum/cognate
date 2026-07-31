@@ -138,16 +138,12 @@ pub async fn load_metadata(_notebook_path: String) -> Result<MetadataLoadResult,
             if !response.status().is_success() {
                 return Err(api_response_error(response, "load metadata").await);
             }
-            let revision = response
-                .headers()
-                .get("etag")
-                .and_then(|value| value.to_str().ok())
-                .map(|value| value.trim_matches('"').to_string());
+            let revision = required_etag(&response, "load metadata")?;
             let notes = response
                 .json::<Vec<NoteMetadata>>()
                 .await
                 .map_err(|error| api_error("load metadata", error))?;
-            *client.metadata_revision.lock().unwrap() = revision;
+            *client.metadata_revision.lock().unwrap() = Some(revision);
             Ok(MetadataLoadResult {
                 notes,
                 warning: None,
@@ -194,14 +190,19 @@ pub async fn save_metadata(
         SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/metadata")?;
-            let revision = client.metadata_revision.lock().unwrap().clone();
-            let request = authorized(client.client.put(url).json(notes), &client).header(
-                "if-match",
-                revision
-                    .as_deref()
-                    .map(|revision| format!("\"{revision}\""))
-                    .unwrap_or_else(|| "*".to_string()),
-            );
+            let revision = client
+                .metadata_revision
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| {
+                    api_error(
+                        "save metadata",
+                        "metadata ETag unavailable; reload required",
+                    )
+                })?;
+            let request = authorized(client.client.put(url).json(notes), &client)
+                .header("if-match", format!("\"{revision}\""));
             let result = send_empty(request, "save metadata").await;
             if result.is_ok() {
                 let serialized = serde_json::to_string(notes).unwrap_or_default();
@@ -230,20 +231,12 @@ pub async fn load_note_content(
             if !response.status().is_success() {
                 return Err(api_response_error(response, "load note").await);
             }
-            let revision = response
-                .headers()
-                .get("etag")
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default()
-                .trim_matches('"')
-                .to_string();
+            let revision = required_etag(&response, "load note")?;
             let payload = response
                 .json::<ApiNotePayload>()
                 .await
                 .map_err(|error| api_error("load note", error))?;
-            if !revision.is_empty() {
-                client.revisions.lock().unwrap().insert(rel_path, revision);
-            }
+            client.revisions.lock().unwrap().insert(rel_path, revision);
             Ok(payload.content)
         }
     }
@@ -274,7 +267,9 @@ pub async fn save_note_content(
             if offline_queue::read(&client.queue_path)
                 .map_err(|error| api_error("offline queue", error))?
                 .iter()
-                .any(|entry| entry.rel_path == rel_path)
+                .any(|entry| {
+                    entry.rel_path == rel_path && entry.status != QueueStatus::RemoteCommitConfirmed
+                })
             {
                 return Err(api_error(
                     "save note",
@@ -282,29 +277,29 @@ pub async fn save_note_content(
                 ));
             }
             let url = note_endpoint(&client, &rel_path)?;
-            let revision = client.revisions.lock().unwrap().get(&rel_path).cloned();
+            let revision = client
+                .revisions
+                .lock()
+                .unwrap()
+                .get(&rel_path)
+                .cloned()
+                .ok_or_else(|| api_error("save note", "note ETag unavailable; reload required"))?;
             let request = authorized(client.client.put(url).body(content.clone()), &client);
-            let request = request.header(
-                "if-match",
-                revision
-                    .as_deref()
-                    .map(|revision| format!("\"{revision}\""))
-                    .unwrap_or_else(|| "*".to_string()),
-            );
+            let request = request.header("if-match", format!("\"{revision}\""));
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(error) => {
                     eprintln!(
                         "[cognate] note_write_transport_error note={} expected_revision={}",
                         rel_path,
-                        revision_prefix(revision.as_deref())
+                        revision_prefix(Some(&revision))
                     );
                     offline_queue::enqueue(
                         &client.queue_path,
                         QueuedNoteWrite {
                             rel_path,
                             content,
-                            expected_revision: revision,
+                            expected_revision: Some(revision.clone()),
                             status: QueueStatus::Pending,
                             retry_count: 0,
                             next_retry_at: None,
@@ -327,7 +322,7 @@ pub async fn save_note_content(
                         eprintln!(
                             "[cognate] note_write_conflict note={} expected_revision={} server_revision={}",
                             rel_path,
-                            revision_prefix(revision.as_deref()),
+                            revision_prefix(Some(&revision)),
                             revision_prefix(Some(&conflict.current_revision))
                         );
                         return Err(NotebookError::conflict(
@@ -371,6 +366,18 @@ pub async fn save_note_content(
                 .map(|value| value.trim_matches('"').to_string())
             {
                 *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
+            }
+            if response
+                .headers()
+                .get("x-metadata-repair-pending")
+                .and_then(|value| value.to_str().ok())
+                == Some("true")
+            {
+                *client.metadata_revision.lock().unwrap() = None;
+                eprintln!(
+                    "[cognate] note_write_metadata_repair_pending note={}",
+                    rel_path
+                );
             }
             #[cfg(debug_assertions)]
             eprintln!("[cognate] note_write_succeeded note={}", rel_path);

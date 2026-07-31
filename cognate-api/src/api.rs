@@ -230,10 +230,22 @@ async fn save_note(
         "etag",
         response_header(format!("\"{}\"", save_result.note_revision))?,
     );
-    response_headers.insert(
-        "x-metadata-etag",
-        response_header(format!("\"{}\"", save_result.metadata_revision))?,
-    );
+    if !save_result.metadata_revision.is_empty() {
+        response_headers.insert(
+            "x-metadata-etag",
+            response_header(format!("\"{}\"", save_result.metadata_revision))?,
+        );
+    }
+    response_headers.insert("x-canonical-committed", HeaderValue::from_static("true"));
+    if save_result.metadata_repair_pending {
+        response_headers.insert(
+            "x-metadata-repair-pending",
+            HeaderValue::from_static("true"),
+        );
+    }
+    if save_result.index_repair_pending {
+        response_headers.insert("x-index-repair-pending", HeaderValue::from_static("true"));
+    }
     update_search_note(&state, &rel_path, &content).await;
     Ok((StatusCode::NO_CONTENT, response_headers))
 }

@@ -27,6 +27,8 @@ pub(super) const FAIL_MOVE_ROLLBACK_MARKER: &str = ".cognate_fail_move_rollback"
 pub struct NoteContentSaveResult {
     pub note_revision: String,
     pub metadata_revision: String,
+    pub index_repair_pending: bool,
+    pub metadata_repair_pending: bool,
 }
 
 pub(super) async fn save_metadata(
@@ -77,27 +79,73 @@ impl NotebookManager {
         let backup_path = self.notebook_path.join(METADATA_BACKUP_FILE_NAME);
         cleanup_stale_staged_delete_entries(&self.notebook_path).await;
 
+        let mut warning: Option<String> = None;
         let contents = match tokio::fs::read_to_string(&file_path).await {
             Ok(c) => c,
             Err(err) => {
                 if err.kind() == ErrorKind::NotFound {
-                    return Ok(MetadataLoadResult {
-                        notes: Vec::new(),
-                        warning: None,
-                    });
+                    let backup_contents = match tokio::fs::read_to_string(&backup_path).await {
+                        Ok(contents) => contents,
+                        Err(backup_error) if backup_error.kind() == ErrorKind::NotFound => {
+                            return Ok(MetadataLoadResult {
+                                notes: Vec::new(),
+                                warning: None,
+                            });
+                        }
+                        Err(backup_error) => {
+                            return Err(EngineError::recovery(
+                                "metadata recovery",
+                                format!(
+                                    "Primary metadata '{}' is missing and backup '{}' could not be read: {}",
+                                    file_path.display(),
+                                    backup_path.display(),
+                                    backup_error
+                                ),
+                            ));
+                        }
+                    };
+                    serde_json::from_str::<NotebookMetadata>(&backup_contents)
+                        .map_err(|backup_error| {
+                            EngineError::recovery(
+                                "metadata recovery",
+                                format!(
+                                    "Primary metadata '{}' is missing and backup '{}' is invalid: {}",
+                                    file_path.display(),
+                                    backup_path.display(),
+                                    backup_error
+                                ),
+                            )
+                        })?;
+                    write_text_file_atomically(&file_path, &backup_contents).await.map_err(|restore_error| {
+                        EngineError::recovery(
+                            "metadata recovery",
+                            format!(
+                                "Backup '{}' was valid but could not restore missing primary '{}': {}",
+                                backup_path.display(),
+                                file_path.display(),
+                                restore_error
+                            ),
+                        )
+                    })?;
+                    warning = Some(format!(
+                        "Recovered metadata from '{}' because '{}' was missing.",
+                        backup_path.display(),
+                        file_path.display()
+                    ));
+                    backup_contents
+                } else {
+                    return Err(EngineError::storage(
+                        "load metadata",
+                        format!(
+                            "Failed to read metadata file '{}': {}",
+                            file_path.display(),
+                            err
+                        ),
+                    ));
                 }
-                return Err(EngineError::storage(
-                    "load metadata",
-                    format!(
-                        "Failed to read metadata file '{}': {}",
-                        file_path.display(),
-                        err
-                    ),
-                ));
             }
         };
 
-        let mut warning: Option<String> = None;
         let metadata: NotebookMetadata = match serde_json::from_str(&contents) {
             Ok(m) => m,
             Err(err) => {
@@ -279,6 +327,18 @@ impl NotebookManager {
         let _notebook_lock = self.concurrency.acquire_notebook().await?;
         let rel_path_buf = validate_relative_path("note path", rel_path)?;
         let _note_lock = self.concurrency.acquire_note(rel_path).await?;
+        if update_metadata {
+            let metadata = self.load_metadata_unlocked().await?;
+            if !metadata.notes.iter().any(|note| note.rel_path == rel_path) {
+                return Err(EngineError::validation(
+                    "save note content",
+                    format!(
+                        "Note '{}' is not registered in notebook metadata.",
+                        rel_path
+                    ),
+                ));
+            }
+        }
         let full_note_path = self.notebook_path.join(rel_path_buf).join("note.md");
 
         if let Some(parent) = full_note_path.parent()
@@ -305,17 +365,26 @@ impl NotebookManager {
             .as_deref()
             .map(note_content_revision)
             .unwrap_or_else(|| note_content_revision(""));
-        if let Some(expected_revision) = expected_revision
-            && expected_revision != "*"
-            && expected_revision != current_revision
-        {
-            return Err(EngineError::conflict(
-                "save note content",
-                format!(
-                    "expected revision '{}' but found '{}'",
-                    expected_revision, current_revision
-                ),
-            ));
+        if let Some(expected_revision) = expected_revision {
+            if expected_revision == "*"
+                && existing_content
+                    .as_deref()
+                    .is_some_and(|existing| !existing.is_empty())
+            {
+                return Err(EngineError::conflict(
+                    "save note content",
+                    "wildcard preconditions are only valid for empty note initialization",
+                ));
+            }
+            if expected_revision != "*" && expected_revision != current_revision {
+                return Err(EngineError::conflict(
+                    "save note content",
+                    format!(
+                        "expected revision '{}' but found '{}'",
+                        expected_revision, current_revision
+                    ),
+                ));
+            }
         }
 
         if existing_content.as_deref() == Some(content) {
@@ -329,6 +398,8 @@ impl NotebookManager {
             return Ok(NoteContentSaveResult {
                 note_revision: current_revision,
                 metadata_revision,
+                index_repair_pending: false,
+                metadata_repair_pending: false,
             });
         }
 
@@ -344,28 +415,51 @@ impl NotebookManager {
             .map(|doc| doc.labels.clone())
             .unwrap_or_default();
         engine_state.process_document(rel_path, content, &labels, Some(last_updated));
-        index_sync::save(&self.notebook_path, &engine_state).await?;
+        let index_repair_pending = index_sync::save(&self.notebook_path, &engine_state)
+            .await
+            .is_err();
 
         if !update_metadata {
             return Ok(NoteContentSaveResult {
                 note_revision: note_content_revision(content),
                 metadata_revision: String::new(),
+                index_repair_pending,
+                metadata_repair_pending: false,
             });
         }
 
         // Keep the metadata timestamp in the same notebook lock transaction as the content
         // write. Otherwise a subsequent metadata save can observe a newer file mtime and
         // unexpectedly invalidate the UI's metadata ETag.
-        let mut metadata = self.load_metadata_unlocked().await?.notes;
+        let mut metadata = match self.load_metadata_unlocked().await {
+            Ok(result) => result.notes,
+            Err(_) => {
+                return Ok(NoteContentSaveResult {
+                    note_revision: note_content_revision(content),
+                    metadata_revision: String::new(),
+                    index_repair_pending,
+                    metadata_repair_pending: true,
+                });
+            }
+        };
         if let Some(note) = metadata.iter_mut().find(|note| note.rel_path == rel_path) {
             note.last_updated = Some(current_timestamp_rfc3339());
         }
-        save_metadata(&self.notebook_path, &metadata).await?;
+        if save_metadata(&self.notebook_path, &metadata).await.is_err() {
+            return Ok(NoteContentSaveResult {
+                note_revision: note_content_revision(content),
+                metadata_revision: String::new(),
+                index_repair_pending,
+                metadata_repair_pending: true,
+            });
+        }
         let serialized = serde_json::to_string(&metadata).unwrap_or_default();
 
         Ok(NoteContentSaveResult {
             note_revision: note_content_revision(content),
             metadata_revision: note_content_revision(&serialized),
+            index_repair_pending,
+            metadata_repair_pending: false,
         })
     }
 }

@@ -78,8 +78,8 @@ Cognate prioritizes data integrity and implements several layers of reliability 
 structural note operations, and the shared `.cognate_index.bin` read-modify-write
 transaction. Note locks identify individual note paths. Current note-content saves
 take the notebook lock first and then the note lock because they update the shared
-index; attachment creation takes the note lock, while attachment deletion takes the
-notebook lock. Operations that need both locks always use notebook-then-note order.
+index. Attachment mutations use the same notebook-then-note order. Operations that
+need both locks always use notebook-then-note order.
 
 The lock is held for the complete logical mutation, including reads, atomic replacement,
 index synchronization, and rollback. Atomic replacement prevents partial files, while
@@ -93,18 +93,28 @@ All writers must use `NotebookManager` (or an API built on it) rather than writi
 they coordinate Cognate clients that honor this contract, but cannot stop unrelated
 programs from changing notebook files.
 
+API clients require a valid `ETag` from protected reads before updating metadata or
+note content. Offline replay first records a remote-commit acknowledgement and only
+then removes the queue entry; if local compaction fails, the acknowledged entry is
+discarded locally on the next replay without sending the write again.
+
 ### A. Atomic Writes
 To prevent file corruption caused by partial writes (e.g., due to sudden application crashes or power loss), note, metadata, and engine-index writes are performed atomically:
 1. Write the payload to a temporary file in the target parent directory:
    `.{filename}.cognate_tmp_{process_id}_{timestamp_nanos}`
-2. Atomically rename the temporary file to the final destination file (using OS-level atomic rename capabilities via `fs::rename`).
-3. If renaming fails, clean up the temporary file and abort.
+2. Flush and synchronize the temporary file before atomically renaming it to the
+   final destination file (using OS-level atomic rename capabilities via `fs::rename`).
+3. Synchronize the parent directory on Unix where supported.
+4. If replacement fails, clean up the temporary file and preserve the previous target.
 
 ### B. Metadata Backups and Auto-Recovery
 Before writing an updated `metadata.json`, Cognate checks and backs up the existing metadata:
 1. It validates that the current `metadata.json` file is syntactically correct by attempting to parse it.
 2. If parse validation succeeds, it copies the valid metadata to `metadata.json.bak`.
 3. If Cognate subsequently fails to parse `metadata.json` upon startup (e.g., due to manual tampering or external corruption), it automatically attempts to load and restore metadata from `metadata.json.bak` and posts a recovery warning.
+4. If `metadata.json` is missing but the backup exists, the valid backup is restored
+   before the notebook is exposed as empty. An invalid or unreadable backup produces
+   a recovery error instead of silently discarding the notebook index.
 
 ### C. Staged Deletions (Transactions)
 Deleting a note is a dangerous operation. Cognate handles it via a staged transactional flow to prevent loss of consistency between the filesystem and the metadata:

@@ -702,6 +702,35 @@ async fn load_notes_metadata_recovers_from_backup_when_primary_is_corrupted() {
 }
 
 #[tokio::test]
+async fn load_notes_metadata_recovers_from_backup_when_primary_is_missing() {
+    let harness = NotebookTestHarness::new("metadata_missing_primary_recovery");
+    let manager = harness.manager();
+    let backup = r#"{
+  "notes": [
+    {
+      "rel_path": "recovered/missing-primary",
+      "labels": ["restored"],
+      "last_updated": "2024-01-01T00:00:00Z"
+    }
+  ]
+}"#;
+    std::fs::write(harness.path().join("metadata.json.bak"), backup)
+        .expect("Failed to write metadata backup fixture");
+
+    let load_result = manager
+        .load_metadata()
+        .await
+        .expect("Expected missing primary metadata to recover from backup");
+
+    assert_eq!(load_result.notes[0].rel_path, "recovered/missing-primary");
+    assert!(load_result.warning.is_some());
+    assert_eq!(
+        std::fs::read_to_string(harness.path().join("metadata.json")).unwrap(),
+        backup
+    );
+}
+
+#[tokio::test]
 async fn save_metadata_keeps_last_known_good_copy_and_preserves_primary_when_atomic_rename_fails() {
     let harness = NotebookTestHarness::new("metadata_backup_and_atomic_failure");
     let manager = harness.manager();

@@ -39,6 +39,12 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
             remaining.push(entry);
             continue;
         }
+        if entry.status == QueueStatus::RemoteCommitConfirmed {
+            // The remote write is already acknowledged. Dropping this entry
+            // from `remaining` finalizes local queue removal without replaying
+            // the content and manufacturing a false conflict.
+            continue;
+        }
         if entry.next_retry_at.is_some_and(|retry_at| retry_at > now) {
             remaining.push(entry);
             continue;
@@ -65,18 +71,26 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
             }
         };
         if response.status().is_success() {
-            if let Some(revision) = response
-                .headers()
-                .get("etag")
-                .and_then(|value| value.to_str().ok())
-                .map(|value| value.trim_matches('"').to_string())
-            {
-                client
-                    .revisions
-                    .lock()
-                    .unwrap()
-                    .insert(entry.rel_path.clone(), revision);
-            }
+            let rel_path = entry.rel_path.clone();
+            let revision = match required_etag(&response, "offline queue replay") {
+                Ok(revision) => revision,
+                Err(error) => {
+                    remaining.push(entry);
+                    offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
+                        .map_err(|queue_error| api_error("offline queue", queue_error))?;
+                    return Err(error);
+                }
+            };
+            client
+                .revisions
+                .lock()
+                .unwrap()
+                .insert(entry.rel_path.clone(), revision);
+            entry.status = QueueStatus::RemoteCommitConfirmed;
+            entry.next_retry_at = None;
+            remaining.push(entry);
+            offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
+                .map_err(|queue_error| api_error("offline queue acknowledgement", queue_error))?;
             if let Some(metadata_revision) = response
                 .headers()
                 .get("x-metadata-etag")
@@ -85,7 +99,7 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
             {
                 *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
             }
-            eprintln!("[cognate] offline_write_replayed note={}", entry.rel_path);
+            eprintln!("[cognate] offline_write_replayed note={}", rel_path);
         } else {
             if response.status() == reqwest::StatusCode::CONFLICT {
                 let status = response.status();

@@ -25,6 +25,8 @@ pub(crate) enum QueueStatus {
     #[default]
     Pending,
     Conflict,
+    /// The server acknowledged the write; local removal is still pending.
+    RemoteCommitConfirmed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

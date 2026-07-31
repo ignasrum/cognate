@@ -123,6 +123,42 @@ pub async fn ensure_path_within_notebook_if_canonicalizable(
             format!("{} '{}'", outside_error_prefix, rel_path),
         ));
     }
+
+    reject_symlink_components(notebook_path, target_path, rel_path).await?;
+    Ok(())
+}
+
+async fn reject_symlink_components(
+    notebook_path: &Path,
+    target_path: &Path,
+    rel_path: &str,
+) -> Result<(), EngineError> {
+    let relative = target_path.strip_prefix(notebook_path).map_err(|_| {
+        EngineError::validation(
+            "path containment",
+            format!("Path is not relative to notebook: '{rel_path}'"),
+        )
+    })?;
+    let mut current = notebook_path.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(EngineError::validation(
+                    "path containment",
+                    format!("Symlink path components are not allowed: '{rel_path}'"),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(EngineError::storage(
+                    "path containment",
+                    format!("Failed to inspect path '{}': {error}", current.display()),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

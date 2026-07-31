@@ -122,7 +122,8 @@ This keeps UI behavior deterministic and testable through message transitions.
   newer metadata.
 - The API-mode note queue is a locked, atomically replaced, permissions-restricted
   file. It coalesces writes per note, preserves conflicts for explicit resolution,
-  and recovers a valid orphaned temporary file only when the primary queue is absent.
+  records remote-commit acknowledgements before removing entries, and recovers a
+  valid orphaned temporary file only when the primary queue is absent.
 - Shutdown attempts a bounded final flush before window close. If it fails, the
   window remains open and reports the failure rather than silently discarding changes.
 - A transient API failure is considered safely recoverable during shutdown only after
@@ -132,6 +133,9 @@ This keeps UI behavior deterministic and testable through message transitions.
   index update must not be treated as a failed canonical note or metadata commit.
 - Attachment replacement uses atomic byte replacement, and deletion validates its
   `If-Match` revision under the same note lock as the delete.
+- Missing primary metadata is recovered from a valid backup before an empty notebook
+  is reported. Protected reads fail closed when an ETag is missing, and ordinary note
+  updates cannot create notes absent from metadata.
 
 ## Where to Add Features
 
