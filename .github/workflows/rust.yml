@@ -27,4 +27,4 @@ jobs:
     - name: Run tests
       env:
         COGNATE_REQUIRE_SOCKET_TESTS: "1"
-      run: cargo test --workspace --verbose -- --nocapture
+      run: cargo test --workspace --verbose -- --nocapture --test-threads=1

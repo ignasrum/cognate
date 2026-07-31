@@ -54,10 +54,12 @@ pub(crate) fn retry_delay_seconds(retry_count: u32) -> u64 {
 }
 
 pub(crate) fn queue_path(config_path: &str) -> PathBuf {
-    Path::new(config_path)
+    let config_path = Path::new(config_path);
+    let parent = config_path
         .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(".cognate-api-queue.json")
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    parent.join(".cognate-api-queue.json")
 }
 
 pub(crate) fn enqueue(path: &Path, entry: QueuedNoteWrite) -> Result<(), String> {
@@ -258,6 +260,14 @@ mod tests {
         .unwrap();
         assert_eq!(read(&path).unwrap().len(), 1);
         assert_eq!(read(&path).unwrap()[0].content, "latest");
+    }
+
+    #[test]
+    fn relative_config_path_uses_current_directory_for_queue() {
+        assert_eq!(
+            queue_path("config.json"),
+            Path::new(".").join(".cognate-api-queue.json")
+        );
     }
 
     #[test]

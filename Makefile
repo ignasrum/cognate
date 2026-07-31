@@ -35,7 +35,7 @@ install:
 	cp target/$(target)/$(prog) ~/.local/bin/$(prog)
 
 test:
-	cargo test
+	cargo test --workspace -- --test-threads=1
 
 format:
 	cargo fmt --all
