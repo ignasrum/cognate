@@ -232,6 +232,7 @@ pub async fn save_note_content(
             // this payload before reading the cached revision and sending it.
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             if write_ticket.was_superseded() {
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "[cognate] note_write_coalesced note={} reason=newer_local_generation",
                     rel_path
@@ -340,6 +341,7 @@ pub async fn save_note_content(
             {
                 *client.metadata_revision.lock().unwrap() = Some(metadata_revision);
             }
+            #[cfg(debug_assertions)]
             eprintln!("[cognate] note_write_succeeded note={}", rel_path);
             Ok(())
         }
