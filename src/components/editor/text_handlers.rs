@@ -151,6 +151,7 @@ impl Editor {
                 }
                 state.state.clear_note_load_error();
                 state.content_note_path = Some(note_path.clone());
+                state.loaded_markdown_text = new_content.clone();
                 state.embedded_image_workflow.set_loaded_images(images);
                 let previous_markdown = state.markdown_text.clone();
                 let task = content_handler::handle_loaded_note_content(

@@ -35,6 +35,8 @@ pub(super) fn handle_debounced_metadata(state: &mut Editor, message: Message) ->
                     ),
                 );
             } else {
+                state.persisted_metadata = state.note_explorer.notes.clone();
+                state.metadata_persisted_generation = saved_generation;
                 #[cfg(debug_assertions)]
                 eprintln!("Debounced metadata saved successfully.");
             }
@@ -70,7 +72,9 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
             let notebook_path = state.state.notebook_path().to_string();
             let content_note_path = state.content_note_path.clone();
             let markdown_text = state.markdown_text.clone();
+            let content_dirty = state.content_dirty();
             let notes = state.note_explorer.notes.clone();
+            let metadata_dirty = state.metadata_dirty();
 
             Task::perform(
                 async move {
@@ -80,7 +84,9 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                             &notebook_path,
                             content_note_path,
                             &markdown_text,
+                            content_dirty,
                             &notes,
+                            metadata_dirty,
                         ),
                     )
                     .await
@@ -162,6 +168,10 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
                     ),
                 );
             } else {
+                // API note writes update the metadata timestamp as part of the
+                // same conditional write. Keep shutdown's metadata snapshot in
+                // sync so it does not issue a second, stale metadata request.
+                state.persisted_metadata = state.note_explorer.notes.clone();
                 #[cfg(debug_assertions)]
                 eprintln!("Note content saved successfully.");
             }

@@ -21,10 +21,13 @@ impl Editor {
         let mut editor_instance = Editor {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
+            loaded_markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_image_workflow: EmbeddedImageWorkflow::default(),
             content_note_path: None,
             metadata_save_generation: 0,
+            metadata_persisted_generation: 0,
+            persisted_metadata: Vec::new(),
             metadata_save_in_flight: false,
             metadata_save_reschedule_after_in_flight: false,
             metadata_debounce_scheduler,

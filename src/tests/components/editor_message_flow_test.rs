@@ -349,7 +349,9 @@ mod tests {
             &notebook_path,
             content_note_path,
             &markdown_text,
+            true,
             &notes,
+            true,
         ));
         let _ = Editor::update(
             &mut editor,

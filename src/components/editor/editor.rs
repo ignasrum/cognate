@@ -70,10 +70,13 @@ pub struct Editor {
     // Text management
     content: iced::widget::text_editor::Content,
     markdown_text: String,
+    loaded_markdown_text: String,
     markdown_preview: iced::widget::markdown::Content,
     embedded_image_workflow: EmbeddedImageWorkflow,
     content_note_path: Option<String>,
     metadata_save_generation: u64,
+    metadata_persisted_generation: u64,
+    persisted_metadata: Vec<notebook::NoteMetadata>,
     metadata_save_in_flight: bool,
     metadata_save_reschedule_after_in_flight: bool,
     metadata_debounce_scheduler: MetadataDebounceScheduler,
@@ -374,6 +377,17 @@ impl Editor {
             self.note_explorer.notes.clone(),
         )
     }
+
+    fn content_dirty(&self) -> bool {
+        self.content_note_path.is_some() && self.markdown_text != self.loaded_markdown_text
+    }
+
+    fn metadata_dirty(&self) -> bool {
+        self.note_explorer.notes != self.persisted_metadata
+            || self.metadata_save_in_flight
+            || self.metadata_save_reschedule_after_in_flight
+            || self.metadata_save_generation != self.metadata_persisted_generation
+    }
 }
 
 // Keep Default impl for Editor
@@ -385,10 +399,13 @@ impl Default for Editor {
         Self {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
+            loaded_markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_image_workflow: EmbeddedImageWorkflow::default(),
             content_note_path: None,
             metadata_save_generation: 0,
+            metadata_persisted_generation: 0,
+            persisted_metadata: Vec::new(),
             metadata_save_in_flight: false,
             metadata_save_reschedule_after_in_flight: false,
             metadata_debounce_scheduler,

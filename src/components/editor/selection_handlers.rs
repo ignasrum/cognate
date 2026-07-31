@@ -20,14 +20,24 @@ impl Editor {
                 }
             },
             Message::NoteExplorerMsg(note_explorer_message) => {
-                note_actions::handle_note_explorer_message(
+                let metadata_loaded = matches!(
+                    &note_explorer_message,
+                    note_explorer::Message::NotesLoaded(Ok(_))
+                );
+                let task = note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,
                     &mut state.visualizer,
                     &mut state.state,
                     &mut state.content,
                     &mut state.markdown_text,
                     note_explorer_message,
-                )
+                );
+                if metadata_loaded {
+                    state.persisted_metadata = state.note_explorer.notes.clone();
+                    state.metadata_save_generation = 0;
+                    state.metadata_persisted_generation = 0;
+                }
+                task
             }
             Message::NoteSelected(note_path) => note_actions::handle_note_selected(
                 &mut state.note_explorer,

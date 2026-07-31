@@ -39,13 +39,15 @@ pub async fn flush_for_shutdown(
     notebook_path: &str,
     content_note_path: Option<String>,
     markdown_text: &str,
+    content_dirty: bool,
     notes: &[NoteMetadata],
+    metadata_dirty: bool,
 ) -> Result<(), NotebookError> {
     if notebook_path.trim().is_empty() {
         return Ok(());
     }
 
-    if let Some(note_path) = content_note_path {
+    if content_dirty && let Some(note_path) = content_note_path {
         let result = notebook::save_note_content(
             notebook_path.to_string(),
             note_path,
@@ -61,7 +63,11 @@ pub async fn flush_for_shutdown(
         }
     }
 
-    save_metadata_snapshot(notebook_path, notes).await
+    if metadata_dirty {
+        save_metadata_snapshot(notebook_path, notes).await
+    } else {
+        Ok(())
+    }
 }
 
 fn is_transient_api_error(error: &NotebookError) -> bool {
