@@ -110,11 +110,13 @@ mod tests {
         let _ = Editor::update(editor, EditorMessage::NoteSelected(rel_path.to_string()));
         let _ = Editor::update(
             editor,
-            EditorMessage::LoadedNoteContent(
-                rel_path.to_string(),
-                content.to_string(),
-                HashMap::new(),
-            ),
+            EditorMessage::LoadedNoteContent(Ok(
+                crate::components::editor::note_coordinator::LoadedNotePayload {
+                    note_path: rel_path.to_string(),
+                    content: content.to_string(),
+                    images: HashMap::new(),
+                },
+            )),
         );
     }
 
@@ -132,6 +134,24 @@ mod tests {
 
         assert_eq!(editor.debug_selected_note_path(), None);
         assert_eq!(editor.debug_markdown_text(), "");
+    }
+
+    #[test]
+    fn failed_note_load_does_not_replace_existing_content_with_empty_text() {
+        let notebook_dir = TestNotebookDir::new("note_load_error");
+        let notes = seed_note(&notebook_dir, "note", "server content");
+        let mut editor = create_editor_with_notebook(notebook_dir.as_str());
+        load_and_select_note(&mut editor, notes, "note", "server content");
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::LoadedNoteContent(Err(NotebookError::storage(
+                "api",
+                "connection failed",
+            ))),
+        );
+
+        assert_eq!(editor.debug_markdown_text(), "server content");
     }
 
     #[test]

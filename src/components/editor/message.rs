@@ -1,10 +1,9 @@
-use iced::widget::text_editor::Action;
-use iced::window;
-use std::collections::HashMap;
-
+use crate::components::editor::note_coordinator::LoadedNotePayload;
 use crate::components::note_explorer;
 use crate::components::visualizer;
 use crate::notebook::{self, NoteMetadata, NotebookError};
+use iced::widget::text_editor::Action;
+use iced::window;
 
 #[derive(Debug, Clone)]
 pub struct LabelMutationRollback {
@@ -19,7 +18,7 @@ pub enum Message {
     // Text editing operations
     EditorAction(Action),
     PasteFromClipboard,
-    LoadedNoteContent(String, String, HashMap<String, String>),
+    LoadedNoteContent(Result<LoadedNotePayload, NotebookError>),
     HandleTabKey,
     SelectAll,
     Undo,

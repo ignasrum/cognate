@@ -5,6 +5,51 @@ use common::{TestApp, bearer_request};
 use http_body_util::BodyExt;
 
 #[tokio::test]
+async fn concurrent_note_creation_preserves_both_metadata_entries() {
+    let app = TestApp::new().await;
+    let client = app.provision("lifecycle-race").await;
+
+    let first = app.request(
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/notes")
+            .header("authorization", format!("Bearer {}", client.secret))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"rel_path":"race-a"}"#))
+            .unwrap(),
+    );
+    let second = app.request(
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/notes")
+            .header("authorization", format!("Bearer {}", client.secret))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"rel_path":"race-b"}"#))
+            .unwrap(),
+    );
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(first.status(), 201);
+    assert_eq!(second.status(), 201);
+
+    let metadata = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let body = metadata.into_body().collect().await.unwrap().to_bytes();
+    let notes: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let paths: Vec<&str> = notes
+        .iter()
+        .filter_map(|note| note["rel_path"].as_str())
+        .collect();
+    assert!(paths.contains(&"race-a"));
+    assert!(paths.contains(&"race-b"));
+}
+
+#[tokio::test]
 async fn stale_note_revision_is_rejected_without_overwriting_server_content() {
     let app = TestApp::new().await;
     let client = app.provision("revision-tests").await;

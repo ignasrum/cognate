@@ -22,7 +22,7 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::Redo
         | Message::PasteFromClipboard
         | Message::EditorAction(_)
-        | Message::LoadedNoteContent(_, _, _)
+        | Message::LoadedNoteContent(_)
         | Message::AttachmentLoaded(_, _)
         | Message::PastedImageSaved(_) => MessageDomain::Text,
 

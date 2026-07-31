@@ -72,7 +72,7 @@ impl NotebookManager {
         self.load_metadata_unlocked().await
     }
 
-    async fn load_metadata_unlocked(&self) -> Result<MetadataLoadResult, EngineError> {
+    pub(super) async fn load_metadata_unlocked(&self) -> Result<MetadataLoadResult, EngineError> {
         let file_path = self.notebook_path.join(METADATA_FILE_NAME);
         let backup_path = self.notebook_path.join(METADATA_BACKUP_FILE_NAME);
         cleanup_stale_staged_delete_entries(&self.notebook_path).await;
@@ -225,6 +225,26 @@ impl NotebookManager {
         save_metadata(&self.notebook_path, notes).await
     }
 
+    pub async fn save_metadata_if_match(
+        &self,
+        notes: &[NoteMetadata],
+        expected_revision: &str,
+    ) -> Result<(), EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
+        let current = self.load_metadata_unlocked().await?.notes;
+        let current_revision = metadata_revision(&current);
+        if expected_revision != "*" && expected_revision != current_revision {
+            return Err(EngineError::conflict(
+                "save metadata",
+                format!(
+                    "expected revision '{}' but found '{}'",
+                    expected_revision, current_revision
+                ),
+            ));
+        }
+        save_metadata(&self.notebook_path, notes).await
+    }
+
     pub async fn load_note_content(&self, rel_path: &str) -> Result<String, EngineError> {
         notebook_content::load(self, rel_path).await
     }
@@ -352,4 +372,9 @@ impl NotebookManager {
 
 pub fn note_content_revision(content: &str) -> String {
     blake3::hash(content.as_bytes()).to_hex().to_string()
+}
+
+fn metadata_revision(notes: &[NoteMetadata]) -> String {
+    let serialized = serde_json::to_string(notes).unwrap_or_default();
+    note_content_revision(&serialized)
 }

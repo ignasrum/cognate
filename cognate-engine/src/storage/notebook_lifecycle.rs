@@ -19,6 +19,20 @@ impl NotebookManager {
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<NoteMetadata, EngineError> {
         let _lock = self.concurrency.acquire_notebook().await?;
+        self.create_note_unlocked(rel_path, metadata).await
+    }
+
+    pub async fn create_note_atomic(&self, rel_path: &str) -> Result<NoteMetadata, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
+        let mut metadata = self.load_metadata_unlocked().await?.notes;
+        self.create_note_unlocked(rel_path, &mut metadata).await
+    }
+
+    async fn create_note_unlocked(
+        &self,
+        rel_path: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<NoteMetadata, EngineError> {
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
         let note_file_path = note_dir_path.join("note.md");
@@ -103,6 +117,20 @@ impl NotebookManager {
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<(), EngineError> {
         let _lock = self.concurrency.acquire_notebook().await?;
+        self.delete_note_unlocked(rel_path, metadata).await
+    }
+
+    pub async fn delete_note_atomic(&self, rel_path: &str) -> Result<(), EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
+        let mut metadata = self.load_metadata_unlocked().await?.notes;
+        self.delete_note_unlocked(rel_path, &mut metadata).await
+    }
+
+    async fn delete_note_unlocked(
+        &self,
+        rel_path: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<(), EngineError> {
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
 
@@ -200,6 +228,26 @@ impl NotebookManager {
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<String, EngineError> {
         let _lock = self.concurrency.acquire_notebook().await?;
+        self.move_note_unlocked(from_rel, to_rel, metadata).await
+    }
+
+    pub async fn move_note_atomic(
+        &self,
+        from_rel: &str,
+        to_rel: &str,
+    ) -> Result<String, EngineError> {
+        let _lock = self.concurrency.acquire_notebook().await?;
+        let mut metadata = self.load_metadata_unlocked().await?.notes;
+        self.move_note_unlocked(from_rel, to_rel, &mut metadata)
+            .await
+    }
+
+    async fn move_note_unlocked(
+        &self,
+        from_rel: &str,
+        to_rel: &str,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<String, EngineError> {
         let from_rel_buf = validate_relative_path("current relative path", from_rel)?;
         let to_rel_buf = validate_relative_path("new relative path", to_rel)?;
 

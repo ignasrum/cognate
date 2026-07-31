@@ -66,11 +66,13 @@ mod tests {
             EditorMessage::MetadataSaved(Err(sample_error.clone()), None),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err(sample_error.clone())),
-            EditorMessage::LoadedNoteContent(
-                "folder/note".to_string(),
-                "body".to_string(),
-                std::collections::HashMap::new(),
-            ),
+            EditorMessage::LoadedNoteContent(Ok(
+                crate::components::editor::note_coordinator::LoadedNotePayload {
+                    note_path: "folder/note".to_string(),
+                    content: "body".to_string(),
+                    images: std::collections::HashMap::new(),
+                },
+            )),
             EditorMessage::Undo,
             EditorMessage::Redo,
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(

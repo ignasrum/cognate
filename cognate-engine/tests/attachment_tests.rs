@@ -43,6 +43,43 @@ async fn test_async_attachments() {
 }
 
 #[tokio::test]
+async fn conditional_attachment_delete_rejects_stale_revisions() {
+    let temp = TempTestDir::new("conditional_attachment_delete");
+    let manager = NotebookManager::new(temp.path());
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+
+    let bytes = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let rel_path = AttachmentManager::save_image_bytes(temp.path(), "note", &bytes)
+        .await
+        .unwrap();
+    let current = AttachmentManager::read_attachment_bytes(temp.path(), "note", &rel_path)
+        .await
+        .unwrap();
+    let revision = cognate_engine::storage::attachment_revision(&current);
+
+    AttachmentManager::replace_attachment_bytes(
+        temp.path(),
+        "note",
+        &rel_path,
+        &revision,
+        &[0x89, b'P', b'N', b'G', 0x01],
+    )
+    .await
+    .unwrap();
+
+    let stale =
+        AttachmentManager::delete_attachment_if_match(temp.path(), "note", &rel_path, &revision)
+            .await;
+    assert!(matches!(stale, Err(EngineError::Conflict { .. })));
+    assert!(
+        AttachmentManager::read_attachment_bytes(temp.path(), "note", &rel_path)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn test_note_creation_path_traversal_attempts() {
     let harness = NotebookTestHarness::new("path_traversal");
     let manager = harness.manager();

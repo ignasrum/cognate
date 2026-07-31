@@ -88,6 +88,7 @@ fn handle_note_selection_internal(
         &note_path,
         hide_visualizer,
     );
+    state.clear_note_load_error();
 
     let mut commands = vec![
         note_explorer
@@ -108,7 +109,7 @@ fn handle_note_selection_internal(
 
         commands.push(Task::perform(
             async move { note_coordinator::load_note_payload(notebook_path, selected_note_path).await },
-            |payload| Message::LoadedNoteContent(payload.note_path, payload.content, payload.images),
+            Message::LoadedNoteContent,
         ));
     }
 

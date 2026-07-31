@@ -133,10 +133,23 @@ impl Editor {
 
                 state.with_preview_scroll_task(save_task)
             }
-            Message::LoadedNoteContent(note_path, new_content, images) => {
+            Message::LoadedNoteContent(result) => {
+                let payload = match result {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        eprintln!("[cognate] failed to load note: {error}");
+                        state.state.set_loading_note(false);
+                        state.state.set_note_load_error(error.ui_message());
+                        return Task::none();
+                    }
+                };
+                let note_path = payload.note_path;
+                let new_content = payload.content;
+                let images = payload.images;
                 if state.state.selected_note_path() != Some(&note_path) {
                     return Task::none();
                 }
+                state.state.clear_note_load_error();
                 state.content_note_path = Some(note_path.clone());
                 state.embedded_image_workflow.set_loaded_images(images);
                 let previous_markdown = state.markdown_text.clone();

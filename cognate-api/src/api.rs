@@ -138,14 +138,19 @@ async fn save_metadata(
         .map(|value| value.trim_matches('"'))
         .ok_or(ApiError::PreconditionRequired)?;
     let manager = NotebookManager::new(&state.notebook_path);
-    let current = manager.load_metadata().await?.notes;
-    if expected_revision != "*" && expected_revision != metadata_revision(&current) {
-        return Err(ApiError::Conflict {
-            current_revision: metadata_revision(&current),
-            current_content: serde_json::to_string(&current).unwrap_or_default(),
-        });
+    if let Err(error) = manager
+        .save_metadata_if_match(&notes, expected_revision)
+        .await
+    {
+        if matches!(error, cognate_engine::EngineError::Conflict { .. }) {
+            let current = manager.load_metadata().await?.notes;
+            return Err(ApiError::Conflict {
+                current_revision: metadata_revision(&current),
+                current_content: serde_json::to_string(&current).unwrap_or_default(),
+            });
+        }
+        return Err(error.into());
     }
-    manager.save_metadata(&notes).await?;
     update_search_metadata(&state, &notes).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -241,9 +246,7 @@ async fn create_note(
     Json(payload): Json<CreateNoteRequest>,
 ) -> Result<(StatusCode, Json<NoteMetadata>), ApiError> {
     let manager = NotebookManager::new(&state.notebook_path);
-    let loaded = manager.load_metadata().await?;
-    let mut notes = loaded.notes;
-    let note = manager.create_note(&payload.rel_path, &mut notes).await?;
+    let note = manager.create_note_atomic(&payload.rel_path).await?;
     update_search_note(&state, &payload.rel_path, "").await;
     Ok((StatusCode::CREATED, Json(note)))
 }
@@ -253,9 +256,7 @@ async fn delete_note(
     Path(rel_path): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let manager = NotebookManager::new(&state.notebook_path);
-    let loaded = manager.load_metadata().await?;
-    let mut notes = loaded.notes;
-    manager.delete_note(&rel_path, &mut notes).await?;
+    manager.delete_note_atomic(&rel_path).await?;
     remove_search_note(&state, &rel_path).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -265,10 +266,8 @@ async fn move_note(
     Json(payload): Json<MoveNoteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let manager = NotebookManager::new(&state.notebook_path);
-    let loaded = manager.load_metadata().await?;
-    let mut notes = loaded.notes;
     let new_path = manager
-        .move_note(&payload.from_rel_path, &payload.to_rel_path, &mut notes)
+        .move_note_atomic(&payload.from_rel_path, &payload.to_rel_path)
         .await?;
     rename_search_note(&state, &payload.from_rel_path, &payload.to_rel_path).await;
     Ok(Json(serde_json::json!({ "rel_path": new_path })))

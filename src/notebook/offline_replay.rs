@@ -20,7 +20,9 @@ pub(crate) async fn replay_offline_queue() -> Result<(), NotebookError> {
 }
 
 pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
-    let entries = offline_queue::read(&client.queue_path)
+    let queue_lock = offline_queue::lock(&client.queue_path)
+        .map_err(|error| api_error("offline queue", error))?;
+    let entries = offline_queue::read_locked(&client.queue_path)
         .map_err(|error| api_error("offline queue", error))?;
     if entries.is_empty() {
         return Ok(());
@@ -57,7 +59,7 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
                 entry.next_retry_at =
                     Some(now.saturating_add(offline_queue::retry_delay_seconds(entry.retry_count)));
                 remaining.push(entry);
-                offline_queue::write(&client.queue_path, &remaining)
+                offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
                     .map_err(|queue_error| api_error("offline queue", queue_error))?;
                 return Err(api_error("offline queue retry", error));
             }
@@ -96,7 +98,7 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
                     entry.status = QueueStatus::Conflict;
                     entry.next_retry_at = None;
                     remaining.push(entry.clone());
-                    offline_queue::write(&client.queue_path, &remaining)
+                    offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
                         .map_err(|error| api_error("offline queue", error))?;
                     return Err(NotebookError::conflict_for_note(
                         "offline write",
@@ -107,7 +109,7 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
                     ));
                 }
                 remaining.push(entry);
-                offline_queue::write(&client.queue_path, &remaining)
+                offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
                     .map_err(|error| api_error("offline queue", error))?;
                 return Err(api_error(
                     "offline queue retry",
@@ -125,6 +127,6 @@ pub(super) async fn replay_queued_writes(client: &ApiClient) -> Result<(), Noteb
             remaining.push(entry);
         }
     }
-    offline_queue::write(&client.queue_path, &remaining)
+    offline_queue::write_locked(&queue_lock, &client.queue_path, &remaining)
         .map_err(|error| api_error("offline queue", error))
 }

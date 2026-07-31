@@ -106,10 +106,22 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                 Ok(()) => window::close(window_id),
                 Err(_error) => {
                     eprintln!(
-                        "[cognate] shutdown flush failed; closing without confirmation: {}",
+                        "[cognate] shutdown flush failed; keeping window open: {}",
                         _error.ui_message()
                     );
-                    window::close(window_id)
+                    #[cfg(not(test))]
+                    {
+                        let _ = DialogBuilder::message()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Failed to Save Before Exit")
+                            .set_text(format!(
+                                "Cognate could not safely save your latest changes before exit:\n\n{}",
+                                _error.ui_message()
+                            ))
+                            .alert()
+                            .show();
+                    }
+                    Task::none()
                 }
             }
         }

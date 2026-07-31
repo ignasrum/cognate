@@ -154,20 +154,24 @@ pub(crate) async fn delete(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim_matches('"'))
         .ok_or(ApiError::PreconditionRequired)?;
-    let current =
-        AttachmentManager::read_attachment_bytes(&state.notebook_path, note, &attachment).await?;
-    let current_revision = attachment_revision(&current);
-    if expected != "*" && expected != current_revision {
+    let result = AttachmentManager::delete_attachment_if_match(
+        &state.notebook_path,
+        note,
+        &attachment,
+        expected,
+    )
+    .await;
+    if let Err(cognate_engine::EngineError::Conflict { .. }) = &result {
+        let current_revision =
+            AttachmentManager::read_attachment_bytes(&state.notebook_path, note, &attachment)
+                .await
+                .map(|bytes| attachment_revision(&bytes))
+                .unwrap_or_default();
         return Err(ApiError::Conflict {
             current_revision,
             current_content: "attachment changed on server".to_string(),
         });
     }
-    let full_path = std::path::Path::new(note).join(attachment);
-    AttachmentManager::delete_attachment(
-        &state.notebook_path,
-        full_path.to_string_lossy().as_ref(),
-    )
-    .await?;
+    result?;
     Ok(StatusCode::NO_CONTENT)
 }

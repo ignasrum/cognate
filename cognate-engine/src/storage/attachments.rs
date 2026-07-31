@@ -125,10 +125,10 @@ impl AttachmentManager {
             })?;
 
         let image_path = images_dir.join(&file_name);
-        tokio::fs::write(&image_path, image_bytes)
+        super::fs_utils::write_bytes_file_atomically(&image_path, image_bytes)
             .await
-            .map_err(|err| {
-                EngineError::storage("save_image", format!("Failed to write image file: {}", err))
+            .map_err(|error| {
+                EngineError::storage("save_image", format!("Failed to write image file: {error}"))
             })?;
 
         Ok(format!("images/{}", file_name))
@@ -231,9 +231,7 @@ impl AttachmentManager {
                 ),
             ));
         }
-        tokio::fs::write(&full_path, bytes)
-            .await
-            .map_err(|error| EngineError::storage("replace attachment", error.to_string()))?;
+        super::fs_utils::write_bytes_file_atomically(&full_path, bytes).await?;
         Ok(attachment_revision(bytes))
     }
 
@@ -289,5 +287,48 @@ impl AttachmentManager {
         }
 
         Ok(())
+    }
+
+    pub async fn delete_attachment_if_match(
+        notebook_path: &Path,
+        rel_note_path: &str,
+        attachment_path: &str,
+        expected_revision: &str,
+    ) -> Result<(), EngineError> {
+        let note_path = super::fs_utils::validate_relative_path("note path", rel_note_path)?;
+        let attachment =
+            super::fs_utils::validate_relative_path("attachment path", attachment_path)?;
+        if !attachment.starts_with("images/") {
+            return Err(EngineError::validation(
+                "attachment path",
+                "attachment must be under images/",
+            ));
+        }
+        let concurrency = ConcurrencyManager::new(notebook_path);
+        let _lock = concurrency.acquire_note(rel_note_path).await?;
+        let full_path = notebook_path.join(&note_path).join(&attachment);
+        super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
+            notebook_path,
+            &full_path,
+            rel_note_path,
+            "Attachment path escapes notebook boundaries",
+        )
+        .await?;
+        let current = tokio::fs::read(&full_path)
+            .await
+            .map_err(|error| EngineError::storage("delete attachment", error.to_string()))?;
+        let current_revision = attachment_revision(&current);
+        if expected_revision != "*" && expected_revision != current_revision {
+            return Err(EngineError::conflict(
+                "delete attachment",
+                format!(
+                    "expected revision '{}' but found '{}', attachment was not deleted",
+                    expected_revision, current_revision
+                ),
+            ));
+        }
+        tokio::fs::remove_file(&full_path)
+            .await
+            .map_err(|error| EngineError::storage("delete attachment", error.to_string()))
     }
 }

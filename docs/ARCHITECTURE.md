@@ -111,10 +111,19 @@ This keeps UI behavior deterministic and testable through message transitions.
 - Note content and metadata writes are explicit operations.
 - Cross-process advisory locks serialize mutations across cooperating Cognate clients;
   atomic replacement prevents partial files but does not replace locking.
-- Metadata writes can be debounced in edit flows.
-- Shutdown path attempts a final flush before window close.
+- Metadata writes can be debounced in edit flows, but the API validates metadata
+  revisions while holding the notebook lock, so stale snapshots cannot overwrite
+  newer metadata.
+- The API-mode note queue is a locked, atomically replaced, permissions-restricted
+  file. It coalesces writes per note, preserves conflicts for explicit resolution,
+  and recovers a valid orphaned temporary file only when the primary queue is absent.
+- Shutdown attempts a bounded final flush before window close. If it fails, the
+  window remains open and reports the failure rather than silently discarding changes.
 - Search indexes are owned by the API/engine process and refreshed from the filesystem
-  on interval with targeted mutation hooks.
+  on interval with targeted mutation hooks. They are derived state: a stale or failed
+  index update must not be treated as a failed canonical note or metadata commit.
+- Attachment replacement uses atomic byte replacement, and deletion validates its
+  `If-Match` revision under the same note lock as the delete.
 
 ## Where to Add Features
 

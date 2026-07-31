@@ -26,6 +26,9 @@ pub fn generate_layout<'a>(
     if let Some(error) = state.connection_error() {
         return workspace::build_connection_error_page(error);
     }
+    if let Some(error) = state.note_load_error() {
+        return workspace::build_note_load_error_page(error);
+    }
 
     let top_bar = top_bar::build_top_bar(state, note_explorer_component);
     let main_content = workspace::build_main_content(

@@ -13,16 +13,34 @@ use super::preview;
 use super::search_results;
 
 pub(super) fn build_connection_error_page<'a>(error: &'a str) -> Element<'a, Message> {
-    let content = Column::new()
+    build_status_page(
+        "Could not connect to server",
+        error,
+        Some(Message::RetryConnection),
+    )
+}
+
+pub(super) fn build_note_load_error_page<'a>(error: &'a str) -> Element<'a, Message> {
+    build_status_page("Could not load note", error, None)
+}
+
+fn build_status_page<'a>(
+    title: &'a str,
+    error: &'a str,
+    retry: Option<Message>,
+) -> Element<'a, Message> {
+    let mut content = Column::new()
         .spacing(16)
         .align_x(iced::Alignment::Center)
-        .push(Text::new("Could not connect to server").size(32))
-        .push(Text::new(error).size(16))
-        .push(
+        .push(Text::new(title).size(32))
+        .push(Text::new(error).size(16));
+    if let Some(retry) = retry {
+        content = content.push(
             Button::new(Text::new("Retry connection"))
                 .padding(10)
-                .on_press(Message::RetryConnection),
+                .on_press(retry),
         );
+    }
 
     Container::new(content)
         .center_x(Length::Fill)

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::notebook::{self, NoteMetadata, NotebookError};
 
 #[derive(Debug, Clone)]
-pub struct LoadedNotePayload {
+pub(crate) struct LoadedNotePayload {
     pub note_path: String,
     pub content: String,
     pub images: HashMap<String, String>,
@@ -17,21 +17,15 @@ pub struct LoadedNotePayload {
 pub async fn load_note_payload(
     notebook_path: String,
     selected_note_path: String,
-) -> LoadedNotePayload {
+) -> Result<LoadedNotePayload, NotebookError> {
     let loaded_content =
-        notebook::load_note_content(notebook_path.clone(), selected_note_path.clone())
-            .await
-            .unwrap_or_else(|_err| {
-                #[cfg(debug_assertions)]
-                eprintln!("Failed to read note file for editor: {}", _err);
-                String::new()
-            });
+        notebook::load_note_content(notebook_path, selected_note_path.clone()).await?;
 
-    LoadedNotePayload {
+    Ok(LoadedNotePayload {
         note_path: selected_note_path,
         content: loaded_content,
         images: HashMap::new(),
-    }
+    })
 }
 
 pub async fn save_metadata_snapshot(
