@@ -46,6 +46,7 @@ fn message_domain(message: &Message) -> MessageDomain {
 
         Message::MetadataSaved(_, _)
         | Message::NoteContentSaved(_)
+        | Message::OfflineReplayCompleted(_)
         | Message::ConflictCopySaved(_)
         | Message::ScaleSaved(_) => MessageDomain::SaveFeedback,
 

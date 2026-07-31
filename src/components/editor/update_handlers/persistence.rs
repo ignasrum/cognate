@@ -132,32 +132,7 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
         }
         Message::NoteContentSaved(result) => {
             if let Err(error) = result {
-                if let NotebookError::Conflict {
-                    context: _,
-                    local_content,
-                    server_content,
-                    server_revision,
-                } = error
-                {
-                    if let Some(note_path) = state.state.selected_note_path().cloned() {
-                        let duplicate = state.state.conflict().is_some_and(|existing| {
-                            existing.note_path == note_path
-                                && existing.server_revision == server_revision
-                        });
-                        if !duplicate {
-                            eprintln!(
-                                "[cognate] conflict_dialog_open note={} server_revision={}",
-                                note_path,
-                                server_revision.chars().take(12).collect::<String>()
-                            );
-                            state.state.show_conflict_dialog(NoteConflict {
-                                note_path,
-                                local_content,
-                                server_content,
-                                server_revision,
-                            });
-                        }
-                    }
+                if open_conflict_dialog(state, error.clone()) {
                     return Task::none();
                 }
                 report_persistence_error(
@@ -172,6 +147,17 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
                 eprintln!("Note content saved successfully.");
             }
             Task::none()
+        }
+        Message::OfflineReplayCompleted(result) => {
+            if let Err(error) = result
+                && !open_conflict_dialog(state, error.clone())
+            {
+                eprintln!("[cognate] startup_offline_replay_failed: {error}");
+            }
+            state
+                .note_explorer
+                .update(note_explorer::Message::LoadNotes)
+                .map(Message::NoteExplorerMsg)
         }
         Message::ConflictCopySaved(result) => match result {
             Ok(path) => {
@@ -201,6 +187,40 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
         }
         _ => unreachable!("save-feedback handler received invalid message"),
     }
+}
+
+fn open_conflict_dialog(state: &mut Editor, error: NotebookError) -> bool {
+    let NotebookError::Conflict {
+        context: _,
+        note_path,
+        local_content,
+        server_content,
+        server_revision,
+    } = error
+    else {
+        return false;
+    };
+
+    let Some(note_path) = note_path.or_else(|| state.state.selected_note_path().cloned()) else {
+        return false;
+    };
+    let duplicate = state.state.conflict().is_some_and(|existing| {
+        existing.note_path == note_path && existing.server_revision == server_revision
+    });
+    if !duplicate {
+        eprintln!(
+            "[cognate] conflict_dialog_open note={} server_revision={}",
+            note_path,
+            server_revision.chars().take(12).collect::<String>()
+        );
+        state.state.show_conflict_dialog(NoteConflict {
+            note_path,
+            local_content,
+            server_content,
+            server_revision,
+        });
+    }
+    true
 }
 
 fn restore_label_mutation(state: &mut Editor, rollback: LabelMutationRollback) {

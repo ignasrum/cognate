@@ -43,6 +43,7 @@ pub enum Message {
 
     // Content management
     NoteContentSaved(Result<(), NotebookError>),
+    OfflineReplayCompleted(Result<(), NotebookError>),
     ConflictKeepServer,
     ConflictRetryLocal,
     ConflictSaveCopy,

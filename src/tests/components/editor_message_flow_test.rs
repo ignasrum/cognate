@@ -359,4 +359,29 @@ mod tests {
         );
         assert!(!editor.debug_shutdown_in_progress());
     }
+
+    #[test]
+    fn startup_offline_conflict_opens_visual_resolution_dialog_for_queued_note() {
+        let notebook_dir = TestNotebookDir::new("startup_conflict_dialog");
+        let mut editor = create_editor_with_notebook(notebook_dir.as_str());
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::OfflineReplayCompleted(Err(NotebookError::conflict_for_note(
+                "offline write",
+                "queued/note",
+                "local draft",
+                "server content",
+                "server-revision",
+            ))),
+        );
+
+        let conflict = editor
+            .debug_conflict()
+            .expect("startup replay conflicts should open the conflict dialog");
+        assert_eq!(conflict.note_path, "queued/note");
+        assert_eq!(conflict.local_content, "local draft");
+        assert_eq!(conflict.server_content, "server content");
+        assert_eq!(conflict.server_revision, "server-revision");
+    }
 }

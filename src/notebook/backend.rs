@@ -602,8 +602,9 @@ async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
                     remaining.push(entry.clone());
                     offline_queue::write(&client.queue_path, &remaining)
                         .map_err(|error| api_error("offline queue", error))?;
-                    return Err(NotebookError::conflict(
+                    return Err(NotebookError::conflict_for_note(
                         "offline write",
+                        entry.rel_path,
                         entry.content,
                         conflict.current_content,
                         conflict.current_revision,

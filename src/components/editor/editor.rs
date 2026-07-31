@@ -139,10 +139,7 @@ impl Editor {
 
         let offline_replay_command = if notebook::is_api_backend() {
             Task::perform(notebook::replay_offline_queue(), |result| {
-                if let Err(error) = result {
-                    eprintln!("[cognate] startup_offline_replay_failed: {error}");
-                }
-                Message::NoteExplorerMsg(note_explorer::Message::LoadNotes)
+                Message::OfflineReplayCompleted(result)
             })
         } else {
             Task::none()
@@ -508,6 +505,13 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn debug_shutdown_in_progress(&self) -> bool {
         self.shutdown_in_progress
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_conflict(
+        &self,
+    ) -> Option<crate::components::editor::state::editor_state::NoteConflict> {
+        self.state.conflict().cloned()
     }
 
     #[cfg(test)]

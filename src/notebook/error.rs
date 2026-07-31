@@ -39,6 +39,7 @@ pub enum NotebookError {
     #[error("{context}: server revision {server_revision} conflicts with the local draft")]
     Conflict {
         context: &'static str,
+        note_path: Option<String>,
         local_content: String,
         server_content: String,
         server_revision: String,
@@ -76,6 +77,23 @@ impl NotebookError {
     ) -> Self {
         Self::Conflict {
             context,
+            note_path: None,
+            local_content: local_content.into(),
+            server_content: server_content.into(),
+            server_revision: server_revision.into(),
+        }
+    }
+
+    pub fn conflict_for_note(
+        context: &'static str,
+        note_path: impl Into<String>,
+        local_content: impl Into<String>,
+        server_content: impl Into<String>,
+        server_revision: impl Into<String>,
+    ) -> Self {
+        Self::Conflict {
+            context,
+            note_path: Some(note_path.into()),
             local_content: local_content.into(),
             server_content: server_content.into(),
             server_revision: server_revision.into(),
