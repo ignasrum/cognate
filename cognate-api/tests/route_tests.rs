@@ -199,6 +199,204 @@ async fn stale_note_revision_is_rejected_without_overwriting_server_content() {
 }
 
 #[tokio::test]
+async fn two_clients_racing_with_the_same_revision_have_one_winner() {
+    let app = TestApp::new().await;
+    let first_client = app.provision("race-client-a").await;
+    let second_client = app.provision("race-client-b").await;
+
+    let create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", first_client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"race-note"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(create.status(), 201);
+
+    let initial = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/race-note",
+            &first_client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let etag = initial.headers().get("etag").unwrap().clone();
+
+    let first_request = app.request(
+        axum::http::Request::builder()
+            .method("PUT")
+            .uri("/v1/notes/race-note")
+            .header("authorization", format!("Bearer {}", first_client.secret))
+            .header("if-match", etag.clone())
+            .body(Body::from("client A"))
+            .unwrap(),
+    );
+    let second_request = app.request(
+        axum::http::Request::builder()
+            .method("PUT")
+            .uri("/v1/notes/race-note")
+            .header("authorization", format!("Bearer {}", second_client.secret))
+            .header("if-match", etag)
+            .body(Body::from("client B"))
+            .unwrap(),
+    );
+    let (first_response, second_response) = tokio::join!(first_request, second_request);
+    let statuses = [
+        first_response.status().as_u16(),
+        second_response.status().as_u16(),
+    ];
+    assert_eq!(statuses.iter().filter(|status| **status == 204).count(), 1);
+    assert_eq!(statuses.iter().filter(|status| **status == 409).count(), 1);
+}
+
+#[tokio::test]
+async fn delayed_client_write_cannot_overwrite_newer_server_content() {
+    let app = TestApp::new().await;
+    let delayed_client = app.provision("delayed-client").await;
+    let fast_client = app.provision("fast-client").await;
+
+    let create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", fast_client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"delayed-note"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(create.status(), 201);
+
+    let initial = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/delayed-note",
+            &delayed_client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let etag = initial.headers().get("etag").unwrap().clone();
+
+    let delayed = async {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        app.request(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/delayed-note")
+                .header("authorization", format!("Bearer {}", delayed_client.secret))
+                .header("if-match", etag)
+                .body(Body::from("delayed stale content"))
+                .unwrap(),
+        )
+        .await
+    };
+    let fast = app.request(
+        axum::http::Request::builder()
+            .method("PUT")
+            .uri("/v1/notes/delayed-note")
+            .header("authorization", format!("Bearer {}", fast_client.secret))
+            .header("if-match", initial.headers().get("etag").unwrap())
+            .body(Body::from("fast newer content"))
+            .unwrap(),
+    );
+    let (delayed_response, fast_response) = tokio::join!(delayed, fast);
+    assert_eq!(fast_response.status(), 204);
+    assert_eq!(delayed_response.status(), 409);
+
+    let final_note = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/delayed-note",
+            &fast_client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let body = final_note.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["content"], "fast newer content");
+}
+
+#[tokio::test]
+async fn metadata_writes_use_etags_and_reject_stale_updates() {
+    let app = TestApp::new().await;
+    let client = app.provision("metadata-tests").await;
+
+    let create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"metadata-note"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(create.status(), 201);
+
+    let loaded = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let etag = loaded.headers().get("etag").unwrap().clone();
+    let notes = serde_json::json!([{
+        "rel_path": "metadata-note",
+        "labels": ["api", "updated"],
+        "last_updated": null
+    }]);
+
+    let update = app
+        .request(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/v1/metadata")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("if-match", etag.clone())
+                .header("content-type", "application/json")
+                .body(Body::from(notes.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(update.status(), 204);
+
+    let stale = app
+        .request(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/v1/metadata")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("if-match", etag)
+                .header("content-type", "application/json")
+                .body(Body::from(notes.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(stale.status(), 409);
+
+    let refreshed = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    let body = refreshed.into_body().collect().await.unwrap().to_bytes();
+    let metadata: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(metadata[0]["labels"], serde_json::json!(["api", "updated"]));
+}
+
+#[tokio::test]
 async fn note_write_requires_a_revision_precondition() {
     let app = TestApp::new().await;
     let client = app.provision("precondition-tests").await;
@@ -286,6 +484,28 @@ async fn attachment_lifecycle_routes_use_authenticated_engine_storage() {
         download.into_body().collect().await.unwrap().to_bytes(),
         png
     );
+
+    let missing_delete_precondition = app
+        .request(bearer_request(
+            "DELETE",
+            &download_uri,
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(missing_delete_precondition.status(), 428);
+
+    let missing_replace_precondition = app
+        .request(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri(&download_uri)
+                .header("authorization", format!("Bearer {}", client.secret))
+                .body(Body::from(png.clone()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(missing_replace_precondition.status(), 428);
 
     let replace = app
         .request(
