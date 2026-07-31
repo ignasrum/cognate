@@ -77,7 +77,7 @@ Attachment clients use these authenticated routes:
 - `GET /v1/attachments/<note-path>/images/<file>` to download an attachment
 - `DELETE /v1/attachments/<note-path>/images/<file>` to delete an attachment
 
-Uploads are limited to 16 MiB and supported image signatures. Downloads return an `ETag`; replacement requests use `If-Match`.
+Request bodies, note writes, and attachment uploads/replacements are limited to 48 MiB. Attachments must use supported image signatures. Downloads return an `ETag`; replacement requests use `If-Match`.
 
 When exposed externally, configure the reverse proxy to terminate HTTPS and forward to the
 configured address and port.

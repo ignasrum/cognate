@@ -1,6 +1,7 @@
 mod common;
 
 use axum::body::Body;
+use cognate_api::api::MAX_PAYLOAD_BYTES;
 use common::{TestApp, bearer_request};
 use http_body_util::BodyExt;
 
@@ -111,7 +112,7 @@ async fn path_traversal_and_oversized_note_payloads_are_rejected() {
             "PUT",
             "/v1/notes/large",
             &client.secret,
-            Body::from(vec![b'x'; 5 * 1024 * 1024]),
+            Body::from(vec![b'x'; MAX_PAYLOAD_BYTES + 1]),
         ))
         .await;
     assert!(matches!(oversized.status().as_u16(), 400 | 413));

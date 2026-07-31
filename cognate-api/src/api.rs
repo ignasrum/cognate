@@ -17,6 +17,8 @@ use crate::{
     state::AppState,
 };
 
+pub const MAX_PAYLOAD_BYTES: usize = 48 * 1024 * 1024;
+
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
@@ -91,7 +93,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/clients", post(create_client).get(list_clients))
         .route("/v1/admin/clients/{id}", delete(delete_client_route))
         .merge(protected)
-        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(MAX_PAYLOAD_BYTES))
         .with_state(state)
 }
 
@@ -126,8 +128,7 @@ async fn upload_attachment(
     ),
     ApiError,
 > {
-    const MAX_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
-    if body.is_empty() || body.len() > MAX_ATTACHMENT_BYTES {
+    if body.is_empty() || body.len() > MAX_PAYLOAD_BYTES {
         return Err(ApiError::BadRequest("invalid attachment size".to_string()));
     }
     let rel_path =
@@ -177,8 +178,7 @@ async fn replace_attachment(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    const MAX_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
-    if body.is_empty() || body.len() > MAX_ATTACHMENT_BYTES {
+    if body.is_empty() || body.len() > MAX_PAYLOAD_BYTES {
         return Err(ApiError::BadRequest("invalid attachment size".to_string()));
     }
     let (note, attachment) = split_attachment_path(&path)?;
@@ -397,8 +397,7 @@ async fn save_note(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, HeaderMap), ApiError> {
-    const MAX_NOTE_BYTES: usize = 4 * 1024 * 1024;
-    if body.len() > MAX_NOTE_BYTES {
+    if body.len() > MAX_PAYLOAD_BYTES {
         return Err(ApiError::BadRequest(
             "note content is too large".to_string(),
         ));
