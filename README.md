@@ -53,18 +53,84 @@ Cognate reads configuration from `./config.json` by default. Override with:
 COGNATE_CONFIG_PATH=/path/to/config.json cargo run --release
 ```
 
-Example:
+Choose one of these configurations. The desktop app always needs a
+`notebook_path`. In API mode, the server's `COGNATE_NOTEBOOK_PATH` is the
+authoritative notes directory; the desktop path does not need to exist on the
+API host.
+
+#### Local mode (embedded API, recommended for one desktop)
 
 ```json
 {
   "theme": "CatppuccinMacchiato",
-  "notebook_path": "/home/{USER}/Documents/cognate/example_notebook",
+  "notebook_path": "/home/ignasr/Documents/cognate/notebook",
   "scale": 1.0,
-  "storage_backend": "local",
-  "api_url": "http://127.0.0.1:8787",
-  "api_key": ""
+  "storage_backend": "local"
 }
 ```
+
+Run it with:
+
+```bash
+COGNATE_CONFIG_PATH=./config.local.json cargo run --release
+```
+
+Local mode silently starts an in-process API on an ephemeral loopback port.
+Do not add `api_url` or `api_key`; they are ignored in this mode.
+
+#### API mode (desktop connects to a self-hosted `cognate-api`)
+
+```json
+{
+  "theme": "CatppuccinMacchiato",
+  "notebook_path": "/home/ignasr/Documents/cognate/client-state",
+  "scale": 1.0,
+  "storage_backend": "api",
+  "api_url": "http://127.0.0.1:8787",
+  "api_key": "cgnt_live_replace_with_client_secret"
+}
+```
+
+Start the API on the same machine, then run the UI:
+
+```bash
+COGNATE_NOTEBOOK_PATH=/home/ignasr/Documents/cognate/notebook \
+COGNATE_API_ADMIN_TOKEN='replace-with-admin-token' \
+COGNATE_API_BIND_ADDRESS=127.0.0.1 \
+COGNATE_API_BIND_PORT=8787 \
+cargo run -p cognate-api --release
+
+COGNATE_CONFIG_PATH=./config.api.json cargo run --release
+```
+
+#### API mode (desktop connects over a LAN)
+
+On the API host, bind to its LAN address:
+
+```bash
+COGNATE_NOTEBOOK_PATH=/srv/cognate/notebook \
+COGNATE_API_ADMIN_TOKEN='replace-with-admin-token' \
+COGNATE_API_BIND_ADDRESS=192.168.10.69 \
+COGNATE_API_BIND_PORT=8787 \
+cargo run -p cognate-api --release
+```
+
+Use the host address in the desktop config:
+
+```json
+{
+  "theme": "Dark",
+  "notebook_path": "/home/ignasr/Documents/cognate/client-state",
+  "scale": 1.0,
+  "storage_backend": "api",
+  "api_url": "http://192.168.10.69:8787",
+  "api_key": "cgnt_live_replace_with_client_secret"
+}
+```
+
+Direct LAN HTTP is unencrypted. Restrict port `8787` with a firewall or place
+the API behind a reverse proxy that terminates HTTPS; the API itself serves
+plain HTTP only.
 
 - `theme` is the UI theme name
 - `notebook_path` points to your notes root directory
