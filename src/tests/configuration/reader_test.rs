@@ -127,6 +127,48 @@ mod tests {
     }
 
     #[test]
+    fn read_configuration_rejects_whitespace_api_credentials() {
+        for (name, api_url, api_key) in [
+            ("blank_url", "   ", "cgnt_live_test"),
+            ("blank_key", "http://127.0.0.1:8787", "   "),
+        ] {
+            let config_file = TestConfigFile::new(
+                name,
+                &format!(
+                    r#"{{
+                        "theme": "Dark",
+                        "storage_backend": "api",
+                        "api_url": "{api_url}",
+                        "api_key": "{api_key}"
+                    }}"#
+                ),
+            );
+            assert!(
+                read_configuration(config_file.as_str()).is_err(),
+                "expected whitespace API credential to be rejected: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_configuration_does_not_require_remote_credentials() {
+        let config_file = TestConfigFile::new(
+            "local_without_api_credentials",
+            r#"{
+                "theme": "Dark",
+                "storage_backend": "local",
+                "notebook_path": "/tmp/local-notebook"
+            }"#,
+        );
+
+        let config = read_configuration(config_file.as_str())
+            .expect("local mode should not require API URL or key");
+        assert_eq!(config.storage_backend, StorageBackend::Local);
+        assert!(config.api_url.is_empty());
+        assert!(config.api_key.is_empty());
+    }
+
+    #[test]
     fn read_configuration_errors_when_file_missing() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -500,3 +500,32 @@ pub async fn search_page(
         total: response.total,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_configuration_does_not_start_an_embedded_server() {
+        let configuration = Configuration {
+            theme: "Dark".to_string(),
+            notebook_path: "/srv/cognate/notebook".to_string(),
+            scale: 1.0,
+            config_path: "config.json".to_string(),
+            version: "test".to_string(),
+            storage_backend: StorageBackend::Api,
+            api_url: "http://127.0.0.1:1".to_string(),
+            api_key: "cgnt_live_test".to_string(),
+        };
+
+        configure_backend(&configuration).expect("API configuration should not bind a port");
+        assert!(is_api());
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(check_connection());
+        assert!(result.is_err());
+        shutdown_backend().expect("remote API selection has no embedded runtime to stop");
+    }
+}
