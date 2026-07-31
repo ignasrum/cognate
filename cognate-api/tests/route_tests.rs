@@ -271,6 +271,16 @@ async fn attachment_lifecycle_routes_use_authenticated_engine_storage() {
         ))
         .await;
     assert_eq!(download.status(), 200);
+    assert_eq!(download.headers().get("content-type").unwrap(), "image/png");
+    assert_eq!(
+        download
+            .headers()
+            .get("content-length")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        png.len().to_string()
+    );
     assert_eq!(
         download.into_body().collect().await.unwrap().to_bytes(),
         png

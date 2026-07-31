@@ -164,12 +164,37 @@ async fn download_attachment(
     let bytes =
         AttachmentManager::read_attachment_bytes(&state.notebook_path, note, &attachment).await?;
     let revision = cognate_engine::storage::attachment_revision(&bytes);
+    let media_type = attachment_media_type(&attachment);
+    let content_length = bytes.len();
     let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
     response.headers_mut().insert(
         "etag",
         HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
     );
+    response
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static(media_type));
+    response.headers_mut().insert(
+        "content-length",
+        HeaderValue::from_str(&content_length.to_string()).expect("body length is header-safe"),
+    );
     Ok(response)
+}
+
+fn attachment_media_type(path: &str) -> &'static str {
+    match path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn replace_attachment(
