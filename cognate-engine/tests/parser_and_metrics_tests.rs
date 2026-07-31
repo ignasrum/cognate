@@ -33,28 +33,28 @@ fn test_task_extraction_marker_variants() {
         .iter()
         .find(|t| t.text == "Task 1 (normal bullet, pending)")
         .unwrap();
-    assert_eq!(task_1.is_completed, false);
+    assert!(!task_1.is_completed);
     assert_eq!(task_1.line_number, 1);
 
     let task_2 = all_tasks
         .iter()
         .find(|t| t.text == "Task 2 (asterisk bullet, lowercase completed)")
         .unwrap();
-    assert_eq!(task_2.is_completed, true);
+    assert!(task_2.is_completed);
     assert_eq!(task_2.line_number, 2);
 
     let task_3 = all_tasks
         .iter()
         .find(|t| t.text == "Task 3 (normal bullet, uppercase completed)")
         .unwrap();
-    assert_eq!(task_3.is_completed, true);
+    assert!(task_3.is_completed);
     assert_eq!(task_3.line_number, 3);
 
     let task_6 = all_tasks
         .iter()
         .find(|t| t.text == "Task 6 (indented bullet, pending)")
         .unwrap();
-    assert_eq!(task_6.is_completed, false);
+    assert!(!task_6.is_completed);
     assert_eq!(task_6.line_number, 7);
 
     assert_eq!(pending.len(), 2); // Task 1, Task 6

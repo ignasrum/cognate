@@ -3,7 +3,8 @@ mod common;
 use cognate_engine::EngineError;
 use cognate_engine::storage::{AttachmentManager, NotebookManager};
 use common::{NotebookTestHarness, TempTestDir, now_nanos};
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[tokio::test]
 async fn test_async_attachments() {
@@ -98,7 +99,7 @@ async fn test_note_creation_weird_characters() {
         let res = manager.create_note(path, &mut notes).await;
         // Weird characters inside component names are allowed unless they violate basic path traversal
         if let Ok(note) = res {
-            assert!(note.rel_path.len() > 0);
+            assert!(!note.rel_path.is_empty());
         }
     }
 }
@@ -241,6 +242,9 @@ async fn test_attachment_write_storage_error() {
 
     // Restore permissions for cleanup
     let mut perms = std::fs::metadata(&note_dir).unwrap().permissions();
+    #[cfg(unix)]
+    perms.set_mode(perms.mode() | 0o700);
+    #[cfg(not(unix))]
     perms.set_readonly(false);
     let _ = std::fs::set_permissions(&note_dir, perms);
 }

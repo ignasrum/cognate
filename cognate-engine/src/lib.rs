@@ -209,7 +209,7 @@ mod tests {
             .find(|t| t.text.contains("Finish search"))
             .unwrap();
         assert_eq!(task_1.due_date, Some("2026-07-06".to_string()));
-        assert_eq!(task_1.is_completed, false);
+        assert!(!task_1.is_completed);
 
         let task_2 = pending
             .iter()

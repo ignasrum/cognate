@@ -219,7 +219,7 @@ async fn delete_attachment(
 ) -> Result<StatusCode, ApiError> {
     let (note, attachment) = split_attachment_path(&path)?;
     let full_path = std::path::Path::new(note).join(attachment);
-    let _ = AttachmentManager::delete_attachment(
+    AttachmentManager::delete_attachment(
         &state.notebook_path,
         full_path.to_string_lossy().as_ref(),
     )

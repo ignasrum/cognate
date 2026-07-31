@@ -32,11 +32,11 @@ test:
 
 format:
 	cargo fmt --all
-	cargo clippy --all-targets --fix --allow-dirty --allow-staged
+	cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 	cargo fmt --all
 
 lint:
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 	cargo fmt --all -- --check
 
 all: build install

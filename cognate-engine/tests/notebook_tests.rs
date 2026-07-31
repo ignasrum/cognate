@@ -1,7 +1,8 @@
 mod common;
 
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
 use cognate_engine::EngineError;
 use cognate_engine::storage::{ConcurrencyManager, NoteMetadata, NotebookManager};
@@ -1095,6 +1096,9 @@ async fn test_load_metadata_persist_normalization_warning() {
 
     // Restore permissions so cleanup works
     let mut perms = std::fs::metadata(temp.path()).unwrap().permissions();
+    #[cfg(unix)]
+    perms.set_mode(perms.mode() | 0o700);
+    #[cfg(not(unix))]
     perms.set_readonly(false);
     let _ = std::fs::set_permissions(temp.path(), perms);
 }
