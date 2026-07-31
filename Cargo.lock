@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "cognate"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "arboard",
  "axum",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "cognate-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "blake3",
@@ -781,7 +781,7 @@ dependencies = [
 
 [[package]]
 name = "cognate-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "blake3",
