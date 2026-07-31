@@ -51,7 +51,7 @@ async fn revoking_an_unknown_client_returns_not_found() {
 }
 
 #[tokio::test]
-async fn wildcard_metadata_update_is_supported_for_explicit_initialization() {
+async fn wildcard_metadata_update_is_rejected_after_note_initialization() {
     let app = TestApp::new().await;
     let client = app.provision("metadata-wildcard").await;
     let create = app
@@ -81,7 +81,7 @@ async fn wildcard_metadata_update_is_supported_for_explicit_initialization() {
                 .unwrap(),
         )
         .await;
-    assert_eq!(update.status(), 204);
+    assert_eq!(update.status(), 409);
 
     let notes = app
         .request(bearer_request(
@@ -93,7 +93,7 @@ async fn wildcard_metadata_update_is_supported_for_explicit_initialization() {
         .await;
     let body = notes.into_body().collect().await.unwrap().to_bytes();
     let notes: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(notes[0]["labels"], serde_json::json!(["initialized"]));
+    assert_eq!(notes[0]["labels"], serde_json::json!([]));
 }
 
 #[tokio::test]

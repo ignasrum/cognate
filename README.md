@@ -151,6 +151,8 @@ The paginated search API returns stable error codes such as `invalid_query`, `in
 
 API note writes use content-hash revisions exposed as `ETag` values. Clients must send the revision they loaded in `If-Match`; stale writes receive `409 Conflict` and do not overwrite the server version. If the API is temporarily unreachable, API-mode note content is saved in the permissions-restricted `.cognate-api-queue.json` file beside the configuration and retried on a later save.
 
+Metadata updates are non-structural and must preserve the existing set of valid note paths. Wildcard metadata writes are limited to an empty notebook; use the note create/delete/move endpoints for structural changes. This prevents metadata updates from creating dangling entries or hiding note directories on disk.
+
 When a conflict is detected, the editor shows the local draft and server version together. You can keep the server version, retry the local draft against the latest server revision, or save the local draft as a separate `.conflict` note. Dismissing the dialog leaves both versions available for another resolution attempt.
 
 ## Documentation

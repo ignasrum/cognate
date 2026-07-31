@@ -136,6 +136,9 @@ This keeps UI behavior deterministic and testable through message transitions.
 - Missing primary metadata is recovered from a valid backup before an empty notebook
   is reported. Protected reads fail closed when an ETag is missing, and ordinary note
   updates cannot create notes absent from metadata.
+- Metadata updates cannot add or remove note paths. Wildcard metadata writes are
+  restricted to an empty notebook; creation, deletion, and moves use the dedicated
+  lifecycle APIs so metadata cannot hide or orphan canonical note directories.
 
 ## Where to Add Features
 

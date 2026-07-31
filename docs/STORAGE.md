@@ -98,6 +98,12 @@ note content. Offline replay first records a remote-commit acknowledgement and o
 then removes the queue entry; if local compaction fails, the acknowledged entry is
 discarded locally on the next replay without sending the write again.
 
+Metadata updates are non-structural: an initialized notebook must retain the same
+set of valid note paths, and each path must contain a regular `note.md`. Wildcard
+metadata writes are accepted only for an empty notebook. Note creation, deletion,
+and moves must use their lifecycle operations so metadata cannot hide or orphan
+filesystem note directories.
+
 ### A. Atomic Writes
 To prevent file corruption caused by partial writes (e.g., due to sudden application crashes or power loss), note, metadata, and engine-index writes are performed atomically:
 1. Write the payload to a temporary file in the target parent directory:

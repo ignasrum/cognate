@@ -1,9 +1,13 @@
+use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use super::concurrency::ConcurrencyManager;
-use super::fs_utils::{validate_relative_path, write_text_file_atomically};
+use super::fs_utils::{
+    ensure_path_within_notebook_if_canonicalizable, validate_relative_path,
+    write_text_file_atomically,
+};
 use super::index_sync;
 pub use super::metadata::{
     MetadataLoadResult, NoteMetadata, NotebookMetadata, current_timestamp_rfc3339,
@@ -281,6 +285,12 @@ impl NotebookManager {
         let _lock = self.concurrency.acquire_notebook().await?;
         let current = self.load_metadata_unlocked().await?.notes;
         let current_revision = metadata_revision(&current);
+        if expected_revision == "*" && !current.is_empty() {
+            return Err(EngineError::conflict(
+                "save metadata",
+                "wildcard metadata writes are only valid for an empty notebook",
+            ));
+        }
         if expected_revision != "*" && expected_revision != current_revision {
             return Err(EngineError::conflict(
                 "save metadata",
@@ -290,6 +300,7 @@ impl NotebookManager {
                 ),
             ));
         }
+        validate_metadata_snapshot(&self.notebook_path, &current, notes).await?;
         save_metadata(&self.notebook_path, notes).await
     }
 
@@ -471,4 +482,66 @@ pub fn note_content_revision(content: &str) -> String {
 fn metadata_revision(notes: &[NoteMetadata]) -> String {
     let serialized = serde_json::to_string(notes).unwrap_or_default();
     note_content_revision(&serialized)
+}
+
+async fn validate_metadata_snapshot(
+    notebook_path: &Path,
+    current: &[NoteMetadata],
+    requested: &[NoteMetadata],
+) -> Result<(), EngineError> {
+    let current_paths = current
+        .iter()
+        .map(|note| note.rel_path.as_str())
+        .collect::<HashSet<_>>();
+    let requested_paths = requested
+        .iter()
+        .map(|note| note.rel_path.as_str())
+        .collect::<HashSet<_>>();
+
+    if current_paths != requested_paths {
+        return Err(EngineError::validation(
+            "save metadata",
+            "metadata updates cannot add or remove note paths; use note lifecycle operations",
+        ));
+    }
+    if requested_paths.len() != requested.len() {
+        return Err(EngineError::validation(
+            "save metadata",
+            "metadata contains duplicate note paths",
+        ));
+    }
+
+    for note in requested {
+        let rel_path = validate_relative_path("metadata note path", &note.rel_path)?;
+        let note_dir = notebook_path.join(&rel_path);
+        ensure_path_within_notebook_if_canonicalizable(
+            notebook_path,
+            &note_dir,
+            &note.rel_path,
+            "Metadata note path escapes notebook boundaries:",
+        )
+        .await?;
+        let note_file = note_dir.join("note.md");
+        let metadata = tokio::fs::symlink_metadata(&note_file)
+            .await
+            .map_err(|error| {
+                EngineError::validation(
+                    "save metadata",
+                    format!(
+                        "Metadata note '{}' has no readable note.md: {error}",
+                        note.rel_path
+                    ),
+                )
+            })?;
+        if !metadata.file_type().is_file() {
+            return Err(EngineError::validation(
+                "save metadata",
+                format!(
+                    "Metadata note '{}' does not contain a regular note.md",
+                    note.rel_path
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
