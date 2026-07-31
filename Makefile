@@ -1,25 +1,31 @@
 prog :=cognate
 
-debug ?=
-
-$(info debug is $(debug))
+PROFILE ?= release
 
 ifdef debug
-  release :=
-  target :=debug
-else
-  release :=--release
-  target :=release
+  PROFILE := debug
 endif
 
+ifeq ($(PROFILE),release)
+  cargo_profile := --release
+  target :=release
+else ifeq ($(PROFILE),debug)
+  cargo_profile :=
+  target :=debug
+else
+  $(error PROFILE must be either release or debug)
+endif
+
+$(info profile is $(PROFILE))
+
 build:
-	cargo build $(release)
+	cargo build $(cargo_profile)
 
 run:
-	cargo run
+	cargo run $(cargo_profile)
 
 api:
-	cargo run -p cognate-api
+	cargo run -p cognate-api $(cargo_profile)
 
 clean:
 	cargo clean
@@ -42,5 +48,8 @@ lint:
 all: build install
 
 help:
-	@echo "usage: make $(prog) [debug=1]"
+	@echo "usage: make [PROFILE=release|debug] [target]"
+	@echo "       make run"
+	@echo "       make PROFILE=debug run"
+	@echo "       make debug=1 run  (legacy alias)"
 	@echo "       make api"
