@@ -43,7 +43,9 @@ Visualizer:
 
 ### `src/notebook`
 
-- `backend.rs`: authenticated API requests, revisions, offline queue, and error mapping
+- `backend.rs`: backend selection, lifecycle, revisions, and public notebook operation facade
+- `api_client.rs`: authenticated HTTP requests, URL construction, response decoding, and retry classification
+- `attachment_ops.rs`: attachment upload, download, and conditional deletion operations
 - `embedded_api.rs`: embedded loopback API lifecycle for local mode
 - `operations.rs` and `storage.rs`: API-facing notebook operation adapters
 - `search.rs`: search request metadata/result types used by the API client
@@ -51,6 +53,12 @@ Visualizer:
 ### `cognate-engine/src/storage`
 
 - `notebook.rs`: shared async notebook persistence and transactional note mutations
+- `metadata.rs`: metadata models, timestamp normalization, and metadata validation helpers
+- `metadata_persistence.rs`: atomic metadata writes, recovery snapshots, and index synchronization
+- `index_sync.rs`: persisted engine-index loading, saving, and metadata synchronization
+- `notebook_content.rs`: note content reads and filesystem modification-time lookup
+- `notebook_lifecycle.rs`: create, delete, move, and rollback-safe note mutations
+- `transactions.rs`: transaction staging-path generation used by rollback-safe mutations
 - `concurrency.rs`: cross-process advisory notebook and note locks
 - `attachments.rs`: embedded attachment persistence with lock coordination
 - `fs_utils.rs`: path validation and atomic filesystem writes
@@ -68,6 +76,10 @@ and port (loopback by default), authenticates Bearer client keys, stores only BL
 and client metadata in SQLite, and delegates notebook mutations to `cognate-engine`.
 Public HTTPS termination is provided by an external reverse proxy; the API process does
 not manage certificates.
+
+Route composition lives in `src/api.rs`. Attachment and search handlers are separated into
+`src/routes/admin.rs`, `src/routes/attachments.rs`, and `src/routes/search.rs`; route handlers still delegate all
+filesystem access, locking, revisions, and indexing to `AppState` and `cognate-engine`.
 
 In local mode, Cognate embeds this service on an ephemeral loopback port with an
 in-memory authentication store. No SQLite database or persistent client secret is

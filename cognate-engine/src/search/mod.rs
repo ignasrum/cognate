@@ -1,5 +1,8 @@
+mod cache;
 pub mod index;
+mod maintenance;
 pub mod manager;
+mod matching;
 pub mod query;
 pub mod tokenizer;
 

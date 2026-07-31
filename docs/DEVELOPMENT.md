@@ -38,9 +38,22 @@ The CI workflow runs formatting, clippy, build, and tests. Keeping these green l
 
 - `src/main.rs`: app startup and Iced wiring
 - `src/components/editor`: main editor update loop and UI composition
+- `src/components/editor/core/preview.rs`: preview facade; cursor mapping and markdown transformation live in `core/preview/`
+- `src/components/editor/actions/note_actions.rs`: action facade; navigation, creation, deletion, and move handlers live in sibling modules
+- `src/components/editor/lifecycle.rs`: editor construction, application entry points, view, keyboard/window subscriptions, and scale accessors
+- `src/components/visualizer/core/canvas_impl.rs`: canvas event/rendering facade; projection and hit testing live in `core/canvas_impl/projection.rs`
 - `src/components/note_explorer`: notebook tree and selection UX
 - `src/components/visualizer`: label graph rendering
-- `src/notebook`: authenticated API client, embedded API lifecycle, offline queue, and UI-facing notebook types
+- `src/notebook`: backend facade, `api_client.rs` HTTP/error helpers, embedded API lifecycle, offline queue, and UI-facing notebook types
+- `src/notebook/offline_replay.rs`: queued-write replay, backoff, and conflict handoff
+- `cognate-api/src/routes`: domain-specific attachment and search handlers composed by the API router
+- `cognate-api/tests/*_route_tests.rs`: focused note, metadata, attachment, and two-client concurrency integration coverage
+- `cognate-engine/src/storage/metadata.rs`: shared metadata types and timestamp normalization
+- `cognate-engine/src/search/matching.rs`: snippets and highlight-range calculation
+- `cognate-engine/src/search/cache.rs`: in-memory note content cache and cache path mutations
+- `cognate-engine/src/search/maintenance.rs`: external filesystem refresh and persisted search-index synchronization
+- `cognate-engine/tests/notebook_tests.rs`: core notebook lifecycle, metadata, and concurrency coverage
+- `cognate-engine/tests/notebook_edge_case_tests.rs`: focused validation, recovery, and filesystem edge cases
 - `src/configuration`: config reader and theme conversion
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for deeper boundaries and data flow.
