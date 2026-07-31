@@ -74,6 +74,8 @@ mod tests {
         state.set_search_results(vec![crate::notebook::NoteSearchResult {
             rel_path: "x/y".to_string(),
             snippet: "Path match".to_string(),
+            match_type: cognate_engine::search::SearchMatchType::Path,
+            highlights: Vec::new(),
         }]);
         state.set_loading_note(true);
 

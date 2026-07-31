@@ -28,6 +28,8 @@ pub(super) fn render_search_results(
                     .padding(3),
             );
             results_column = results_column.push(Text::new(result.snippet.clone()).size(12));
+            results_column =
+                results_column.push(Text::new(format!("Match: {:?}", result.match_type)).size(11));
         }
 
         if results.len() > max_results_to_render {

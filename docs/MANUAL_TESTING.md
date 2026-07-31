@@ -27,6 +27,10 @@ Use this checklist before releases or significant UI changes.
 
 - Add/remove labels updates UI and persists metadata
 - Search matches path, label, and content
+- Search filters work: `label:`, `path:`, `updated:FROM..TO`, quoted phrases, and `-` exclusions
+- Rapid typing waits briefly before searching and never displays stale results
+- API search returns the same matches and match types as local search
+- API search pagination returns stable, non-duplicated pages
 - Clearing search restores normal explorer state
 
 ## Embedded Images
@@ -46,4 +50,3 @@ Use this checklist before releases or significant UI changes.
 - Closing window attempts save and exits cleanly
 - Simulate failing write paths and verify error dialogs
 - Reopen app and verify latest note/metadata state
-

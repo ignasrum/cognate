@@ -143,11 +143,9 @@ async fn empty_search_query_returns_a_valid_result() {
         .await;
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    assert!(
-        serde_json::from_slice::<serde_json::Value>(&body)
-            .unwrap()
-            .is_array()
-    );
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["results"], serde_json::json!([]));
+    assert_eq!(payload["total"], 0);
 }
 
 #[tokio::test]

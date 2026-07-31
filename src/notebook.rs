@@ -27,6 +27,10 @@ pub struct NoteSearchResult {
     pub rel_path: String,
     /// User-facing snippet that explains the match.
     pub snippet: String,
+    /// Search field that produced the match.
+    pub match_type: cognate_engine::search::SearchMatchType,
+    /// Character ranges within the snippet that matched the query.
+    pub highlights: Vec<cognate_engine::search::SearchHighlight>,
 }
 
 pub use backend::configure_backend;

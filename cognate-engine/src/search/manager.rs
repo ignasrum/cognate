@@ -5,6 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 
+use super::query::{ParsedSearchQuery, parse_query};
 use crate::storage::{NoteMetadata, NotebookManager};
 use crate::{EngineError, NotebookEngineState};
 
@@ -15,11 +16,42 @@ struct CachedNote {
     modified_time: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 pub struct SearchResultEntry {
     pub rel_path: String,
     pub snippet: String,
     pub score: f32,
+    pub match_type: SearchMatchType,
+    pub highlights: Vec<SearchHighlight>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMatchType {
+    Content,
+    Label,
+    Path,
+    Multiple,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SearchHighlight {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SearchRequest {
+    pub query: String,
+    pub limit: usize,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct SearchResponse {
+    pub results: Vec<SearchResultEntry>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
 }
 
 #[derive(Debug)]
@@ -90,6 +122,35 @@ impl SearchIndexManager {
         notes: &[NoteMetadata],
         refresh_interval: Duration,
     ) -> Result<Vec<SearchResultEntry>, EngineError> {
+        Ok(self
+            .search_request(
+                &SearchRequest {
+                    query: query.to_string(),
+                    limit: usize::MAX,
+                    cursor: None,
+                },
+                notes,
+                refresh_interval,
+            )
+            .await?
+            .results)
+    }
+
+    pub async fn search_request(
+        &mut self,
+        request: &SearchRequest,
+        notes: &[NoteMetadata],
+        refresh_interval: Duration,
+    ) -> Result<SearchResponse, EngineError> {
+        let parsed = parse_query(&request.query)
+            .map_err(|error| EngineError::validation("search query", error.to_string()))?;
+        let offset = request
+            .cursor
+            .as_deref()
+            .unwrap_or("0")
+            .parse::<usize>()
+            .map_err(|_| EngineError::validation("search cursor", "invalid cursor"))?;
+        let limit = request.limit.clamp(1, 100);
         let now = Instant::now();
         let should_refresh = match self.last_external_refresh {
             Some(last) => now.duration_since(last) >= refresh_interval,
@@ -194,26 +255,81 @@ impl SearchIndexManager {
 
         self.engine_state = Some(engine_state.clone());
 
-        let hits = crate::search::execute_search(&engine_state.search_index, query, usize::MAX);
+        let hits =
+            crate::search::execute_search(&engine_state.search_index, &parsed.text, usize::MAX);
         let mut scores_by_path: HashMap<String, f32> =
             hits.into_iter().map(|hit| (hit.path, hit.score)).collect();
 
         let mut results = Vec::new();
-        let normalized_query = query.trim().to_lowercase();
-
         for note in notes {
-            let rel_path_match = note.rel_path.to_lowercase().contains(&normalized_query);
+            let path_lower = note.rel_path.to_lowercase();
+            let text_fields = parsed
+                .terms
+                .iter()
+                .chain(parsed.phrases.iter())
+                .collect::<Vec<_>>();
+            let rel_path_match = if parsed.path_filters.is_empty() {
+                text_fields.iter().any(|term| path_lower.contains(*term))
+            } else {
+                parsed
+                    .path_filters
+                    .iter()
+                    .all(|filter| path_lower.contains(filter))
+            };
             let label_match = note
                 .labels
                 .iter()
-                .find(|label| label.to_lowercase().contains(&normalized_query))
+                .find(|label| {
+                    let lower = label.to_lowercase();
+                    if parsed.label_filters.is_empty() {
+                        text_fields.iter().any(|term| lower.contains(*term))
+                    } else {
+                        parsed
+                            .label_filters
+                            .iter()
+                            .all(|filter| lower.contains(filter))
+                    }
+                })
                 .cloned();
+            let has_label_match = label_match.is_some();
+            let excluded = parsed
+                .excluded_paths
+                .iter()
+                .any(|value| path_lower.contains(value))
+                || parsed.excluded_labels.iter().any(|value| {
+                    note.labels
+                        .iter()
+                        .any(|label| label.to_lowercase().contains(value))
+                });
+            if excluded
+                || (!parsed.path_filters.is_empty() && !rel_path_match)
+                || (!parsed.label_filters.is_empty() && label_match.is_none())
+                || parsed.updated_range.as_ref().is_some_and(|(from, to)| {
+                    note.last_updated
+                        .as_deref()
+                        .is_none_or(|date| date < from.as_str() || date > to.as_str())
+                })
+            {
+                continue;
+            }
 
             let content_match = self.notes_cache.get(&note.rel_path).and_then(|indexed| {
-                if !indexed.content_lower.contains(&normalized_query) {
+                if !parsed
+                    .phrases
+                    .iter()
+                    .all(|phrase| indexed.content_lower.contains(phrase))
+                    || !parsed
+                        .terms
+                        .iter()
+                        .all(|term| indexed.content_lower.contains(term))
+                    || parsed
+                        .excluded_terms
+                        .iter()
+                        .any(|term| indexed.content_lower.contains(term))
+                {
                     return None;
                 }
-                find_matching_content_snippet(&indexed.content, &normalized_query)
+                find_matching_content_snippet(&indexed.content, &parsed)
             });
 
             let engine_score = scores_by_path.remove(&note.rel_path);
@@ -223,26 +339,62 @@ impl SearchIndexManager {
                 || label_match.is_some()
                 || content_match.is_some()
             {
-                let snippet = if let Some(content_snippet) = content_match {
-                    content_snippet
+                let (snippet, highlights, match_type) = if let Some(content_snippet) = content_match
+                {
+                    (
+                        content_snippet.0,
+                        content_snippet.1,
+                        SearchMatchType::Content,
+                    )
                 } else if let Some(matching_label) = label_match {
-                    format!(
-                        "Label match: {}",
-                        truncate_search_snippet(&matching_label, 100)
+                    let snippet = truncate_search_snippet(&matching_label, 100);
+                    let highlights = highlight_ranges(&snippet, &parsed);
+                    (
+                        format!("Label match: {snippet}"),
+                        highlights,
+                        SearchMatchType::Label,
                     )
                 } else {
-                    "Path match".to_string()
+                    let snippet = if parsed.path_filters.is_empty() {
+                        "Path match".to_string()
+                    } else {
+                        truncate_search_snippet(&note.rel_path, 120)
+                    };
+                    let highlights = highlight_ranges(&snippet, &parsed);
+                    (snippet, highlights, SearchMatchType::Path)
                 };
 
                 results.push(SearchResultEntry {
                     rel_path: note.rel_path.clone(),
                     snippet,
-                    score: engine_score.unwrap_or(0.0),
+                    score: engine_score.unwrap_or(0.0)
+                        + if rel_path_match { 10.0 } else { 0.0 }
+                        + if has_label_match { 8.0 } else { 0.0 },
+                    match_type,
+                    highlights,
                 });
             }
         }
 
-        Ok(results)
+        results.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.rel_path.cmp(&right.rel_path))
+        });
+        let total = results.len();
+        let end = offset.saturating_add(limit).min(total);
+        let page = if offset >= total {
+            Vec::new()
+        } else {
+            results[offset..end].to_vec()
+        };
+        Ok(SearchResponse {
+            results: page,
+            next_cursor: (end < total).then(|| end.to_string()),
+            total,
+        })
     }
 
     pub fn clear_cache(&mut self) {
@@ -263,17 +415,42 @@ fn truncate_search_snippet(input: &str, max_chars: usize) -> String {
     }
 }
 
-fn find_matching_content_snippet(content: &str, normalized_query: &str) -> Option<String> {
+fn find_matching_content_snippet(
+    content: &str,
+    query: &ParsedSearchQuery,
+) -> Option<(String, Vec<SearchHighlight>)> {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
 
-        if trimmed.to_lowercase().contains(normalized_query) {
-            return Some(truncate_search_snippet(trimmed, 120));
+        let lower = trimmed.to_lowercase();
+        if query.phrases.iter().all(|phrase| lower.contains(phrase))
+            && query.terms.iter().all(|term| lower.contains(term))
+        {
+            let snippet = truncate_search_snippet(trimmed, 120);
+            return Some((snippet.clone(), highlight_ranges(&snippet, query)));
         }
     }
 
     None
+}
+
+fn highlight_ranges(text: &str, query: &ParsedSearchQuery) -> Vec<SearchHighlight> {
+    let lower = text.to_lowercase();
+    let mut ranges = Vec::new();
+    for term in query.terms.iter().chain(query.phrases.iter()) {
+        let mut start = 0;
+        while let Some(found) = lower[start..].find(term) {
+            let start_index = start + found;
+            ranges.push(SearchHighlight {
+                start: text[..start_index].chars().count(),
+                end: text[..start_index + term.len()].chars().count(),
+            });
+            start = start_index + term.len();
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    ranges
 }

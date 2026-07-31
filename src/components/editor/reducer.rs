@@ -33,6 +33,7 @@ fn message_domain(message: &Message) -> MessageDomain {
         }
 
         Message::SearchQueryChanged(_)
+        | Message::SearchDebounced(_)
         | Message::RunSearch
         | Message::SearchCompleted(_, _)
         | Message::ClearSearch => MessageDomain::Search,

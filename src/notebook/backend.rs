@@ -46,6 +46,15 @@ struct ApiNotePayload {
 struct ApiSearchResult {
     rel_path: String,
     snippet: String,
+    match_type: cognate_engine::search::SearchMatchType,
+    highlights: Vec<cognate_engine::search::SearchHighlight>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiSearchResponse {
+    results: Vec<ApiSearchResult>,
+    next_cursor: Option<String>,
+    total: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -738,19 +747,29 @@ pub async fn search(
     let Ok(url) = endpoint(&client, "/v1/search") else {
         return Vec::new();
     };
-    let Ok(results) = send::<Vec<ApiSearchResult>>(
-        authorized(client.client.get(url).query(&[("q", query)]), &client),
+    let Ok(response) = send::<ApiSearchResponse>(
+        authorized(
+            client
+                .client
+                .get(url)
+                .query(&[("q", query.as_str()), ("limit", "100")]),
+            &client,
+        ),
         "search",
     )
     .await
     else {
         return Vec::new();
     };
-    results
+    let _ = (response.next_cursor, response.total);
+    response
+        .results
         .into_iter()
         .map(|result| NoteSearchResult {
             rel_path: result.rel_path,
             snippet: result.snippet,
+            match_type: result.match_type,
+            highlights: result.highlights,
         })
         .collect()
 }

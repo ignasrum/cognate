@@ -224,6 +224,8 @@ pub(crate) async fn search_notes_with_snapshot_local(
         .map(|res| NoteSearchResult {
             rel_path: res.rel_path,
             snippet: res.snippet,
+            match_type: res.match_type,
+            highlights: res.highlights,
         })
         .collect()
 }

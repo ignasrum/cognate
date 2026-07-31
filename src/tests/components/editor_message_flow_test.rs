@@ -156,10 +156,14 @@ mod tests {
         let stale_result = NoteSearchResult {
             rel_path: "alpha/note".to_string(),
             snippet: "Path match".to_string(),
+            match_type: cognate_engine::search::SearchMatchType::Path,
+            highlights: Vec::new(),
         };
         let fresh_result = NoteSearchResult {
             rel_path: "beta/note".to_string(),
             snippet: "Path match".to_string(),
+            match_type: cognate_engine::search::SearchMatchType::Path,
+            highlights: Vec::new(),
         };
 
         let _ = Editor::update(
@@ -203,6 +207,8 @@ mod tests {
                 vec![NoteSearchResult {
                     rel_path: "alpha/note".to_string(),
                     snippet: "Path match".to_string(),
+                    match_type: cognate_engine::search::SearchMatchType::Path,
+                    highlights: Vec::new(),
                 }],
             ),
         );

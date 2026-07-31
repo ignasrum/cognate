@@ -1,16 +1,31 @@
 use super::*;
+use std::time::Duration;
 
 pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
         Message::SearchQueryChanged(query) => {
             state.state.set_search_query(query);
             let generation = state.next_search_generation();
-            let query = state.state.search_query().trim().to_string();
-            if query.trim().is_empty() {
+            if state.state.search_query().trim().is_empty() {
                 state.state.set_search_results(Vec::new());
                 return Task::none();
             }
-
+            Task::perform(
+                async move {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    generation
+                },
+                Message::SearchDebounced,
+            )
+        }
+        Message::SearchDebounced(generation) => {
+            if generation != state.search_generation {
+                return Task::none();
+            }
+            let query = state.state.search_query().trim().to_string();
+            if query.is_empty() {
+                return Task::none();
+            }
             spawn_search_task(state, query, generation)
         }
         Message::RunSearch => {

@@ -37,6 +37,7 @@ pub enum Message {
 
     // Search
     SearchQueryChanged(String),
+    SearchDebounced(u64),
     RunSearch,
     SearchCompleted(u64, Vec<notebook::NoteSearchResult>),
     ClearSearch,

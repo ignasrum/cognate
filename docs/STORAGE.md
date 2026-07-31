@@ -142,6 +142,8 @@ For high-performance text searches across note contents, Cognate maintains an in
 - Note contents are cached locally alongside their filesystem modified time (`mtime`).
 - The search index automatically invalidates or refreshes entries if the note file is modified externally (validated on an interval).
 - Staging and renaming operations sync automatically with this index to ensure search results are up to date.
+- Local and API searches use the same engine query parser and result contract. Supported filters include `label:`, `path:`, `updated:FROM..TO`, quoted phrases, and negated terms/filters.
+- API search managers are reused between requests and return bounded pages with a cursor, match type, snippet, score, and character-based highlight ranges.
 
 ---
 

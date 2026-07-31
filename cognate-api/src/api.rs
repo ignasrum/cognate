@@ -59,6 +59,8 @@ pub struct MoveNoteRequest {
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: String,
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -530,16 +532,38 @@ fn current_timestamp() -> String {
 async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<Vec<cognate_engine::search::SearchResultEntry>>, ApiError> {
-    if query.q.len() > 256 {
+) -> Result<Json<cognate_engine::search::SearchResponse>, ApiError> {
+    if query.q.chars().count() > 256 {
         return Err(ApiError::BadRequest("query is too long".to_string()));
+    }
+    let limit = query.limit.unwrap_or(25);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::BadRequest(
+            "limit must be between 1 and 100".to_string(),
+        ));
+    }
+    if query
+        .cursor
+        .as_deref()
+        .is_some_and(|cursor| cursor.len() > 32)
+    {
+        return Err(ApiError::BadRequest("cursor is too long".to_string()));
     }
     let manager = NotebookManager::new(&state.notebook_path);
     let loaded = manager.load_metadata().await?;
-    let mut search = cognate_engine::search::SearchIndexManager::new(&state.notebook_path);
+    let manager = state.search_manager().await;
+    let mut search = manager.lock().await;
     Ok(Json(
         search
-            .search(&query.q, &loaded.notes, std::time::Duration::from_secs(5))
+            .search_request(
+                &cognate_engine::search::SearchRequest {
+                    query: query.q,
+                    limit,
+                    cursor: query.cursor,
+                },
+                &loaded.notes,
+                std::time::Duration::from_secs(5),
+            )
             .await?,
     ))
 }
