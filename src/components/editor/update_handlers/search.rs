@@ -95,17 +95,10 @@ fn spawn_search_page_task_with_cursor(
     append: bool,
 ) -> Task<Message> {
     let notebook_path = state.state.notebook_path().to_string();
-    let notes = state
-        .note_explorer
-        .notes
-        .iter()
-        .map(notebook::SearchNote::from)
-        .collect::<Vec<notebook::SearchNote>>();
     Task::perform(
         async move {
             notebook::search_notes_page(
                 notebook_path,
-                notes,
                 query,
                 25,
                 (!cursor.is_empty()).then_some(cursor),

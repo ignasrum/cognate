@@ -1,3 +1,9 @@
+//! Authentication primitives for persistent and embedded API modes.
+//!
+//! Client secrets are generated from 32 random bytes and are never persisted
+//! in plaintext. Persistent stores contain only BLAKE3 digests; presented
+//! digests are compared with constant-time equality before a request proceeds.
+
 use crate::{error::ApiError, state::AppState};
 use axum::{
     extract::{Request, State},
@@ -12,13 +18,6 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 
 pub const CLIENT_KEY_PREFIX: &str = "cgnt_live_";
-
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct AuthenticatedClient {
-    pub id: String,
-    pub client_name: String,
-}
 
 #[derive(Clone, Debug)]
 pub struct ClientRecord {
@@ -116,7 +115,7 @@ pub fn generate_client_secret() -> Result<String, ApiError> {
 
 pub async fn authenticate(
     State(state): State<AppState>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let values = request.headers().get_all(AUTHORIZATION);
@@ -131,7 +130,7 @@ pub async fn authenticate(
 
     let digest = digest_secret(presented);
     let digest_text = encode_hex(&digest);
-    let (id, client_name) = match &state.auth_store {
+    let (_id, _client_name) = match &state.auth_store {
         crate::state::AuthStore::Sqlite => {
             let Some(db) = state.db.as_ref() else {
                 return Err(ApiError::Config(
@@ -170,9 +169,6 @@ pub async fn authenticate(
             (record.id, record.client_name)
         }
     };
-    request
-        .extensions_mut()
-        .insert(AuthenticatedClient { id, client_name });
     Ok(next.run(request).await)
 }
 

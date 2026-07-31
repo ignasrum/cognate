@@ -8,7 +8,7 @@ use axum::{
 use cognate_engine::storage::{AttachmentManager, AttachmentMetadata, attachment_revision};
 
 use crate::{
-    api::{AttachmentQuery, MAX_PAYLOAD_BYTES},
+    api::{AttachmentQuery, MAX_PAYLOAD_BYTES, response_header},
     error::ApiError,
     state::AppState,
 };
@@ -73,16 +73,15 @@ pub(crate) async fn download(
     let media_type = media_type(&attachment);
     let content_length = bytes.len();
     let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        "etag",
-        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
-    );
+    response
+        .headers_mut()
+        .insert("etag", response_header(format!("\"{revision}\""))?);
     response
         .headers_mut()
         .insert("content-type", HeaderValue::from_static(media_type));
     response.headers_mut().insert(
         "content-length",
-        HeaderValue::from_str(&content_length.to_string()).expect("body length is header-safe"),
+        response_header(content_length.to_string())?,
     );
     Ok(response)
 }

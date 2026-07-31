@@ -70,7 +70,6 @@ pub enum NotebookError {
     },
 }
 
-#[allow(dead_code)]
 impl NotebookError {
     pub fn initialization(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Initialization {
@@ -95,13 +94,6 @@ impl NotebookError {
         }
     }
 
-    pub fn validation(context: &'static str, detail: impl Into<String>) -> Self {
-        Self::Validation {
-            context,
-            detail: detail.into(),
-        }
-    }
-
     pub fn storage(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Storage {
             context,
@@ -109,6 +101,7 @@ impl NotebookError {
         }
     }
 
+    #[cfg(test)]
     pub fn recovery(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Recovery {
             context,

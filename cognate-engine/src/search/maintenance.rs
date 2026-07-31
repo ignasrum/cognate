@@ -1,3 +1,9 @@
+//! Synchronization between notebook files, metadata snapshots, and the search index.
+//!
+//! Refreshes are bounded by the caller's interval, remove documents no longer
+//! present in metadata, and persist the index only when content or metadata
+//! actually changed.
+
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, Instant};

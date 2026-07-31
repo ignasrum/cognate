@@ -1,3 +1,9 @@
+//! Durable API write queue used when the remote backend is unavailable.
+//!
+//! Queue writes are coalesced per note and committed through a temporary file
+//! rename. Conflict entries are retained and paused until the UI resolves
+//! them; transport failures remain retryable with bounded exponential backoff.
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

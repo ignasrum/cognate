@@ -42,8 +42,13 @@ fn linkify_bare_urls_in_line(line: &str) -> String {
         let token_start = if cursor == 0 { 0 } else { cursor };
         let token_end = index;
         append_linkified_token(&mut result, &line[token_start..token_end]);
-        result.push_str(&line[index..index + line[index..].chars().next().unwrap().len_utf8()]);
-        cursor = index + line[index..].chars().next().unwrap().len_utf8();
+        let whitespace_len = line[index..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or_default();
+        result.push_str(&line[index..index + whitespace_len]);
+        cursor = index + whitespace_len;
     }
 
     append_linkified_token(&mut result, &line[cursor..]);

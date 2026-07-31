@@ -2,7 +2,6 @@ use serde::de::DeserializeOwned;
 use std::fs::File;
 use std::io::Read;
 
-#[allow(dead_code)]
 pub fn read_json_file<T: DeserializeOwned>(
     file_path: &str,
 ) -> Result<T, Box<dyn std::error::Error>> {

@@ -423,21 +423,8 @@ pub async fn move_note(
     }
 }
 
-#[allow(dead_code)]
-pub async fn search(
-    notebook_path: String,
-    notes: Vec<crate::notebook::SearchNote>,
-    query: String,
-) -> Vec<NoteSearchResult> {
-    search_page(notebook_path, notes, query, 100, None)
-        .await
-        .map(|page| page.results)
-        .unwrap_or_default()
-}
-
 pub async fn search_page(
     _notebook_path: String,
-    _notes: Vec<crate::notebook::SearchNote>,
     query: String,
     limit: usize,
     cursor: Option<String>,

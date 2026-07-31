@@ -13,8 +13,6 @@ mod error;
 mod offline_queue;
 #[path = "notebook/operations.rs"]
 mod operations;
-#[path = "notebook/search.rs"]
-mod search;
 #[path = "notebook/storage.rs"]
 mod storage;
 #[path = "notebook/write_coordinator.rs"]
@@ -52,7 +50,6 @@ pub(crate) use backend::{delete_attachment, download_attachment, upload_attachme
 #[allow(unused_imports)]
 pub use error::{NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
-pub use search::SearchNote;
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
     save_note_content,
@@ -60,10 +57,9 @@ pub use storage::{
 
 pub(crate) async fn search_notes_page(
     notebook_path: String,
-    notes: Vec<SearchNote>,
     query: String,
     limit: usize,
     cursor: Option<String>,
 ) -> Result<NoteSearchPage, NotebookError> {
-    backend::search_page(notebook_path, notes, query, limit, cursor).await
+    backend::search_page(notebook_path, query, limit, cursor).await
 }

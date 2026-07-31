@@ -16,6 +16,11 @@ mod routes;
 
 pub const MAX_PAYLOAD_BYTES: usize = 48 * 1024 * 1024;
 
+pub(crate) fn response_header(value: impl Into<String>) -> Result<HeaderValue, ApiError> {
+    HeaderValue::from_str(&value.into())
+        .map_err(|error| ApiError::Config(format!("invalid response header value: {error}")))
+}
+
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
@@ -118,10 +123,7 @@ async fn list_notes(
         .await?;
     let revision = metadata_revision(&result.notes);
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "etag",
-        HeaderValue::from_str(&format!("\"{revision}\"")).expect("hash is header-safe"),
-    );
+    headers.insert("etag", response_header(format!("\"{revision}\""))?);
     Ok((headers, Json(result.notes)))
 }
 
@@ -224,13 +226,11 @@ async fn save_note(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
-        HeaderValue::from_str(&format!("\"{}\"", save_result.note_revision))
-            .expect("hash is header-safe"),
+        response_header(format!("\"{}\"", save_result.note_revision))?,
     );
     response_headers.insert(
         "x-metadata-etag",
-        HeaderValue::from_str(&format!("\"{}\"", save_result.metadata_revision))
-            .expect("hash is header-safe"),
+        response_header(format!("\"{}\"", save_result.metadata_revision))?,
     );
     update_search_note(&state, &rel_path, &content).await;
     Ok((StatusCode::NO_CONTENT, response_headers))
