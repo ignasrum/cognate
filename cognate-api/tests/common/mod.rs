@@ -41,6 +41,22 @@ impl TestApp {
     }
 
     pub async fn provision(&self, name: &str) -> ClientCredentials {
+        self.provision_with_mode(name, None).await
+    }
+
+    pub async fn provision_read_only(&self, name: &str) -> ClientCredentials {
+        self.provision_with_mode(name, Some("read_only")).await
+    }
+
+    async fn provision_with_mode(
+        &self,
+        name: &str,
+        access_mode: Option<&str>,
+    ) -> ClientCredentials {
+        let mut payload = serde_json::json!({"client_name": name});
+        if let Some(access_mode) = access_mode {
+            payload["access_mode"] = serde_json::json!(access_mode);
+        }
         let response = self
             .request(
                 Request::builder()
@@ -48,9 +64,7 @@ impl TestApp {
                     .uri("/v1/admin/clients")
                     .header("x-admin-token", "admin-secret")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({"client_name": name}).to_string(),
-                    ))
+                    .body(Body::from(payload.to_string()))
                     .unwrap(),
             )
             .await;

@@ -7,7 +7,7 @@ use cognate_engine::search::SearchIndexManager;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
-use crate::auth::{ClientRecord, InMemoryClients, digest_secret};
+use crate::auth::{AccessMode, ClientRecord, InMemoryClients, digest_secret};
 
 const MAX_SEARCH_MANAGERS: usize = 24;
 const SEARCH_MANAGER_IDLE_SECS: u64 = 15 * 60;
@@ -74,8 +74,21 @@ impl AppState {
         client_name: String,
         secret: &str,
     ) -> Option<ClientRecord> {
+        self.create_in_memory_client_with_mode(id, client_name, secret, AccessMode::ReadWrite)
+            .await
+    }
+
+    pub async fn create_in_memory_client_with_mode(
+        &self,
+        id: String,
+        client_name: String,
+        secret: &str,
+        access_mode: AccessMode,
+    ) -> Option<ClientRecord> {
         match &self.auth_store {
-            AuthStore::InMemory(clients) => Some(clients.create(id, client_name, secret).await),
+            AuthStore::InMemory(clients) => {
+                Some(clients.create(id, client_name, secret, access_mode).await)
+            }
             AuthStore::Sqlite => None,
         }
     }

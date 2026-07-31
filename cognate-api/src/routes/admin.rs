@@ -8,7 +8,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     api::{ClientResponse, CreateClientRequest, CreateClientResponse},
-    auth::{digest_secret, encode_hex, generate_client_secret, new_client_id},
+    auth::{AccessMode, digest_secret, encode_hex, generate_client_secret, new_client_id},
     error::ApiError,
     state::{AppState, AuthStore},
 };
@@ -26,6 +26,11 @@ pub(crate) async fn create_client(
     let secret = generate_client_secret()?;
     let id = new_client_id()?;
     let created_at = current_timestamp();
+    let access_mode = payload.access_mode.unwrap_or_default();
+    let access_mode_text = match access_mode {
+        AccessMode::ReadWrite => "read_write",
+        AccessMode::ReadOnly => "read_only",
+    };
     match &state.auth_store {
         AuthStore::Sqlite => {
             let Some(db) = state.db.as_ref() else {
@@ -34,18 +39,21 @@ pub(crate) async fn create_client(
                 ));
             };
             sqlx::query(
-                "INSERT INTO clients (id, client_name, key_hash, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO clients (id, client_name, key_hash, created_at, access_mode) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(name)
             .bind(encode_hex(&digest_secret(&secret)))
             .bind(&created_at)
+            .bind(access_mode_text)
             .execute(db)
             .await
             .map_err(ApiError::Database)?;
         }
         AuthStore::InMemory(clients) => {
-            clients.create(id.clone(), name.to_string(), &secret).await;
+            clients
+                .create(id.clone(), name.to_string(), &secret, access_mode)
+                .await;
         }
     }
     Ok((
@@ -55,6 +63,7 @@ pub(crate) async fn create_client(
             client_name: name.to_string(),
             secret,
             created_at,
+            access_mode,
         }),
     ))
 }
@@ -71,18 +80,22 @@ pub(crate) async fn list_clients(
                     "SQLite auth store has no database".to_string(),
                 ));
             };
-            sqlx::query_as::<_, (String, String, String, Option<String>)>(
-                "SELECT id, client_name, created_at, revoked_at FROM clients ORDER BY created_at",
+            sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
+                "SELECT id, client_name, created_at, revoked_at, access_mode FROM clients ORDER BY created_at",
             )
             .fetch_all(db)
             .await
             .map_err(ApiError::Database)?
             .into_iter()
-            .map(|(id, client_name, created_at, revoked_at)| ClientResponse {
-                id,
-                client_name,
-                created_at,
-                revoked_at,
+            .map(|(id, client_name, created_at, revoked_at, access_mode)| {
+                let access_mode = AccessMode::parse(Some(&access_mode)).unwrap_or_default();
+                ClientResponse {
+                    id,
+                    client_name,
+                    created_at,
+                    revoked_at,
+                    access_mode,
+                }
             })
             .collect()
         }
@@ -95,6 +108,7 @@ pub(crate) async fn list_clients(
                 client_name: record.client_name,
                 created_at: record.created_at,
                 revoked_at: record.revoked_at,
+                access_mode: record.access_mode,
             })
             .collect(),
     };

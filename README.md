@@ -139,6 +139,10 @@ plain HTTP only.
 - `api_url` is the API base URL, for example `http://127.0.0.1:8787`
 - `api_key` is the bearer key issued by a remote `cognate-api`; keep this config file private and do not commit it. It is ignored in embedded local mode.
 
+For integrations such as an AI chatbot, provision a separate `read_only` API client.
+That key can search and read the permitted notebook data but cannot write notes,
+metadata, or attachments. Do not reuse the desktop client's read-write key.
+
 When `storage_backend` is `local`, Cognate silently starts an embedded `cognate-api` on an ephemeral `127.0.0.1` HTTP port. The UI keeps a newly generated client secret only in memory; no API SQLite database or secret file is created. The notebook filesystem remains the durable local state.
 
 When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, search, and embedded attachments use the configured remote `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Attachment uploads and downloads are authenticated and limited to supported image signatures.

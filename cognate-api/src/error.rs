@@ -22,6 +22,8 @@ pub enum ApiError {
     Engine(#[from] EngineError),
     #[error("authentication failed")]
     Unauthorized,
+    #[error("client is read-only")]
+    Forbidden,
     #[error("bad request: {0}")]
     BadRequest(String),
     #[allow(dead_code)]
@@ -79,6 +81,7 @@ impl IntoResponse for ApiError {
         }
         let (status, message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            Self::Forbidden => (StatusCode::FORBIDDEN, "read_only_client"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Engine(EngineError::Validation { .. }) => {

@@ -47,6 +47,21 @@ only to standalone SQLite-backed services:
 - `GET /v1/admin/clients` lists client metadata without secrets.
 - `DELETE /v1/admin/clients/{id}` revokes a client idempotently.
 
+Client credentials have an access mode. `read_write` is the compatibility default;
+`read_only` is intended for search and reflection integrations. Read-only clients may
+read metadata, note content, search results, and approved attachment reads, but cannot
+create, edit, move, or delete notes, update metadata, mutate attachments, or administer
+clients. Permission failures return `403` with the `read_only_client` error code.
+
+Provisioning a read-only client:
+
+```json
+{"client_name":"ai-reflector","access_mode":"read_only"}
+```
+
+The access mode is stored with client metadata. Existing database rows migrate to
+`read_write` so an upgrade does not silently remove existing client capabilities.
+
 ## Endpoint contract
 
 All protected endpoints use the authenticated client key.

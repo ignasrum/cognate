@@ -19,10 +19,33 @@ use tokio::sync::Mutex;
 
 pub const CLIENT_KEY_PREFIX: &str = "cgnt_live_";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessMode {
+    #[default]
+    ReadWrite,
+    ReadOnly,
+}
+
+impl AccessMode {
+    pub fn parse(value: Option<&str>) -> Option<Self> {
+        match value.unwrap_or("read_write") {
+            "read_write" => Some(Self::ReadWrite),
+            "read_only" => Some(Self::ReadOnly),
+            _ => None,
+        }
+    }
+
+    pub fn is_read_only(self) -> bool {
+        matches!(self, Self::ReadOnly)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ClientRecord {
     pub id: String,
     pub client_name: String,
+    pub access_mode: AccessMode,
     pub key_hash: String,
     pub created_at: String,
     pub revoked_at: Option<String>,
@@ -35,10 +58,17 @@ pub struct InMemoryClients {
 }
 
 impl InMemoryClients {
-    pub async fn create(&self, id: String, client_name: String, secret: &str) -> ClientRecord {
+    pub async fn create(
+        &self,
+        id: String,
+        client_name: String,
+        secret: &str,
+        access_mode: AccessMode,
+    ) -> ClientRecord {
         let record = ClientRecord {
             id: id.clone(),
             client_name,
+            access_mode,
             key_hash: encode_hex(&digest_secret(secret)),
             created_at: current_timestamp(),
             revoked_at: None,
@@ -115,7 +145,7 @@ pub fn generate_client_secret() -> Result<String, ApiError> {
 
 pub async fn authenticate(
     State(state): State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let values = request.headers().get_all(AUTHORIZATION);
@@ -130,21 +160,21 @@ pub async fn authenticate(
 
     let digest = digest_secret(presented);
     let digest_text = encode_hex(&digest);
-    let (_id, _client_name) = match &state.auth_store {
+    let record = match &state.auth_store {
         crate::state::AuthStore::Sqlite => {
             let Some(db) = state.db.as_ref() else {
                 return Err(ApiError::Config(
                     "SQLite auth store has no database".to_string(),
                 ));
             };
-            let record = sqlx::query_as::<_, (String, String, String)>(
-                "SELECT id, client_name, key_hash FROM clients WHERE key_hash = ? AND revoked_at IS NULL",
+            let record = sqlx::query_as::<_, (String, String, String, String)>(
+                "SELECT id, client_name, key_hash, access_mode FROM clients WHERE key_hash = ? AND revoked_at IS NULL",
             )
             .bind(&digest_text)
             .fetch_optional(db)
             .await
             .map_err(ApiError::Database)?;
-            let Some((id, client_name, stored_digest)) = record else {
+            let Some((id, client_name, stored_digest, access_mode)) = record else {
                 return Err(ApiError::Unauthorized);
             };
             if stored_digest
@@ -159,17 +189,56 @@ pub async fn authenticate(
                 .bind(&id)
                 .execute(db)
                 .await;
-            (id, client_name)
+            let access_mode = AccessMode::parse(Some(&access_mode)).ok_or_else(|| {
+                ApiError::Config("invalid access mode in client database".to_string())
+            })?;
+            ClientRecord {
+                id,
+                client_name,
+                key_hash: stored_digest,
+                access_mode,
+                created_at: String::new(),
+                revoked_at: None,
+                last_used_at: None,
+            }
         }
         crate::state::AuthStore::InMemory(clients) => {
             let Some(record) = clients.find_active_by_hash(&digest_text).await else {
                 return Err(ApiError::Unauthorized);
             };
             clients.mark_used(&record.id).await;
-            (record.id, record.client_name)
+            record
         }
     };
+    request.extensions_mut().insert(AuthenticatedClient(record));
     Ok(next.run(request).await)
+}
+
+#[derive(Clone, Debug)]
+pub struct AuthenticatedClient(pub ClientRecord);
+
+pub async fn require_read_write(request: Request, next: Next) -> Result<Response, ApiError> {
+    if is_mutation_request(&request)
+        && request
+            .extensions()
+            .get::<AuthenticatedClient>()
+            .is_some_and(|client| client.0.access_mode.is_read_only())
+    {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(next.run(request).await)
+}
+
+fn is_mutation_request(request: &Request) -> bool {
+    let method = request.method();
+    let path = request.uri().path();
+    (path == "/v1/notes" || path == "/v1/notes/move") && method == axum::http::Method::POST
+        || (path.starts_with("/v1/notes/")
+            && (method == axum::http::Method::PUT || method == axum::http::Method::DELETE))
+        || (path == "/v1/metadata" && method == axum::http::Method::PUT)
+        || (path == "/v1/attachments" && method == axum::http::Method::POST)
+        || (path.starts_with("/v1/attachments/")
+            && (method == axum::http::Method::PUT || method == axum::http::Method::DELETE))
 }
 
 fn bearer_value(value: &HeaderValue) -> Option<&str> {

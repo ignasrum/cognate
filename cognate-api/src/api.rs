@@ -9,7 +9,11 @@ use axum::{
 use cognate_engine::storage::{NoteMetadata, NotebookManager};
 use serde::{Deserialize, Serialize};
 
-use crate::{auth::authenticate, error::ApiError, state::AppState};
+use crate::{
+    auth::{authenticate, require_read_write},
+    error::ApiError,
+    state::AppState,
+};
 
 #[path = "routes.rs"]
 mod routes;
@@ -29,6 +33,8 @@ pub struct HealthResponse {
 #[derive(Debug, Deserialize)]
 pub struct CreateClientRequest {
     pub client_name: String,
+    #[serde(default)]
+    pub access_mode: Option<crate::auth::AccessMode>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +43,7 @@ pub struct CreateClientResponse {
     pub client_name: String,
     pub secret: String,
     pub created_at: String,
+    pub access_mode: crate::auth::AccessMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +52,7 @@ pub struct ClientResponse {
     pub client_name: String,
     pub created_at: String,
     pub revoked_at: Option<String>,
+    pub access_mode: crate::auth::AccessMode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +99,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/search", get(routes::search::search))
         .route("/v1/search/page", get(routes::search::search_page))
+        .layer(middleware::from_fn(require_read_write))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
     let mut public = Router::new().route("/v1/health", get(health));

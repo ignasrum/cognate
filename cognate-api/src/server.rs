@@ -18,7 +18,12 @@ pub async fn bind_embedded(notebook_path: PathBuf) -> Result<EmbeddedServer, Api
     let client_secret = auth::generate_client_secret()?;
     let client_id = auth::new_client_id()?;
     state
-        .create_in_memory_client(client_id, "embedded-ui".to_string(), &client_secret)
+        .create_in_memory_client_with_mode(
+            client_id,
+            "embedded-ui".to_string(),
+            &client_secret,
+            auth::AccessMode::ReadWrite,
+        )
         .await
         .ok_or_else(|| {
             ApiError::Config("embedded API did not initialize in-memory authentication".to_string())
