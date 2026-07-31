@@ -69,16 +69,18 @@ pub(super) async fn sync_metadata(
                 .await
                 .unwrap_or(false)
             {
-                let content = tokio::fs::read_to_string(&note_file_path)
-                    .await
-                    .unwrap_or_default();
-                engine_state.process_document(
-                    &note.rel_path,
-                    &content,
-                    &note.labels,
-                    note.last_updated.clone(),
-                );
-                changed = true;
+                // The index is derived state. Preserve an existing document
+                // when a source read fails; indexing an empty fallback would
+                // erase valid search data during a transient filesystem error.
+                if let Ok(content) = tokio::fs::read_to_string(&note_file_path).await {
+                    engine_state.process_document(
+                        &note.rel_path,
+                        &content,
+                        &note.labels,
+                        note.last_updated.clone(),
+                    );
+                    changed = true;
+                }
             }
         }
     }

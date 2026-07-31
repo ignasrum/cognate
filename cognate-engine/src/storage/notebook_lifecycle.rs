@@ -132,6 +132,7 @@ impl NotebookManager {
         metadata: &mut Vec<NoteMetadata>,
     ) -> Result<(), EngineError> {
         let rel_path_buf = validate_relative_path("relative path", rel_path)?;
+        let _note_lock = self.concurrency.acquire_note(rel_path).await?;
         let note_dir_path = self.notebook_path.join(&rel_path_buf);
 
         if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(&self.notebook_path).await {
@@ -250,6 +251,21 @@ impl NotebookManager {
     ) -> Result<String, EngineError> {
         let from_rel_buf = validate_relative_path("current relative path", from_rel)?;
         let to_rel_buf = validate_relative_path("new relative path", to_rel)?;
+
+        // All note-directory mutations use notebook -> note lock ordering. The
+        // notebook lock is already held by the public wrapper; lock both names
+        // in deterministic order so concurrent moves cannot deadlock.
+        let (first_rel, second_rel) = if from_rel <= to_rel {
+            (from_rel, to_rel)
+        } else {
+            (to_rel, from_rel)
+        };
+        let _first_note_lock = self.concurrency.acquire_note(first_rel).await?;
+        let _second_note_lock = if first_rel == second_rel {
+            None
+        } else {
+            Some(self.concurrency.acquire_note(second_rel).await?)
+        };
 
         let current_fs_path = self.notebook_path.join(&from_rel_buf);
         let new_fs_path = self.notebook_path.join(&to_rel_buf);

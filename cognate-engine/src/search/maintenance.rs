@@ -49,13 +49,15 @@ pub(super) async fn synchronize_index(
         };
 
         if !in_cache || needs_reload {
-            let content = manager
-                .load_note_content(&note.rel_path)
-                .await
-                .unwrap_or_default();
-            let modified_time = manager.get_note_modified_time(&note.rel_path).await;
-            cache.upsert(&note.rel_path, &content, modified_time);
-            reloaded_paths.insert(note.rel_path.clone());
+            // Preserve the last known good cache entry when the source read
+            // fails. An empty fallback would make a transient filesystem
+            // failure look like a legitimate empty note and could persist
+            // that destructive state into the derived index.
+            if let Ok(content) = manager.load_note_content(&note.rel_path).await {
+                let modified_time = manager.get_note_modified_time(&note.rel_path).await;
+                cache.upsert(&note.rel_path, &content, modified_time);
+                reloaded_paths.insert(note.rel_path.clone());
+            }
         }
     }
 

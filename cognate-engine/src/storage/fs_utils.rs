@@ -1,6 +1,7 @@
 use crate::EngineError;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 
 pub fn validate_relative_path(
     path_kind: &'static str,
@@ -66,10 +67,57 @@ pub async fn ensure_path_within_notebook_if_canonicalizable(
     rel_path: &str,
     outside_error_prefix: &str,
 ) -> Result<(), EngineError> {
-    if let Ok(canonical_notebook_path) = tokio::fs::canonicalize(notebook_path).await
-        && let Ok(canonical_target_path) = tokio::fs::canonicalize(target_path).await
-        && !canonical_target_path.starts_with(&canonical_notebook_path)
-    {
+    let canonical_notebook_path =
+        tokio::fs::canonicalize(notebook_path)
+            .await
+            .map_err(|error| {
+                EngineError::storage(
+                    "path containment",
+                    format!(
+                        "Failed to resolve notebook root '{}': {error}",
+                        notebook_path.display()
+                    ),
+                )
+            })?;
+
+    let mut existing_path = target_path.to_path_buf();
+    let canonical_target_path = loop {
+        match tokio::fs::canonicalize(&existing_path).await {
+            Ok(path) => break path,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let Some(parent) = existing_path.parent() else {
+                    return Err(EngineError::storage(
+                        "path containment",
+                        format!(
+                            "Failed to resolve path '{}': no existing parent",
+                            target_path.display()
+                        ),
+                    ));
+                };
+                if parent == existing_path {
+                    return Err(EngineError::storage(
+                        "path containment",
+                        format!(
+                            "Failed to resolve path '{}': reached filesystem root",
+                            target_path.display()
+                        ),
+                    ));
+                }
+                existing_path = parent.to_path_buf();
+            }
+            Err(error) => {
+                return Err(EngineError::storage(
+                    "path containment",
+                    format!(
+                        "Failed to resolve path '{}': {error}",
+                        target_path.display()
+                    ),
+                ));
+            }
+        }
+    };
+
+    if !canonical_target_path.starts_with(&canonical_notebook_path) {
         return Err(EngineError::validation(
             "path containment",
             format!("{} '{}'", outside_error_prefix, rel_path),
@@ -124,13 +172,17 @@ pub async fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error>
 
 pub async fn atomic_write_string(target_path: &Path, content: &str) -> Result<(), std::io::Error> {
     let temp_path = build_atomic_temp_path(target_path)?;
-    tokio::fs::write(&temp_path, content).await?;
+    let mut file = tokio::fs::File::create(&temp_path).await?;
+    file.write_all(content.as_bytes()).await?;
+    file.sync_all().await?;
+    restrict_temp_permissions(&temp_path).await?;
 
     if let Err(rename_error) = atomic_rename(&temp_path, target_path).await {
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(rename_error);
     }
 
+    sync_parent_directory(target_path).await?;
     Ok(())
 }
 
@@ -167,13 +219,40 @@ pub async fn write_text_file_atomically(
 
 pub async fn atomic_write_bytes(target_path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
     let temp_path = build_atomic_temp_path(target_path)?;
-    tokio::fs::write(&temp_path, content).await?;
+    let mut file = tokio::fs::File::create(&temp_path).await?;
+    file.write_all(content).await?;
+    file.sync_all().await?;
+    restrict_temp_permissions(&temp_path).await?;
 
     if let Err(rename_error) = atomic_rename(&temp_path, target_path).await {
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(rename_error);
     }
 
+    sync_parent_directory(target_path).await?;
+    Ok(())
+}
+
+async fn restrict_temp_permissions(path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    Ok(())
+}
+
+async fn sync_parent_directory(path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = parent.to_path_buf();
+        tokio::task::spawn_blocking(move || std::fs::File::open(parent)?.sync_all())
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("directory sync task failed: {error}"))
+            })??;
+    }
     Ok(())
 }
 

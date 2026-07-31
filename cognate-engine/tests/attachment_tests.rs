@@ -254,7 +254,25 @@ async fn test_attachment_extension_fallback_and_symlink_save_escape() {
             "Expected validation error for image save escape"
         );
 
+        let missing_target_outside =
+            std::env::temp_dir().join(format!("cognate_missing_attach_{}", now_nanos()));
+        std::fs::create_dir_all(&missing_target_outside).unwrap();
+        let missing_link = temp.path().join("missing_link");
+        std::os::unix::fs::symlink(&missing_target_outside, &missing_link).unwrap();
+        let res =
+            AttachmentManager::save_image_from_base64(temp.path(), "missing_link", "SGVsbG8=")
+                .await;
+        assert!(
+            matches!(res, Err(EngineError::Validation { .. })),
+            "Expected unresolved outside symlink to be rejected"
+        );
+        assert!(
+            !missing_target_outside.join("images").exists(),
+            "Rejected attachment write must not create directories outside the notebook"
+        );
+
         let _ = std::fs::remove_dir_all(&outside_dir);
+        let _ = std::fs::remove_dir_all(&missing_target_outside);
     }
 }
 

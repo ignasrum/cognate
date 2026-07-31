@@ -101,7 +101,8 @@ impl AttachmentManager {
         let image_id = generate_embedded_image_id();
         let file_name = format!("{image_id}.{extension}");
         let concurrency = ConcurrencyManager::new(notebook_path);
-        let _lock = concurrency.acquire_note(rel_note_path).await?;
+        let _notebook_lock = concurrency.acquire_notebook().await?;
+        let _note_lock = concurrency.acquire_note(rel_note_path).await?;
 
         let note_dir = notebook_path.join(rel_note_path);
         let images_dir = note_dir.join("images");
@@ -209,7 +210,8 @@ impl AttachmentManager {
             ));
         }
         let concurrency = ConcurrencyManager::new(notebook_path);
-        let _lock = concurrency.acquire_note(rel_note_path).await?;
+        let _notebook_lock = concurrency.acquire_notebook().await?;
+        let _note_lock = concurrency.acquire_note(rel_note_path).await?;
         let full_path = notebook_path.join(&note_path).join(&attachment);
         super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
             notebook_path,
@@ -305,7 +307,8 @@ impl AttachmentManager {
             ));
         }
         let concurrency = ConcurrencyManager::new(notebook_path);
-        let _lock = concurrency.acquire_note(rel_note_path).await?;
+        let _notebook_lock = concurrency.acquire_notebook().await?;
+        let _note_lock = concurrency.acquire_note(rel_note_path).await?;
         let full_path = notebook_path.join(&note_path).join(&attachment);
         super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
             notebook_path,

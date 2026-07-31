@@ -65,14 +65,11 @@ pub async fn flush_for_shutdown(
 }
 
 fn is_transient_api_error(error: &NotebookError) -> bool {
-    match error {
+    matches!(
+        error,
         NotebookError::Api {
-            retryable: true, ..
-        } => true,
-        NotebookError::Storage {
-            context: "api",
-            detail,
-        } => detail.contains("error sending request") || detail.contains("offline queue"),
-        _ => false,
-    }
+            retryable: true,
+            ..
+        }
+    )
 }

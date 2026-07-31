@@ -69,6 +69,12 @@ the notebook lock before the note lock so the index read-modify-write cannot ove
 another client's update. Lock acquisition waits up to five seconds before returning a
 typed lock-unavailable error.
 
+The lock order is always notebook lock first, then note lock. Attachment uploads,
+replacements, and conditional deletes follow this order too, preventing them from
+racing note moves or deletes. Filesystem writes resolve the nearest existing parent
+through canonical paths and reject symlink escapes; atomic writes flush the temporary
+file before replacement and synchronize the parent directory on Unix.
+
 ### `cognate-api`
 
 `cognate-api` is the HTTP boundary for external clients. It binds to a configurable address
@@ -119,6 +125,8 @@ This keeps UI behavior deterministic and testable through message transitions.
   and recovers a valid orphaned temporary file only when the primary queue is absent.
 - Shutdown attempts a bounded final flush before window close. If it fails, the
   window remains open and reports the failure rather than silently discarding changes.
+- A transient API failure is considered safely recoverable during shutdown only after
+  the note queue write succeeds. Queue persistence failures keep the window open.
 - Search indexes are owned by the API/engine process and refreshed from the filesystem
   on interval with targeted mutation hooks. They are derived state: a stale or failed
   index update must not be treated as a failed canonical note or metadata commit.

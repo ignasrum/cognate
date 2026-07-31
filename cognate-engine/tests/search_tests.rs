@@ -348,7 +348,7 @@ async fn test_search_negative_query_terms() {
 }
 
 #[tokio::test]
-async fn test_search_missing_note_file_on_disk() {
+async fn test_search_missing_note_file_preserves_existing_indexed_content() {
     let temp = TempTestDir::new("search_missing_disk");
     let manager = NotebookManager::new(temp.path());
     let mut search_index = SearchIndexManager::new(temp.path());
@@ -370,10 +370,12 @@ async fn test_search_missing_note_file_on_disk() {
     // Clear notes last_updated to force a refresh and index sync detection
     notes[0].last_updated = None;
 
-    // Running search should skip reading the missing file and continue without crashing
+    // Running search should skip the failed source read and preserve the last
+    // known indexed document rather than replacing it with empty content.
     let results = search_index
         .search("apple", &notes, Duration::from_secs(0))
         .await
         .unwrap();
-    assert!(results.is_empty());
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].rel_path, "note1");
 }

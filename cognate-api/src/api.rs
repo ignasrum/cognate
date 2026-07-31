@@ -216,10 +216,7 @@ async fn save_note(
     {
         Ok(result) => result,
         Err(cognate_engine::EngineError::Conflict { .. }) => {
-            let current_content = manager
-                .load_note_content(&rel_path)
-                .await
-                .unwrap_or_default();
+            let current_content = manager.load_note_content(&rel_path).await?;
             let current_revision = cognate_engine::storage::note_content_revision(&current_content);
             return Err(ApiError::Conflict {
                 current_revision,
