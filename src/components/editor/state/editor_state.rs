@@ -10,7 +10,16 @@ enum UiMode {
     NewNoteDialog,
     MoveNoteDialog,
     EmbeddedImageDeleteDialog,
+    ConflictDialog,
     About,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteConflict {
+    pub note_path: String,
+    pub local_content: String,
+    pub server_content: String,
+    pub server_revision: String,
 }
 
 #[derive(Debug)]
@@ -20,6 +29,8 @@ pub struct EditorState {
     config_path: String,
     ui_scale: f32,
     app_version: String,
+    connection_error: Option<String>,
+    note_load_error: Option<String>,
 
     // Note selection and metadata
     selected_note_path: Option<String>,
@@ -29,6 +40,10 @@ pub struct EditorState {
     new_label_text: String,
     search_query: String,
     search_results: Vec<NoteSearchResult>,
+    search_next_cursor: Option<String>,
+    search_total: usize,
+    search_loading: bool,
+    search_error: Option<String>,
 
     // UI mode and dialog-specific state
     ui_mode: UiMode,
@@ -36,6 +51,7 @@ pub struct EditorState {
     move_note_current_path: Option<String>,
     move_note_new_path_input: String,
     pending_embedded_image_delete_count: usize,
+    conflict: Option<NoteConflict>,
 
     // Flag indicating if we're loading a new note
     loading_note: bool,
@@ -48,16 +64,23 @@ impl EditorState {
             config_path: String::new(),
             ui_scale: 1.0,
             app_version: String::new(),
+            connection_error: None,
+            note_load_error: None,
             selected_note_path: None,
             selected_note_labels: Vec::new(),
             new_label_text: String::new(),
             search_query: String::new(),
             search_results: Vec::new(),
+            search_next_cursor: None,
+            search_total: 0,
+            search_loading: false,
+            search_error: None,
             ui_mode: UiMode::Editor,
             new_note_path_input: String::new(),
             move_note_current_path: None,
             move_note_new_path_input: String::new(),
             pending_embedded_image_delete_count: 0,
+            conflict: None,
             loading_note: false,
         }
     }
@@ -69,6 +92,14 @@ impl EditorState {
 
     pub fn app_version(&self) -> &str {
         &self.app_version
+    }
+
+    pub fn connection_error(&self) -> Option<&str> {
+        self.connection_error.as_deref()
+    }
+
+    pub fn note_load_error(&self) -> Option<&str> {
+        self.note_load_error.as_deref()
     }
 
     pub fn config_path(&self) -> &str {
@@ -97,6 +128,22 @@ impl EditorState {
 
     pub fn search_results(&self) -> &[NoteSearchResult] {
         &self.search_results
+    }
+
+    pub fn search_next_cursor(&self) -> Option<&str> {
+        self.search_next_cursor.as_deref()
+    }
+
+    pub fn search_total(&self) -> usize {
+        self.search_total
+    }
+
+    pub fn search_loading(&self) -> bool {
+        self.search_loading
+    }
+
+    pub fn search_error(&self) -> Option<&str> {
+        self.search_error.as_deref()
     }
 
     pub fn show_visualizer(&self) -> bool {
@@ -131,6 +178,14 @@ impl EditorState {
         self.ui_mode == UiMode::EmbeddedImageDeleteDialog
     }
 
+    pub fn is_conflict_dialog_open(&self) -> bool {
+        self.ui_mode == UiMode::ConflictDialog
+    }
+
+    pub fn conflict(&self) -> Option<&NoteConflict> {
+        self.conflict.as_ref()
+    }
+
     pub fn pending_embedded_image_delete_count(&self) -> usize {
         self.pending_embedded_image_delete_count
     }
@@ -146,6 +201,7 @@ impl EditorState {
             UiMode::NewNoteDialog
                 | UiMode::MoveNoteDialog
                 | UiMode::EmbeddedImageDeleteDialog
+                | UiMode::ConflictDialog
                 | UiMode::About
         )
     }
@@ -157,6 +213,22 @@ impl EditorState {
 
     pub fn set_app_version(&mut self, version: String) {
         self.app_version = version;
+    }
+
+    pub fn set_connection_error(&mut self, error: String) {
+        self.connection_error = Some(error);
+    }
+
+    pub fn clear_connection_error(&mut self) {
+        self.connection_error = None;
+    }
+
+    pub fn set_note_load_error(&mut self, error: String) {
+        self.note_load_error = Some(error);
+    }
+
+    pub fn clear_note_load_error(&mut self) {
+        self.note_load_error = None;
     }
 
     pub fn set_config_path(&mut self, path: String) {
@@ -193,9 +265,35 @@ impl EditorState {
         self.search_results = results;
     }
 
+    pub fn begin_search(&mut self) {
+        self.search_loading = true;
+        self.search_error = None;
+    }
+
+    pub fn complete_search(&mut self, page: crate::notebook::NoteSearchPage, append: bool) {
+        if append {
+            self.search_results.extend(page.results);
+        } else {
+            self.search_results = page.results;
+        }
+        self.search_next_cursor = page.next_cursor;
+        self.search_total = page.total;
+        self.search_loading = false;
+        self.search_error = None;
+    }
+
+    pub fn fail_search(&mut self, error: String) {
+        self.search_loading = false;
+        self.search_error = Some(error);
+    }
+
     pub fn clear_search(&mut self) {
         self.search_query.clear();
         self.search_results.clear();
+        self.search_next_cursor = None;
+        self.search_total = 0;
+        self.search_loading = false;
+        self.search_error = None;
     }
 
     pub fn set_loading_note(&mut self, loading: bool) {
@@ -270,6 +368,18 @@ impl EditorState {
     pub fn show_embedded_image_delete_dialog(&mut self, count: usize) {
         self.pending_embedded_image_delete_count = count;
         self.ui_mode = UiMode::EmbeddedImageDeleteDialog;
+    }
+
+    pub fn show_conflict_dialog(&mut self, conflict: NoteConflict) {
+        self.conflict = Some(conflict);
+        self.ui_mode = UiMode::ConflictDialog;
+    }
+
+    pub fn hide_conflict_dialog(&mut self) {
+        self.conflict = None;
+        if self.ui_mode == UiMode::ConflictDialog {
+            self.ui_mode = UiMode::Editor;
+        }
     }
 
     pub fn hide_embedded_image_delete_dialog(&mut self) {

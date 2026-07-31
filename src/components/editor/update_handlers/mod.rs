@@ -27,8 +27,11 @@ impl Editor {
         persistence::handle_shutdown(state, message)
     }
 
-    pub(super) fn handle_save_feedback_messages(message: Message) -> Task<Message> {
-        persistence::handle_save_feedback(message)
+    pub(super) fn handle_save_feedback_messages(
+        state: &mut Self,
+        message: Message,
+    ) -> Task<Message> {
+        persistence::handle_save_feedback(state, message)
     }
 
     pub(super) fn handle_visualizer_messages(state: &mut Self, message: Message) -> Task<Message> {

@@ -1,4 +1,4 @@
-use iced::widget::{Column, Container, Row, Text, text_editor};
+use iced::widget::{Button, Column, Container, Row, Text, text_editor};
 use iced::{Element, Length};
 use std::collections::HashMap;
 
@@ -11,6 +11,44 @@ use crate::components::visualizer;
 
 use super::preview;
 use super::search_results;
+
+pub(super) fn build_connection_error_page<'a>(error: &'a str) -> Element<'a, Message> {
+    build_status_page(
+        "Could not connect to server",
+        error,
+        Some(Message::RetryConnection),
+    )
+}
+
+pub(super) fn build_note_load_error_page<'a>(error: &'a str) -> Element<'a, Message> {
+    build_status_page("Could not load note", error, None)
+}
+
+fn build_status_page<'a>(
+    title: &'a str,
+    error: &'a str,
+    retry: Option<Message>,
+) -> Element<'a, Message> {
+    let mut content = Column::new()
+        .spacing(16)
+        .align_x(iced::Alignment::Center)
+        .push(Text::new(title).size(32))
+        .push(Text::new(error).size(16));
+    if let Some(retry) = retry {
+        content = content.push(
+            Button::new(Text::new("Retry connection"))
+                .padding(10)
+                .on_press(retry),
+        );
+    }
+
+    Container::new(content)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
 pub(super) fn build_main_content<'a>(
     state: &'a EditorState,
@@ -55,6 +93,12 @@ pub(super) fn build_main_content<'a>(
         );
     }
 
+    if state.is_conflict_dialog_open()
+        && let Some(conflict) = state.conflict()
+    {
+        return dialogs::conflict_dialog(conflict);
+    }
+
     if state.notebook_path().is_empty() {
         return Container::new(
             Text::new(
@@ -96,6 +140,10 @@ fn build_editor_workspace<'a>(
         explorer_column = explorer_column.push(search_results::render_search_results(
             state.search_query(),
             state.search_results(),
+            state.search_next_cursor(),
+            state.search_total(),
+            state.search_loading(),
+            state.search_error(),
         ));
     }
 

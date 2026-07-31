@@ -5,13 +5,16 @@ use std::time::Instant;
 
 use super::math::{
     color_from_seed, ease_in_out_cubic, finalize_center_transition, hash_to_unit_f32, lerp,
-    lerp_3d, lerp_angle, rotate_3d, rotated_point_for_note_path, truncate_label, wrap_angle,
+    lerp_angle, truncate_label, wrap_angle,
 };
 use super::{
     CAMERA_TRANSITION_DURATION_MS, CameraTransition, GraphCanvasState, GraphProgram,
     MAX_CAMERA_ZOOM, MAX_DOUBLE_CLICK_DISTANCE, MAX_DOUBLE_CLICK_INTERVAL_MS, MIN_CAMERA_ZOOM,
     Message, ProjectedNode,
 };
+
+#[path = "canvas_impl/projection.rs"]
+mod projection;
 
 impl Default for GraphCanvasState {
     fn default() -> Self {
@@ -31,146 +34,6 @@ impl Default for GraphCanvasState {
             center_transition_blend: 1.0,
             applied_focus_version: 0,
         }
-    }
-}
-
-impl GraphProgram {
-    fn project_nodes(&self, state: &GraphCanvasState, bounds: Rectangle) -> Vec<ProjectedNode> {
-        if self.nodes.is_empty() || bounds.width <= 1.0 || bounds.height <= 1.0 {
-            return Vec::new();
-        }
-
-        let mut projected = Vec::with_capacity(self.nodes.len());
-        let center = Point::new(bounds.width * 0.5, bounds.height * 0.52);
-        let orbit_scale = bounds.width.min(bounds.height) * 0.34 * state.zoom;
-        let camera_distance = 2.8;
-
-        let mut rotated_points: Vec<[f32; 3]> = self
-            .nodes
-            .iter()
-            .map(|node| rotate_3d(node.position, state.yaw, state.pitch))
-            .collect();
-
-        let fallback_center_path = state
-            .center_note_path
-            .as_deref()
-            .or(self.selected_note_path.as_deref());
-        let from_center_path = state
-            .center_transition_from_note
-            .as_deref()
-            .or(fallback_center_path);
-        let to_center_path = state
-            .center_transition_to_note
-            .as_deref()
-            .or(fallback_center_path);
-        let blend = state.center_transition_blend.clamp(0.0, 1.0);
-        let transition_is_active =
-            state.center_transition_from_note != state.center_transition_to_note;
-
-        let center_offset = match (
-            rotated_point_for_note_path(&self.nodes, &rotated_points, from_center_path),
-            rotated_point_for_note_path(&self.nodes, &rotated_points, to_center_path),
-        ) {
-            (Some(from), Some(to)) if transition_is_active => lerp_3d(from, to, blend),
-            (Some(_), Some(to)) => to,
-            (Some(from), None) => from,
-            (None, Some(to)) => to,
-            (None, None) => [0.0, 0.0, 0.0],
-        };
-
-        for point in &mut rotated_points {
-            point[0] -= center_offset[0];
-            point[1] -= center_offset[1];
-            point[2] -= center_offset[2];
-        }
-
-        let focus_point = match (
-            rotated_point_for_note_path(&self.nodes, &rotated_points, from_center_path),
-            rotated_point_for_note_path(&self.nodes, &rotated_points, to_center_path),
-        ) {
-            (Some(from), Some(to)) if transition_is_active => Some(lerp_3d(from, to, blend)),
-            (Some(_), Some(to)) => Some(to),
-            (Some(from), None) => Some(from),
-            (None, Some(to)) => Some(to),
-            (None, None) => None,
-        };
-
-        if let Some(focus_point) = focus_point {
-            let max_z = rotated_points
-                .iter()
-                .map(|point| point[2])
-                .fold(f32::NEG_INFINITY, f32::max);
-
-            let preferred_focus_z: f32 = camera_distance - 0.95;
-            let target_focus_z = if max_z.is_finite() {
-                preferred_focus_z
-                    .max(max_z + 0.2)
-                    .min(camera_distance - 0.65)
-            } else {
-                preferred_focus_z
-            };
-
-            let z_shift = target_focus_z - focus_point[2];
-            for point in &mut rotated_points {
-                point[2] += z_shift;
-            }
-        }
-
-        for (index, node) in self.nodes.iter().enumerate() {
-            let rotated = rotated_points[index];
-            let safe_depth = (camera_distance - rotated[2]).max(0.6);
-            let perspective = camera_distance / safe_depth;
-            let point = Point::new(
-                center.x + rotated[0] * orbit_scale * perspective,
-                center.y + rotated[1] * orbit_scale * perspective,
-            );
-
-            let degree_size = (node.degree as f32).sqrt() * 0.35;
-            let radius = (5.0 + degree_size) * perspective.clamp(0.62, 1.75);
-
-            projected.push(ProjectedNode {
-                index,
-                point,
-                radius,
-                depth: rotated[2],
-            });
-        }
-
-        projected
-    }
-
-    fn hit_test(
-        &self,
-        state: &GraphCanvasState,
-        bounds: Rectangle,
-        cursor_position: Point,
-    ) -> Option<usize> {
-        let projected = self.project_nodes(state, bounds);
-        let mut best: Option<(usize, f32, f32)> = None;
-
-        for node in projected {
-            let dx = cursor_position.x - node.point.x;
-            let dy = cursor_position.y - node.point.y;
-            let distance_sq = dx * dx + dy * dy;
-            let radius_sq = node.radius * node.radius;
-
-            if distance_sq > radius_sq {
-                continue;
-            }
-
-            match best {
-                None => best = Some((node.index, distance_sq, node.depth)),
-                Some((_, best_distance_sq, best_depth)) => {
-                    if node.depth > best_depth
-                        || (node.depth == best_depth && distance_sq < best_distance_sq)
-                    {
-                        best = Some((node.index, distance_sq, node.depth));
-                    }
-                }
-            }
-        }
-
-        best.map(|(index, _, _)| index)
     }
 }
 

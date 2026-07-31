@@ -82,8 +82,8 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
         } else {
             state.prune_embedded_images_for_current_markdown();
         }
-        state.sync_markdown_preview();
-        return Task::batch(vec![task, state.scroll_preview_to_cursor_task()]);
+        let sync_task = state.sync_markdown_preview();
+        return Task::batch(vec![task, sync_task, state.scroll_preview_to_cursor_task()]);
     }
 
     task

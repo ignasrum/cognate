@@ -40,6 +40,29 @@ fn build_markdown_preview_content_keeps_standard_markdown_images() {
 }
 
 #[test]
+fn build_markdown_preview_content_linkifies_bare_urls() {
+    let markdown = "* https://example.com/blog/\n* https://example.org/docs.";
+    let images = HashMap::new();
+
+    let rendered = build_markdown_preview_content(markdown, &images);
+
+    assert_eq!(
+        rendered,
+        "* <https://example.com/blog/>\n* <https://example.org/docs>."
+    );
+}
+
+#[test]
+fn build_markdown_preview_content_keeps_urls_in_fenced_code() {
+    let markdown = "```text\nhttps://example.com\n```";
+    let images = HashMap::new();
+
+    let rendered = build_markdown_preview_content(markdown, &images);
+
+    assert_eq!(rendered, markdown);
+}
+
+#[test]
 fn normalize_html_line_break_tags_converts_br_variants() {
     let markdown = "one<br>two<br/>three<BR />four";
     let normalized = normalize_html_line_break_tags(markdown);

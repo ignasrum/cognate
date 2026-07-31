@@ -22,17 +22,24 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::Redo
         | Message::PasteFromClipboard
         | Message::EditorAction(_)
-        | Message::LoadedNoteContent(_, _, _) => MessageDomain::Text,
+        | Message::LoadedNoteContent(_)
+        | Message::AttachmentLoaded(_, _)
+        | Message::PastedImageSaved(_) => MessageDomain::Text,
 
-        Message::NoteExplorerMsg(_) | Message::NoteSelected(_) => MessageDomain::Selection,
+        Message::NoteExplorerMsg(_) | Message::NoteSelected(_) | Message::ConnectionChecked(_) => {
+            MessageDomain::Selection
+        }
 
         Message::NewLabelInputChanged(_) | Message::AddLabel | Message::RemoveLabel(_) => {
             MessageDomain::Label
         }
 
         Message::SearchQueryChanged(_)
+        | Message::SearchDebounced(_)
         | Message::RunSearch
         | Message::SearchCompleted(_, _)
+        | Message::SearchPageCompleted(_, _, _)
+        | Message::LoadMoreSearchResults
         | Message::ClearSearch => MessageDomain::Search,
 
         Message::DebouncedMetadataSaveElapsed(_)
@@ -42,9 +49,16 @@ fn message_domain(message: &Message) -> MessageDomain {
             MessageDomain::Shutdown
         }
 
-        Message::MetadataSaved(_) | Message::NoteContentSaved(_) | Message::ScaleSaved(_) => {
-            MessageDomain::SaveFeedback
-        }
+        Message::MetadataSaved(_, _)
+        | Message::NoteContentSaved(_)
+        | Message::OfflineReplayCompleted(_)
+        | Message::ConflictCopySaved(_)
+        | Message::ScaleSaved(_) => MessageDomain::SaveFeedback,
+
+        Message::ConflictKeepServer
+        | Message::ConflictRetryLocal
+        | Message::ConflictSaveCopy
+        | Message::ConflictDismiss => MessageDomain::Ui,
 
         Message::ToggleVisualizer | Message::VisualizerMsg(_) => MessageDomain::Visualizer,
 
@@ -64,10 +78,12 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::NoteMoved(_, _) => MessageDomain::NoteLifecycle,
 
         Message::InitiateFolderRename(_)
+        | Message::RetryConnection
         | Message::AboutButtonClicked
         | Message::IncreaseScale
         | Message::DecreaseScale
-        | Message::MarkdownLinkClicked(_) => MessageDomain::Ui,
+        | Message::MarkdownLinkClicked(_)
+        | Message::Dummy => MessageDomain::Ui,
     }
 }
 
@@ -81,7 +97,7 @@ pub(super) fn route_message(state: &mut Editor, message: Message) -> Task<Messag
             Editor::handle_debounced_metadata_messages(state, message)
         }
         MessageDomain::Shutdown => Editor::handle_shutdown_messages(state, message),
-        MessageDomain::SaveFeedback => Editor::handle_save_feedback_messages(message),
+        MessageDomain::SaveFeedback => Editor::handle_save_feedback_messages(state, message),
         MessageDomain::Visualizer => Editor::handle_visualizer_messages(state, message),
         MessageDomain::NoteLifecycle => Editor::handle_note_lifecycle_messages(state, message),
         MessageDomain::Ui => Editor::handle_ui_messages(state, message),

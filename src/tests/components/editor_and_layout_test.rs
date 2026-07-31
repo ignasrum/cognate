@@ -5,7 +5,7 @@ mod tests {
     use crate::components::editor::{Editor, Message as EditorMessage};
     use crate::components::note_explorer;
     use crate::components::visualizer;
-    use crate::configuration::Configuration;
+    use crate::configuration::{Configuration, StorageBackend};
     use crate::notebook::{MetadataLoadResult, NoteMetadata, NotebookError};
     use iced::widget::text_editor::Content;
 
@@ -17,6 +17,9 @@ mod tests {
             scale: 1.0,
             config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
+            storage_backend: StorageBackend::Local,
+            api_url: String::new(),
+            api_key: String::new(),
         };
         let _ = Editor::create(cfg_known);
 
@@ -26,6 +29,9 @@ mod tests {
             scale: 1.0,
             config_path: "config.json".to_string(),
             version: "0.1.0".to_string(),
+            storage_backend: StorageBackend::Local,
+            api_url: String::new(),
+            api_key: String::new(),
         };
         let _ = Editor::create(cfg_unknown);
     }
@@ -41,6 +47,7 @@ mod tests {
         let messages = vec![
             EditorMessage::AboutButtonClicked,
             EditorMessage::MarkdownLinkClicked("https://example.com".to_string()),
+            EditorMessage::Dummy,
             EditorMessage::ToggleVisualizer,
             EditorMessage::NewNote,
             EditorMessage::NewNoteInputChanged("new/path".to_string()),
@@ -55,15 +62,17 @@ mod tests {
             EditorMessage::CancelMoveNote,
             EditorMessage::NoteMoved(Err(sample_error.clone()), "old/path".to_string()),
             EditorMessage::NoteDeleted(Err(sample_error.clone()), "to/delete".to_string()),
-            EditorMessage::MetadataSaved(Ok(())),
-            EditorMessage::MetadataSaved(Err(sample_error.clone())),
+            EditorMessage::MetadataSaved(Ok(()), None),
+            EditorMessage::MetadataSaved(Err(sample_error.clone()), None),
             EditorMessage::NoteContentSaved(Ok(())),
             EditorMessage::NoteContentSaved(Err(sample_error.clone())),
-            EditorMessage::LoadedNoteContent(
-                "folder/note".to_string(),
-                "body".to_string(),
-                std::collections::HashMap::new(),
-            ),
+            EditorMessage::LoadedNoteContent(Ok(
+                crate::components::editor::note_coordinator::LoadedNotePayload {
+                    note_path: "folder/note".to_string(),
+                    content: "body".to_string(),
+                    images: std::collections::HashMap::new(),
+                },
+            )),
             EditorMessage::Undo,
             EditorMessage::Redo,
             EditorMessage::NoteExplorerMsg(note_explorer::Message::ToggleFolder(

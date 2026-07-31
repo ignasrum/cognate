@@ -1,7 +1,7 @@
 use iced::task::Task; // Use Task instead of Command
 
-use crate::components::editor::Message;
 use crate::components::editor::state::editor_state::EditorState;
+use crate::components::editor::{LabelMutationRollback, Message};
 use crate::components::note_explorer::NoteExplorer;
 use crate::components::visualizer::Visualizer;
 use crate::notebook;
@@ -26,6 +26,7 @@ pub fn handle_add_label(
         let mut selected_labels = state.selected_note_labels().to_vec();
 
         if !label.is_empty() && !selected_labels.contains(&label) {
+            let rollback = build_rollback(state, note_explorer, &selected_path);
             selected_labels.push(label.clone());
             state.set_selected_note_labels(selected_labels);
 
@@ -44,8 +45,8 @@ pub fn handle_add_label(
             let notebook_path = state.notebook_path().to_string();
             let notes_to_save = note_explorer.notes.clone();
             return Task::perform(
-                async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]) },
-                Message::MetadataSaved,
+                async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]).await },
+                move |result| Message::MetadataSaved(result, Some(rollback.clone())),
             );
         }
     }
@@ -62,6 +63,7 @@ pub fn handle_remove_label(
     if let Some(selected_path) = state.selected_note_path().cloned()
         && !state.show_about_info()
     {
+        let rollback = build_rollback(state, note_explorer, &selected_path);
         let mut selected_labels = state.selected_note_labels().to_vec();
         selected_labels.retain(|label| label != &label_to_remove);
         state.set_selected_note_labels(selected_labels);
@@ -79,9 +81,29 @@ pub fn handle_remove_label(
         let notebook_path = state.notebook_path().to_string();
         let notes_to_save = note_explorer.notes.clone();
         return Task::perform(
-            async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]) },
-            Message::MetadataSaved,
+            async move { notebook::save_metadata(&notebook_path, &notes_to_save[..]).await },
+            move |result| Message::MetadataSaved(result, Some(rollback.clone())),
         );
     }
     Task::none()
+}
+
+fn build_rollback(
+    state: &EditorState,
+    note_explorer: &NoteExplorer,
+    selected_path: &str,
+) -> LabelMutationRollback {
+    let note_labels = note_explorer
+        .notes
+        .iter()
+        .find(|note| note.rel_path == selected_path)
+        .map(|note| note.labels.clone())
+        .unwrap_or_default();
+
+    LabelMutationRollback {
+        note_path: selected_path.to_string(),
+        note_labels,
+        selected_labels: state.selected_note_labels().to_vec(),
+        input_text: state.new_label_text().to_string(),
+    }
 }

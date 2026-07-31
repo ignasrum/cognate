@@ -3,41 +3,22 @@
 //! This module defines note metadata and re-exports notebook operations for
 //! create/delete/move/search and metadata/content persistence.
 
-use serde::{Deserialize, Serialize};
-
-const STAGED_DELETE_PREFIX: &str = ".cognate_txn_delete_";
-const STAGED_DELETE_CLEANUP_GRACE_NANOS: u128 = 5 * 60 * 1_000_000_000;
-
+#[path = "notebook/backend.rs"]
+mod backend;
+#[path = "notebook/embedded_api.rs"]
+mod embedded_api;
 #[path = "notebook/error.rs"]
 mod error;
+#[path = "notebook/offline_queue.rs"]
+mod offline_queue;
 #[path = "notebook/operations.rs"]
 mod operations;
-#[path = "notebook/relative_path.rs"]
-mod relative_path;
-#[path = "notebook/search.rs"]
-mod search;
 #[path = "notebook/storage.rs"]
 mod storage;
+#[path = "notebook/write_coordinator.rs"]
+mod write_coordinator;
 
-/// Metadata persisted for a single note directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteMetadata {
-    /// Note directory path relative to the notebook root.
-    pub rel_path: String,
-    /// User-defined labels attached to this note.
-    #[serde(default)]
-    pub labels: Vec<String>,
-    /// Last update timestamp in RFC3339 format.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_updated: Option<String>,
-}
-
-/// Root metadata object stored in `metadata.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotebookMetadata {
-    /// All known notes in the notebook.
-    pub notes: Vec<NoteMetadata>,
-}
+pub use cognate_engine::storage::NoteMetadata;
 
 /// Search result surface returned to the editor search UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,13 +27,40 @@ pub struct NoteSearchResult {
     pub rel_path: String,
     /// User-facing snippet that explains the match.
     pub snippet: String,
+    /// Search field that produced the match.
+    pub match_type: cognate_engine::search::SearchMatchType,
+    /// Character ranges within the snippet that matched the query.
+    pub highlights: Vec<cognate_engine::search::SearchHighlight>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSearchPage {
+    pub results: Vec<NoteSearchResult>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+pub(crate) use backend::check_connection;
+pub use backend::configure_backend;
+pub(crate) use backend::is_api as is_api_backend;
+pub(crate) use backend::load_note_content;
+pub(crate) use backend::replay_offline_queue;
+pub(crate) use backend::set_note_revision;
+pub(crate) use backend::shutdown_backend;
+pub(crate) use backend::{delete_attachment, download_attachment, upload_attachment};
+#[allow(unused_imports)]
 pub use error::{NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
-pub use relative_path::NotebookRelativePath;
-pub use search::{SearchNote, clear_search_index_for_notebook, search_notes_with_snapshot};
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
-    save_note_content, save_note_content_sync,
+    save_note_content,
 };
+
+pub(crate) async fn search_notes_page(
+    notebook_path: String,
+    query: String,
+    limit: usize,
+    cursor: Option<String>,
+) -> Result<NoteSearchPage, NotebookError> {
+    backend::search_page(notebook_path, query, limit, cursor).await
+}

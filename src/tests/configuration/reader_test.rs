@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::configuration::{read_configuration, save_scale_to_config};
+    use crate::configuration::{StorageBackend, read_configuration, save_scale_to_config};
     use serde_json::Value;
     use std::fs;
     use std::path::PathBuf;
@@ -87,6 +87,85 @@ mod tests {
         assert_eq!(config.notebook_path, "/tmp/my_notebook");
         assert!((config.scale - 1.25).abs() < f32::EPSILON);
         assert!(!config.version.is_empty());
+        assert_eq!(config.storage_backend, StorageBackend::Local);
+        assert!(config.api_url.is_empty());
+        assert!(config.api_key.is_empty());
+    }
+
+    #[test]
+    fn read_configuration_reads_api_storage_settings() {
+        let config_file = TestConfigFile::new(
+            "api_storage",
+            r#"{
+                "theme": "Dark",
+                "storage_backend": "api",
+                "api_url": "http://127.0.0.1:8787/",
+                "api_key": "cgnt_live_test"
+            }"#,
+        );
+
+        let config =
+            read_configuration(config_file.as_str()).expect("Expected valid API configuration");
+
+        assert_eq!(config.storage_backend, StorageBackend::Api);
+        assert_eq!(config.api_url, "http://127.0.0.1:8787/");
+        assert_eq!(config.api_key, "cgnt_live_test");
+    }
+
+    #[test]
+    fn read_configuration_requires_api_url_and_key_for_api_storage() {
+        let config_file = TestConfigFile::new(
+            "api_storage_missing_credentials",
+            r#"{
+                "theme": "Dark",
+                "storage_backend": "api",
+                "api_url": "http://127.0.0.1:8787"
+            }"#,
+        );
+
+        assert!(read_configuration(config_file.as_str()).is_err());
+    }
+
+    #[test]
+    fn read_configuration_rejects_whitespace_api_credentials() {
+        for (name, api_url, api_key) in [
+            ("blank_url", "   ", "cgnt_live_test"),
+            ("blank_key", "http://127.0.0.1:8787", "   "),
+        ] {
+            let config_file = TestConfigFile::new(
+                name,
+                &format!(
+                    r#"{{
+                        "theme": "Dark",
+                        "storage_backend": "api",
+                        "api_url": "{api_url}",
+                        "api_key": "{api_key}"
+                    }}"#
+                ),
+            );
+            assert!(
+                read_configuration(config_file.as_str()).is_err(),
+                "expected whitespace API credential to be rejected: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_configuration_does_not_require_remote_credentials() {
+        let config_file = TestConfigFile::new(
+            "local_without_api_credentials",
+            r#"{
+                "theme": "Dark",
+                "storage_backend": "local",
+                "notebook_path": "/tmp/local-notebook"
+            }"#,
+        );
+
+        let config = read_configuration(config_file.as_str())
+            .expect("local mode should not require API URL or key");
+        assert_eq!(config.storage_backend, StorageBackend::Local);
+        assert!(config.api_url.is_empty());
+        assert!(config.api_key.is_empty());
     }
 
     #[test]

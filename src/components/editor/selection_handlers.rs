@@ -6,15 +6,38 @@ impl Editor {
     pub(super) fn handle_selection_messages(state: &mut Self, message: Message) -> Task<Message> {
         let previous_markdown = state.markdown_text.clone();
         let task = match message {
+            Message::ConnectionChecked(result) => match result {
+                Ok(()) => state
+                    .note_explorer
+                    .update(note_explorer::Message::LoadNotes)
+                    .map(Message::NoteExplorerMsg),
+                Err(error) => {
+                    eprintln!("[cognate] could not connect to server: {error}");
+                    state.state.set_connection_error(format!(
+                        "Cognate could not connect to the configured server:\n\n{error}"
+                    ));
+                    Task::none()
+                }
+            },
             Message::NoteExplorerMsg(note_explorer_message) => {
-                note_actions::handle_note_explorer_message(
+                let metadata_loaded = matches!(
+                    &note_explorer_message,
+                    note_explorer::Message::NotesLoaded(Ok(_))
+                );
+                let task = note_actions::handle_note_explorer_message(
                     &mut state.note_explorer,
                     &mut state.visualizer,
                     &mut state.state,
                     &mut state.content,
                     &mut state.markdown_text,
                     note_explorer_message,
-                )
+                );
+                if metadata_loaded {
+                    state.persisted_metadata = state.note_explorer.notes.clone();
+                    state.metadata_save_generation = 0;
+                    state.metadata_persisted_generation = 0;
+                }
+                task
             }
             Message::NoteSelected(note_path) => note_actions::handle_note_selected(
                 &mut state.note_explorer,
@@ -30,8 +53,8 @@ impl Editor {
                 state.content_note_path = None;
             }
             state.prune_embedded_images_for_current_markdown();
-            state.sync_markdown_preview();
-            return Task::batch(vec![task, state.scroll_preview_to_cursor_task()]);
+            let sync_task = state.sync_markdown_preview();
+            return Task::batch(vec![task, sync_task, state.scroll_preview_to_cursor_task()]);
         }
 
         task

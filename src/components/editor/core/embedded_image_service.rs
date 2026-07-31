@@ -1,8 +1,9 @@
+use iced::task::Task;
 use iced::widget::text_editor::{Action, Cursor};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
-use super::embedded_images::resolve_embedded_image_reference;
+use crate::components::editor::Message;
+
 use super::preview::{extract_embedded_image_ids, preview_markdown_after_action};
 
 #[derive(Debug, Default)]
@@ -64,13 +65,13 @@ impl EmbeddedImageWorkflow {
         notebook_path: &str,
         selected_note_path: Option<&String>,
         markdown_text: &str,
-    ) {
+    ) -> Task<Message> {
         self.refresh_embedded_images_for_current_markdown(
             notebook_path,
             selected_note_path,
             markdown_text,
         );
-        self.sync_embedded_image_handles();
+        self.sync_embedded_image_handles(notebook_path)
     }
 
     fn refresh_embedded_images_for_current_markdown(
@@ -89,32 +90,44 @@ impl EmbeddedImageWorkflow {
             return;
         }
 
-        let note_dir = Path::new(notebook_path).join(selected_note_path);
-
         for image_ref in extract_embedded_image_ids(markdown_text) {
-            if let Some(image_path) = resolve_embedded_image_reference(&note_dir, &image_ref) {
-                self.images
-                    .insert(image_ref, image_path.to_string_lossy().into_owned());
+            if crate::notebook::is_api_backend()
+                && image_ref.starts_with("images/")
+                && !image_ref.contains("..")
+            {
+                let rel_path = format!("{}/{}", selected_note_path, image_ref);
+                self.images.insert(image_ref, rel_path);
             }
         }
     }
 
-    fn sync_embedded_image_handles(&mut self) {
-        self.image_handles
-            .retain(|image_id, _| self.images.contains_key(image_id));
-
-        for (image_id, image_path) in &self.images {
-            if self.image_handles.contains_key(image_id) {
-                continue;
+    fn sync_embedded_image_handles(&mut self, notebook_path: &str) -> Task<Message> {
+        if crate::notebook::is_api_backend() {
+            self.image_handles
+                .retain(|image_id, _| self.images.contains_key(image_id));
+            let mut tasks = Vec::new();
+            for (image_id, image_rel_path) in &self.images {
+                if self.image_handles.contains_key(image_id) {
+                    continue;
+                }
+                let rel_path = image_rel_path.clone();
+                let img_id = image_id.clone();
+                tasks.push(Task::perform(
+                    crate::notebook::download_attachment(notebook_path.to_string(), rel_path),
+                    move |result| {
+                        Message::AttachmentLoaded(img_id, result.map_err(|error| error.to_string()))
+                    },
+                ));
             }
-
-            if let Ok(image_bytes) = std::fs::read(image_path) {
-                self.image_handles.insert(
-                    image_id.clone(),
-                    iced::widget::image::Handle::from_bytes(image_bytes),
-                );
-            }
+            return Task::batch(tasks);
         }
+
+        Task::none()
+    }
+
+    pub fn insert_image_handle(&mut self, image_id: String, bytes: Vec<u8>) {
+        self.image_handles
+            .insert(image_id, iced::widget::image::Handle::from_bytes(bytes));
     }
 
     pub fn dereferenced_for_action(

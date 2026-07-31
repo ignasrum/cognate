@@ -1,8 +1,6 @@
-use iced::event::Event;
-use iced::keyboard::Key;
 use iced::task::Task;
 use iced::widget::text_editor::Action;
-use iced::{Element, Subscription, window};
+use iced::window;
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -10,11 +8,11 @@ use std::time::Duration;
 mod clipboard;
 #[path = "core/embedded_image_service.rs"]
 mod embedded_image_service;
-#[path = "core/embedded_images.rs"]
-mod embedded_images;
 #[cfg(test)]
 #[path = "core/image_tag_tests.rs"]
 mod image_tag_tests;
+#[path = "lifecycle.rs"]
+mod lifecycle;
 #[path = "message.rs"]
 mod message;
 #[path = "metadata_debounce.rs"]
@@ -33,13 +31,13 @@ mod text_handlers;
 mod update_handlers;
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
-const EMBEDDED_IMAGE_DIR: &str = "images";
 #[cfg(test)]
 const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(20);
 #[cfg(not(test))]
 const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(1200);
 
 use self::embedded_image_service::EmbeddedImageWorkflow;
+pub use self::message::LabelMutationRollback;
 pub use self::message::Message;
 use self::metadata_debounce::MetadataDebounceScheduler;
 use self::persistence::round_scale_step;
@@ -72,10 +70,13 @@ pub struct Editor {
     // Text management
     content: iced::widget::text_editor::Content,
     markdown_text: String,
+    loaded_markdown_text: String,
     markdown_preview: iced::widget::markdown::Content,
     embedded_image_workflow: EmbeddedImageWorkflow,
     content_note_path: Option<String>,
     metadata_save_generation: u64,
+    metadata_persisted_generation: u64,
+    persisted_metadata: Vec<notebook::NoteMetadata>,
     metadata_save_in_flight: bool,
     metadata_save_reschedule_after_in_flight: bool,
     metadata_debounce_scheduler: MetadataDebounceScheduler,
@@ -93,60 +94,8 @@ pub struct Editor {
 // Implement static methods for Editor to work with iced::application
 impl Editor {
     // Keep create method for internal use
-    pub fn create(flags: Configuration) -> (Self, Task<Message>) {
-        let notebook_path_clone = flags.notebook_path.clone();
-        let (metadata_debounce_scheduler, metadata_debounce_events) =
-            MetadataDebounceScheduler::new(METADATA_SAVE_DEBOUNCE_WINDOW);
-        let metadata_debounce_task = Task::run(
-            metadata_debounce_events,
-            Message::DebouncedMetadataSaveElapsed,
-        );
-
-        let mut editor_instance = Editor {
-            content: iced::widget::text_editor::Content::with_text(""),
-            markdown_text: String::new(),
-            markdown_preview: iced::widget::markdown::Content::parse(""),
-            embedded_image_workflow: EmbeddedImageWorkflow::default(),
-            content_note_path: None,
-            metadata_save_generation: 0,
-            metadata_save_in_flight: false,
-            metadata_save_reschedule_after_in_flight: false,
-            metadata_debounce_scheduler,
-            shutdown_in_progress: false,
-            search_generation: 0,
-            undo_manager: UndoManager::new(),
-            state: EditorState::new(),
-            note_explorer: note_explorer::NoteExplorer::new(notebook_path_clone.clone()),
-            visualizer: visualizer::Visualizer::new(),
-        };
-
-        editor_instance.state.set_notebook_path(notebook_path_clone);
-        editor_instance.state.set_config_path(flags.config_path);
-        editor_instance.state.set_ui_scale(flags.scale);
-        editor_instance.state.set_app_version(flags.version);
-
-        let initial_command = if !editor_instance.state.notebook_path().is_empty() {
-            editor_instance
-                .note_explorer
-                .update(note_explorer::Message::LoadNotes)
-                .map(Message::NoteExplorerMsg)
-        } else {
-            Task::none()
-        };
-
-        (
-            editor_instance,
-            Task::batch(vec![initial_command, metadata_debounce_task]),
-        )
-    }
-
-    // Update method delegates to focused reducers by message domain.
-    pub fn update(state: &mut Self, message: Message) -> Task<Message> {
-        reducer::route_message(state, message)
-    }
-
-    fn sync_markdown_preview(&mut self) {
-        self.embedded_image_workflow.sync_preview_assets(
+    fn sync_markdown_preview(&mut self) -> Task<Message> {
+        let task = self.embedded_image_workflow.sync_preview_assets(
             self.state.notebook_path(),
             self.state.selected_note_path(),
             &self.markdown_text,
@@ -156,6 +105,7 @@ impl Editor {
             self.embedded_image_workflow.images(),
         );
         self.markdown_preview = iced::widget::markdown::Content::parse(&preview_markdown);
+        task
     }
 
     fn prune_embedded_images_for_current_markdown(&mut self) {
@@ -201,22 +151,30 @@ impl Editor {
                 metadata_save_task = self.touch_selected_note_last_updated_and_schedule_save_task();
             }
 
-            for image_id in self.embedded_image_workflow.take_pending_deletion_ids() {
-                if let Some(image_path) = self
+            let mut deletion_tasks = Vec::new();
+            let pending_deletion_ids = self.embedded_image_workflow.take_pending_deletion_ids();
+            for image_id in pending_deletion_ids {
+                if let Some(image_rel_path) = self
                     .embedded_image_workflow
                     .remove_image_path_for_id(&image_id)
-                    && let Err(_err) = std::fs::remove_file(&image_path)
-                    && _err.kind() != std::io::ErrorKind::NotFound
                 {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Failed to delete image file '{}': {}", image_path, _err);
+                    let notebook_path = self.state.notebook_path().to_string();
+                    let rel = image_rel_path.clone();
+                    deletion_tasks.push(Task::perform(
+                        async move {
+                            let _ = crate::notebook::delete_attachment(notebook_path, rel).await;
+                        },
+                        |_| Message::Dummy,
+                    ));
                 }
             }
 
-            self.sync_markdown_preview();
+            let sync_task = self.sync_markdown_preview();
             return Task::batch(vec![
                 self.with_preview_scroll_task(save_task),
                 metadata_save_task,
+                sync_task,
+                Task::batch(deletion_tasks),
             ]);
         }
 
@@ -250,7 +208,7 @@ impl Editor {
 
         Task::perform(
             async move {
-                let result = note_coordinator::save_metadata_snapshot(&notebook_path, &notes);
+                let result = note_coordinator::save_metadata_snapshot(&notebook_path, &notes).await;
                 (generation, result)
             },
             |(generation, result)| Message::DebouncedMetadataSaveCompleted(generation, result),
@@ -259,6 +217,12 @@ impl Editor {
 
     fn touch_selected_note_last_updated_and_schedule_save_task(&mut self) -> Task<Message> {
         if self.touch_selected_note_last_updated() {
+            // API note writes update last_updated atomically with note content and return
+            // the new metadata revision. A separate metadata request here races with that
+            // write and only creates avoidable 409 responses.
+            if notebook::is_api_backend() {
+                return Task::none();
+            }
             self.schedule_debounced_metadata_save_task()
         } else {
             Task::none()
@@ -343,73 +307,6 @@ impl Editor {
         self.search_generation
     }
 
-    // Keep view method as is, but fix the state reference
-    pub fn view(state: &Self) -> Element<'_, Message> {
-        let selected_text = state.content.selection();
-        let preview_indicator_char_range = if state.state.selected_note_path().is_some() {
-            cursor_preview_character_range(
-                &state.markdown_text,
-                state.content.cursor(),
-                selected_text.as_deref(),
-                state.embedded_image_workflow.images(),
-            )
-        } else {
-            None
-        };
-
-        layout::generate_layout(
-            &state.state,
-            &state.content,
-            &state.markdown_preview,
-            state.embedded_image_workflow.image_handles(),
-            &state.note_explorer,
-            &state.visualizer,
-            preview_indicator_char_range,
-        )
-    }
-
-    pub fn scale_factor(state: &Self) -> f32 {
-        state.state.ui_scale()
-    }
-
-    // Keep subscription method as is
-    pub fn subscription(_state: &Self) -> Subscription<Message> {
-        let keyboard_subscription =
-            iced::event::listen_with(|event, _status, _shell| match event {
-                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    // Handle primary command shortcuts:
-                    // - macOS: Cmd
-                    // - other platforms: Ctrl
-                    if modifiers.command()
-                        && let Key::Character(c) = &key
-                    {
-                        if c == "a" || c == "A" {
-                            return Some(Message::SelectAll);
-                        }
-                        if c == "z" || c == "Z" {
-                            if modifiers.shift() {
-                                return Some(Message::Redo);
-                            }
-                            return Some(Message::Undo);
-                        }
-                    }
-
-                    // Handle Tab key press (no modifiers)
-                    if key == Key::Named(iced::keyboard::key::Named::Tab) && modifiers.is_empty() {
-                        return Some(Message::HandleTabKey);
-                    }
-
-                    None
-                }
-                _ => None,
-            });
-
-        let close_request_subscription =
-            window::close_requests().map(Message::WindowCloseRequested);
-
-        Subscription::batch(vec![keyboard_subscription, close_request_subscription])
-    }
-
     #[cfg(test)]
     pub(crate) fn debug_last_updated_for(&self, rel_path: &str) -> Option<String> {
         self.note_explorer
@@ -427,6 +324,16 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn debug_markdown_text(&self) -> String {
         self.markdown_text.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_selected_labels(&self) -> Vec<String> {
+        self.state.selected_note_labels().to_vec()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_new_label_text(&self) -> String {
+        self.state.new_label_text().to_string()
     }
 
     #[cfg(test)]
@@ -453,6 +360,13 @@ impl Editor {
     }
 
     #[cfg(test)]
+    pub(crate) fn debug_conflict(
+        &self,
+    ) -> Option<crate::components::editor::state::editor_state::NoteConflict> {
+        self.state.conflict().cloned()
+    }
+
+    #[cfg(test)]
     pub(crate) fn debug_shutdown_payload(
         &self,
     ) -> (String, Option<String>, String, Vec<notebook::NoteMetadata>) {
@@ -462,6 +376,17 @@ impl Editor {
             self.markdown_text.clone(),
             self.note_explorer.notes.clone(),
         )
+    }
+
+    fn content_dirty(&self) -> bool {
+        self.content_note_path.is_some() && self.markdown_text != self.loaded_markdown_text
+    }
+
+    fn metadata_dirty(&self) -> bool {
+        self.note_explorer.notes != self.persisted_metadata
+            || self.metadata_save_in_flight
+            || self.metadata_save_reschedule_after_in_flight
+            || self.metadata_save_generation != self.metadata_persisted_generation
     }
 }
 
@@ -474,10 +399,13 @@ impl Default for Editor {
         Self {
             content: iced::widget::text_editor::Content::with_text(""),
             markdown_text: String::new(),
+            loaded_markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_image_workflow: EmbeddedImageWorkflow::default(),
             content_note_path: None,
             metadata_save_generation: 0,
+            metadata_persisted_generation: 0,
+            persisted_metadata: Vec::new(),
             metadata_save_in_flight: false,
             metadata_save_reschedule_after_in_flight: false,
             metadata_debounce_scheduler,
