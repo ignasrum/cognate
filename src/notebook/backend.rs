@@ -248,11 +248,30 @@ pub(crate) async fn delete_attachment(
             "API backend is not selected",
         ));
     };
+    let get_response = authorized(
+        client.client.get(attachment_endpoint(&client, &rel_path)?),
+        &client,
+    )
+    .send()
+    .await
+    .map_err(|error| api_error("delete attachment", error))?;
+    if !get_response.status().is_success() {
+        return Err(api_error(
+            "delete attachment",
+            format!("server returned HTTP {}", get_response.status()),
+        ));
+    }
+    let revision = get_response
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| api_error("delete attachment", "server response omitted ETag"))?;
     send_empty(
         authorized(
             client
                 .client
-                .delete(attachment_endpoint(&client, &rel_path)?),
+                .delete(attachment_endpoint(&client, &rel_path)?)
+                .header("if-match", revision),
             &client,
         ),
         "delete attachment",

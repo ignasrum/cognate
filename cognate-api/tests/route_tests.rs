@@ -271,6 +271,7 @@ async fn attachment_lifecycle_routes_use_authenticated_engine_storage() {
         ))
         .await;
     assert_eq!(download.status(), 200);
+    let stale_delete_etag = download.headers().get("etag").unwrap().clone();
     assert_eq!(download.headers().get("content-type").unwrap(), "image/png");
     assert_eq!(
         download
@@ -286,13 +287,52 @@ async fn attachment_lifecycle_routes_use_authenticated_engine_storage() {
         png
     );
 
-    let delete = app
+    let replace = app
+        .request(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri(&download_uri)
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("if-match", stale_delete_etag.clone())
+                .body(Body::from(vec![
+                    0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A,
+                ]))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(replace.status(), 204);
+
+    let stale_delete = app
+        .request(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(&download_uri)
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("if-match", stale_delete_etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(stale_delete.status(), 409);
+
+    let current = app
         .request(bearer_request(
-            "DELETE",
+            "GET",
             &download_uri,
             &client.secret,
             Body::empty(),
         ))
+        .await;
+    let delete = app
+        .request(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(&download_uri)
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("if-match", current.headers().get("etag").unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await;
     assert_eq!(delete.status(), 204);
 }
