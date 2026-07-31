@@ -1,28 +1,34 @@
 # Cognate Notebook Specification
 
-## Notebook identity and ownership
+## Scope
 
-A notebook is a directory selected by `COGNATE_NOTEBOOK_PATH` for the API or
-`notebook_path` for the desktop configuration. In API mode, the API host's path is
-authoritative; the desktop's path is only client-side configuration state. In embedded
-local mode, the in-process API and UI share the local notebook directory.
+A notebook is a directory containing Markdown notes and the metadata required to
+organize them. This document specifies the on-disk layout, metadata model, path rules,
+attachments, revisions, and recovery behavior. The API and desktop client are not
+part of the notebook format.
 
-Only the API/engine layer reads or mutates notebook files. This keeps local and remote
-clients on the same locking, validation, revision, attachment, and search behavior.
+## Notebook layout
 
-## Filesystem format
+```text
+<notebook>/
+├── metadata.json
+├── metadata.json.bak
+├── .cognate_index.bin        # optional derived state
+└── <note path>/
+    ├── note.md
+    └── images/
+        └── <generated id>.<png|jpg|gif|webp>
+```
 
-The notebook root contains:
+The notebook root is configured externally. Each note is represented by a directory
+relative to that root, and each note directory must contain a regular `note.md` file.
+The `images` directory is optional and contains note attachments.
 
-- `metadata.json`: canonical note metadata.
-- `metadata.json.bak`: last-known-good metadata recovery copy.
-- `.cognate_index.bin`: derived search/task/metrics state, when persisted.
-- One directory per note, with `note.md` and optional `images/` attachments.
+`metadata.json.bak` is the last-known-good metadata snapshot. `.cognate_index.bin`
+contains derived search, task, and metrics state and is rebuildable; it is never the
+source of truth for note existence or content.
 
-Note paths are relative to the notebook root. A note directory must contain a regular
-`note.md`; metadata paths cannot point through symlinks or outside the notebook.
-
-## Metadata schema
+## Metadata format
 
 ```json
 {
@@ -37,69 +43,83 @@ Note paths are relative to the notebook root. A note directory must contain a re
 }
 ```
 
-`rel_path` is unique and normalized. Labels are user-defined strings. `last_updated`
-is optional for compatibility with older notebooks and is repaired from note-file
-timestamps when necessary.
+The metadata document contains a format `version` and a `notes` array. Each note
+entry contains:
 
-Metadata writes are non-structural: the submitted path set must exactly match the
-existing valid notebook path set. An unconditional wildcard is allowed only while the
-notebook is empty. Use dedicated create, move, and delete operations to change the
-path set.
+- `rel_path`: unique, normalized path relative to the notebook root.
+- `labels`: user-defined labels; labels are stored as strings.
+- `last_updated`: optional RFC3339 timestamp for compatibility with older notebooks.
 
-## Revisions and concurrency
+The metadata path set must match the canonical note directories on disk. Metadata
+updates may change labels and timestamps, but may not add, remove, or rename note
+paths. Structural changes use the note lifecycle operations, which update both the
+filesystem and metadata transactionally.
 
-Note content revisions are BLAKE3 hashes of canonical note content. Metadata and
-attachment revisions are also exposed as BLAKE3-derived ETags. Clients must send the
-revision they read in `If-Match` for conditional updates. The server validates the
-precondition while holding the relevant locks; stale updates return a conflict and do
-not overwrite newer data.
+An unconditional wildcard metadata update is permitted only for an empty notebook.
+For an initialized notebook, callers must provide and satisfy the current metadata
+revision. Duplicate paths, invalid paths, missing `note.md` files, and structural
+path changes are rejected.
 
-The lock order is always:
+## Path and filesystem rules
 
-```text
-notebook lock -> note lock -> filesystem/index mutation
-```
+Note and attachment paths are relative paths. The following are invalid:
 
-This order applies to note writes, metadata changes, create/delete/move operations,
-and attachment replacement/deletion. Lock waits are bounded and return a typed error.
+- absolute paths;
+- traversal components such as `..` that escape the notebook;
+- empty or invalid path components;
+- paths that resolve through symlinks outside the notebook;
+- note entries that do not resolve to a directory containing a regular `note.md`.
 
-## Transaction and recovery rules
+All filesystem access validates containment before use. Canonical paths are checked
+when their parents exist, and symlink escapes are rejected rather than followed.
 
-- Metadata is written atomically and the previous valid copy is retained as a backup.
-- A missing or corrupt primary is recovered from a valid backup; if both are invalid,
-  loading fails rather than silently returning an empty notebook.
-- Create, move, and delete operations stage filesystem changes and roll back on
-  metadata failure. Rollback failure is surfaced as a recovery error.
-- Note writes do not create metadata-orphaned notes through ordinary update routes.
-- Search state is derived and may be rebuilt from note files and metadata.
-- Atomic replacement and directory synchronization reduce the risk of partial writes;
-  locks provide the serialization required for multiple processes.
+## Note content
+
+The canonical note content is UTF-8 text stored at `<note path>/note.md`. Note writes
+are atomic and update the note's `last_updated` value as part of the same logical
+operation. An unchanged content write must not manufacture a new content revision.
+
+Note content revisions are BLAKE3 hashes of the canonical content. A consumer that
+performs conditional updates must compare the revision it read with the current
+revision before replacing content. A stale revision is a conflict and cannot
+overwrite newer content.
 
 ## Attachments
 
-Attachments live at `<note>/images/<generated-name>.<extension>`. Supported formats
-are PNG, JPEG, GIF, and WebP, detected from magic bytes rather than a client-provided
-extension. Their content revision is the BLAKE3 hash of the bytes. API upload and
-replacement requests are bounded to 48 MiB, and conditional replacement/deletion
-prevents stale clients from destroying newer files.
+Attachments are stored below `<note path>/images/`. File names are generated by the
+storage layer; callers cannot choose arbitrary filesystem locations. Supported image
+formats are PNG, JPEG, GIF, and WebP, identified from magic bytes rather than a
+client-provided extension.
 
-## Search and derived state
+Attachment metadata consists of the relative path, media type, byte size, and a BLAKE3
+revision of the attachment bytes. Replacement and deletion are conditional on the
+expected revision so that a stale client cannot overwrite or remove a newer file.
+Attachment request size limits are enforced by the API boundary.
 
-The engine indexes note paths, labels, content, and update timestamps. It supports
-plain terms, phrases, negation, label/path filters, and updated-date ranges. Search
-results contain scores, match types, snippets, and highlight ranges. The API refreshes
-the index after successful mutations and periodically checks the filesystem for
-external changes. Index corruption or staleness is repairable and must never replace
-the canonical notebook as the source of truth.
+## Concurrency and atomicity
 
-## Client and offline behavior
+Notebook mutations use advisory locks with a fixed acquisition order:
 
-The desktop API client caches the latest revisions and queues retryable note writes in
-the permissions-restricted `.cognate-api-queue.json` beside the client configuration.
-The queue is atomically replaced, coalesces newer writes for the same note, records
-remote commit acknowledgement before removing entries, and preserves conflicts for
-visual resolution. Closing the application does not discard a persisted queue.
+```text
+notebook lock -> note lock -> filesystem and metadata mutation
+```
 
-Embedded local mode keeps its API client secret in memory only and does not create the
-standalone API's SQLite database. Remote deployments store only hashed client secrets
-and client metadata in the API database.
+The notebook lock protects metadata and notebook-wide transactions. The note lock
+protects content and attachment operations. Lock acquisition is bounded and returns a
+typed lock-unavailable error instead of waiting indefinitely.
+
+Writes use temporary files, flush file contents before replacement, atomically replace
+the destination, and synchronize the parent directory on Unix where supported. Create,
+move, and delete operations stage changes and roll back when their metadata commit
+fails. Rollback failures are reported as recovery errors.
+
+## Recovery behavior
+
+When `metadata.json` is missing, a valid `metadata.json.bak` is restored before the
+notebook is loaded. When the primary metadata file is invalid, the backup is parsed
+and restored in the same way. If both files are unavailable or invalid, loading fails;
+the notebook is never silently presented as empty.
+
+Stale transaction staging entries are cleaned up according to their transaction state.
+Canonical note files and metadata remain authoritative even if the derived index is
+missing, stale, or corrupt; the index can be rebuilt from the notebook contents.
