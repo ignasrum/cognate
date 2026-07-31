@@ -137,7 +137,7 @@ impl NoteExplorer {
                     note_path
                 );
                 // Collapse all folders first
-                for (_, is_expanded) in self.expanded_folders.iter_mut() {
+                for is_expanded in self.expanded_folders.values_mut() {
                     *is_expanded = false;
                 }
                 #[cfg(debug_assertions)]

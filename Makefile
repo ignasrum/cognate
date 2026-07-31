@@ -1,4 +1,5 @@
 prog :=cognate
+workspace_packages := -p cognate -p cognate-engine -p cognate-api
 
 PROFILE ?= release
 
@@ -38,11 +39,11 @@ test:
 
 format:
 	cargo fmt --all
-	cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+	cargo clippy $(workspace_packages) --all-targets --fix --allow-dirty --allow-staged
 	cargo fmt --all
 
 lint:
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy $(workspace_packages) --all-targets -- -D warnings
 	cargo fmt --all -- --check
 
 all: build install
