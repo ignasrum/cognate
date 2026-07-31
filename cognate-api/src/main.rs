@@ -1,6 +1,4 @@
-use std::net::SocketAddr;
-
-use cognate_api::{api, config::Config, db, error::ApiError, state::AppState};
+use cognate_api::{config::Config, db, error::ApiError, server};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -8,18 +6,15 @@ async fn main() -> Result<(), ApiError> {
     let config = Config::from_env()?;
     let pool = db::connect(&config.database_path).await?;
     db::migrate(&pool).await?;
-    let state = AppState::new(pool, config.notebook_path, config.admin_token);
-    let router = api::router(state);
-    let address: SocketAddr = format!("{}:{}", config.bind_address, config.port)
+    let address: std::net::SocketAddr = format!("{}:{}", config.bind_address, config.port)
         .parse()
         .map_err(|error| ApiError::Config(format!("invalid bind address or port: {error}")))?;
 
     let listener = TcpListener::bind(address).await.map_err(ApiError::Io)?;
+    let state = cognate_api::state::AppState::new(pool, config.notebook_path, config.admin_token);
+    let router = cognate_api::api::router(state);
     eprintln!("cognate-api listening on http://{address}");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(ApiError::Io)
+    server::serve_listener(listener, router, shutdown_signal()).await
 }
 
 async fn shutdown_signal() {

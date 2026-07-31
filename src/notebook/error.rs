@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotebookErrorKind {
+    Initialization,
     Validation,
     Storage,
     Recovery,
@@ -12,6 +13,7 @@ pub enum NotebookErrorKind {
 impl NotebookErrorKind {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Initialization => "Initialization",
             Self::Validation => "Validation",
             Self::Storage => "Storage",
             Self::Recovery => "Recovery",
@@ -23,6 +25,11 @@ impl NotebookErrorKind {
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum NotebookError {
+    #[error("{context}: {detail}")]
+    Initialization {
+        context: &'static str,
+        detail: String,
+    },
     #[error("{context}: {detail}")]
     Validation {
         context: &'static str,
@@ -55,6 +62,13 @@ pub enum NotebookError {
 
 #[allow(dead_code)]
 impl NotebookError {
+    pub fn initialization(context: &'static str, detail: impl Into<String>) -> Self {
+        Self::Initialization {
+            context,
+            detail: detail.into(),
+        }
+    }
+
     pub fn validation(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Validation {
             context,
@@ -116,6 +130,7 @@ impl NotebookError {
 
     pub fn kind(&self) -> NotebookErrorKind {
         match self {
+            Self::Initialization { .. } => NotebookErrorKind::Initialization,
             Self::Validation { .. } => NotebookErrorKind::Validation,
             Self::Storage { .. } => NotebookErrorKind::Storage,
             Self::Recovery { .. } => NotebookErrorKind::Recovery,

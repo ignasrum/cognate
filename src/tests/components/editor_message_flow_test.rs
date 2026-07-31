@@ -276,9 +276,11 @@ mod tests {
         assert!(!reschedule_after_second_completed);
     }
 
-    #[ignore = "requires permission to bind the embedded loopback API"]
     #[test]
     fn gui_smoke_open_edit_save_and_close_flushes_note_content() {
+        if !loopback_available() {
+            return;
+        }
         let notebook_dir = TestNotebookDir::new("gui_smoke");
         let notes = seed_note(&notebook_dir, "flow/note", "hello");
         let mut editor = create_editor_with_notebook(notebook_dir.as_str());
@@ -345,6 +347,20 @@ mod tests {
         )
         .expect("Expected note content to exist after shutdown flush");
         assert_eq!(saved_content, edited_markdown);
+    }
+
+    fn loopback_available() -> bool {
+        block_on(async {
+            match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+                Ok(listener) => {
+                    drop(listener);
+                    true
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => false,
+                Err(error) if error.raw_os_error() == Some(1) => false,
+                Err(error) => panic!("failed to check loopback availability: {error}"),
+            }
+        })
     }
 
     #[test]

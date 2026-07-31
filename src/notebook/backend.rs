@@ -12,7 +12,7 @@ use crate::notebook::{MetadataLoadResult, NoteSearchPage, NoteSearchResult, Note
 
 #[derive(Clone)]
 enum SelectedBackend {
-    Local,
+    Unconfigured(Option<NotebookError>),
     Api(ApiClient),
 }
 
@@ -79,7 +79,7 @@ struct ApiAttachmentPayload {
 static SELECTED_BACKEND: OnceLock<RwLock<SelectedBackend>> = OnceLock::new();
 
 fn backend_cell() -> &'static RwLock<SelectedBackend> {
-    SELECTED_BACKEND.get_or_init(|| RwLock::new(SelectedBackend::Local))
+    SELECTED_BACKEND.get_or_init(|| RwLock::new(SelectedBackend::Unconfigured(None)))
 }
 
 pub(crate) fn is_api() -> bool {
@@ -99,9 +99,22 @@ pub(crate) fn set_note_revision(rel_path: &str, revision: &str) {
 pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookError> {
     let selected = match configuration.storage_backend {
         StorageBackend::Local => {
-            let runtime =
-                EmbeddedApiRuntime::start(std::path::PathBuf::from(&configuration.notebook_path))
-                    .map_err(|error| api_error("start embedded API", error))?;
+            let runtime = match EmbeddedApiRuntime::start(std::path::PathBuf::from(
+                &configuration.notebook_path,
+            )) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let startup_error = NotebookError::initialization(
+                        "embedded API",
+                        format!("Could not start embedded API: {error}"),
+                    );
+                    *backend_cell()
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        SelectedBackend::Unconfigured(Some(startup_error.clone()));
+                    return Err(startup_error);
+                }
+            };
             let runtime = Arc::new(runtime);
             SelectedBackend::Api(ApiClient {
                 client: reqwest::Client::new(),
@@ -135,7 +148,7 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
 pub fn shutdown_backend() {
     *backend_cell()
         .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = SelectedBackend::Local;
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = SelectedBackend::Unconfigured(None);
 }
 
 fn selected() -> SelectedBackend {
@@ -143,6 +156,12 @@ fn selected() -> SelectedBackend {
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
+}
+
+fn unconfigured_error(error: Option<NotebookError>) -> NotebookError {
+    error.unwrap_or_else(|| {
+        NotebookError::initialization("storage backend", "API backend is not configured")
+    })
 }
 
 fn api_error(context: &str, error: impl std::fmt::Display) -> NotebookError {
@@ -341,7 +360,7 @@ pub(crate) async fn delete_attachment(
 
 pub async fn load_metadata(_notebook_path: String) -> Result<MetadataLoadResult, NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("load metadata", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes")?;
             let response = authorized(client.client.get(url), &client)
@@ -377,7 +396,7 @@ pub async fn save_metadata(
     notes: &[NoteMetadata],
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("save metadata", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/metadata")?;
             let revision = client.metadata_revision.lock().unwrap().clone();
@@ -404,7 +423,7 @@ pub async fn load_note_content(
     rel_path: String,
 ) -> Result<String, NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("load note", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = note_endpoint(&client, &rel_path)?;
             let response = authorized(client.client.get(url), &client)
@@ -442,7 +461,7 @@ pub async fn save_note_content(
     content: String,
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("save note", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let write_ticket = client.write_coordinator.begin(&rel_path);
             let _write_guard = write_ticket.acquire().await;
@@ -690,7 +709,7 @@ pub async fn create_note(
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<NoteMetadata, NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("create note", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes")?;
             let note: NoteMetadata = send(
@@ -716,7 +735,7 @@ pub async fn delete_note(
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("delete note", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = note_endpoint(&client, rel_path)?;
             send_empty(
@@ -737,7 +756,7 @@ pub async fn move_note(
     notes: &mut [NoteMetadata],
 ) -> Result<String, NotebookError> {
     match selected() {
-        SelectedBackend::Local => Err(api_error("move note", "API backend is not configured")),
+        SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes/move")?;
             send_empty(
@@ -780,8 +799,9 @@ pub async fn search_page(
     limit: usize,
     cursor: Option<String>,
 ) -> Result<NoteSearchPage, NotebookError> {
-    let SelectedBackend::Api(client) = selected() else {
-        return Err(api_error("search", "API backend is not configured"));
+    let client = match selected() {
+        SelectedBackend::Api(client) => client,
+        SelectedBackend::Unconfigured(error) => return Err(unconfigured_error(error)),
     };
     let Ok(url) = endpoint(&client, "/v1/search/page") else {
         return Err(api_error("search", "invalid API URL"));
