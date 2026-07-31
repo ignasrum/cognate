@@ -14,7 +14,7 @@ use subtle::ConstantTimeEq;
 use crate::{
     auth::{authenticate, digest_secret, encode_hex, generate_client_secret, new_client_id},
     error::ApiError,
-    state::AppState,
+    state::{AppState, AuthStore},
 };
 
 pub const MAX_PAYLOAD_BYTES: usize = 48 * 1024 * 1024;
@@ -283,14 +283,28 @@ async fn create_client(
     let secret = generate_client_secret()?;
     let id = new_client_id()?;
     let created_at = current_timestamp();
-    sqlx::query("INSERT INTO clients (id, client_name, key_hash, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(encode_hex(&digest_secret(&secret)))
-        .bind(&created_at)
-        .execute(&state.db)
-        .await
-        .map_err(ApiError::Database)?;
+    match &state.auth_store {
+        AuthStore::Sqlite => {
+            let Some(db) = state.db.as_ref() else {
+                return Err(ApiError::Config(
+                    "SQLite auth store has no database".to_string(),
+                ));
+            };
+            sqlx::query(
+                "INSERT INTO clients (id, client_name, key_hash, created_at) VALUES (?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(name)
+            .bind(encode_hex(&digest_secret(&secret)))
+            .bind(&created_at)
+            .execute(db)
+            .await
+            .map_err(ApiError::Database)?;
+        }
+        AuthStore::InMemory(clients) => {
+            clients.create(id.clone(), name.to_string(), &secret).await;
+        }
+    }
     Ok((
         StatusCode::CREATED,
         Json(CreateClientResponse {
@@ -307,22 +321,41 @@ async fn list_clients(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<ClientResponse>>, ApiError> {
     require_admin(&state, &headers)?;
-    let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        "SELECT id, client_name, created_at, revoked_at FROM clients ORDER BY created_at",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(Json(
-        rows.into_iter()
+    let clients = match &state.auth_store {
+        AuthStore::Sqlite => {
+            let Some(db) = state.db.as_ref() else {
+                return Err(ApiError::Config(
+                    "SQLite auth store has no database".to_string(),
+                ));
+            };
+            sqlx::query_as::<_, (String, String, String, Option<String>)>(
+                "SELECT id, client_name, created_at, revoked_at FROM clients ORDER BY created_at",
+            )
+            .fetch_all(db)
+            .await
+            .map_err(ApiError::Database)?
+            .into_iter()
             .map(|(id, client_name, created_at, revoked_at)| ClientResponse {
                 id,
                 client_name,
                 created_at,
                 revoked_at,
             })
+            .collect()
+        }
+        AuthStore::InMemory(clients) => clients
+            .list()
+            .await
+            .into_iter()
+            .map(|record| ClientResponse {
+                id: record.id,
+                client_name: record.client_name,
+                created_at: record.created_at,
+                revoked_at: record.revoked_at,
+            })
             .collect(),
-    ))
+    };
+    Ok(Json(clients))
 }
 
 async fn delete_client_route(
@@ -331,14 +364,26 @@ async fn delete_client_route(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     require_admin(&state, &headers)?;
-    let result = sqlx::query(
-        "UPDATE clients SET revoked_at = datetime('now') WHERE id = ? AND revoked_at IS NULL",
-    )
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .map_err(ApiError::Database)?;
-    if result.rows_affected() == 0 {
+    let found = match &state.auth_store {
+        AuthStore::Sqlite => {
+            let Some(db) = state.db.as_ref() else {
+                return Err(ApiError::Config(
+                    "SQLite auth store has no database".to_string(),
+                ));
+            };
+            sqlx::query(
+                "UPDATE clients SET revoked_at = datetime('now') WHERE id = ? AND revoked_at IS NULL",
+            )
+            .bind(id.clone())
+            .execute(db)
+            .await
+            .map_err(ApiError::Database)?
+            .rows_affected()
+                > 0
+        }
+        AuthStore::InMemory(clients) => clients.revoke(&id).await,
+    };
+    if !found {
         return Err(ApiError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)

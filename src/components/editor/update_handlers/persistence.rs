@@ -85,10 +85,7 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
             state.shutdown_in_progress = false;
 
             match result {
-                Ok(()) => {
-                    notebook::clear_search_index_for_notebook(state.state.notebook_path());
-                    window::close(window_id)
-                }
+                Ok(()) => window::close(window_id),
                 Err(_error) => {
                     #[cfg(not(test))]
                     {

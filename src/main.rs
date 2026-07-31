@@ -64,5 +64,7 @@ pub fn main() -> iced::Result {
     .exit_on_close_request(false)
     .subscription(Editor::subscription);
 
-    app.run()
+    let result = app.run();
+    notebook::shutdown_backend();
+    result
 }

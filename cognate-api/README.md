@@ -6,6 +6,12 @@ The service binds to loopback by default. An explicit bind address can be used f
 LAN or when an external reverse proxy needs to reach the service. Public HTTPS termination
 and certificates belong to the reverse proxy.
 
+When embedded by the desktop application, the service uses an in-memory
+authentication store, binds to an ephemeral loopback port, and does not create
+SQLite. The desktop generates a fresh client secret for each launch and keeps it
+only in process memory. Standalone self-hosted deployments continue to use the
+SQLite-backed client store described below.
+
 ## Configuration
 
 Required:

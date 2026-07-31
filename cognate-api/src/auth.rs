@@ -5,7 +5,11 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
+use tokio::sync::Mutex;
 
 pub const CLIENT_KEY_PREFIX: &str = "cgnt_live_";
 
@@ -14,6 +18,90 @@ pub const CLIENT_KEY_PREFIX: &str = "cgnt_live_";
 pub struct AuthenticatedClient {
     pub id: String,
     pub client_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ClientRecord {
+    pub id: String,
+    pub client_name: String,
+    pub key_hash: String,
+    pub created_at: String,
+    pub revoked_at: Option<String>,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryClients {
+    records: Arc<Mutex<HashMap<String, ClientRecord>>>,
+}
+
+impl InMemoryClients {
+    pub async fn create(&self, id: String, client_name: String, secret: &str) -> ClientRecord {
+        let record = ClientRecord {
+            id: id.clone(),
+            client_name,
+            key_hash: encode_hex(&digest_secret(secret)),
+            created_at: current_timestamp(),
+            revoked_at: None,
+            last_used_at: None,
+        };
+        self.records.lock().await.insert(id, record.clone());
+        record
+    }
+
+    pub async fn find_active_by_hash(&self, key_hash: &str) -> Option<ClientRecord> {
+        self.records
+            .lock()
+            .await
+            .values()
+            .find(|record| {
+                record.revoked_at.is_none()
+                    && record
+                        .key_hash
+                        .as_bytes()
+                        .ct_eq(key_hash.as_bytes())
+                        .unwrap_u8()
+                        == 1
+            })
+            .cloned()
+    }
+
+    pub async fn mark_used(&self, id: &str) {
+        if let Some(record) = self.records.lock().await.get_mut(id) {
+            record.last_used_at = Some(current_timestamp());
+        }
+    }
+
+    pub async fn list(&self) -> Vec<ClientRecord> {
+        let mut records = self
+            .records
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        records
+    }
+
+    pub async fn revoke(&self, id: &str) -> bool {
+        let mut records = self.records.lock().await;
+        let Some(record) = records.get_mut(id) else {
+            return false;
+        };
+        if record.revoked_at.is_some() {
+            return false;
+        }
+        record.revoked_at = Some(current_timestamp());
+        true
+    }
+}
+
+fn current_timestamp() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 pub fn digest_secret(secret: &str) -> [u8; 32] {
@@ -43,30 +131,45 @@ pub async fn authenticate(
 
     let digest = digest_secret(presented);
     let digest_text = encode_hex(&digest);
-    let record = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT id, client_name, key_hash FROM clients WHERE key_hash = ? AND revoked_at IS NULL",
-    )
-    .bind(&digest_text)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(ApiError::Database)?;
-
-    let Some((id, client_name, stored_digest)) = record else {
-        return Err(ApiError::Unauthorized);
+    let (id, client_name) = match &state.auth_store {
+        crate::state::AuthStore::Sqlite => {
+            let Some(db) = state.db.as_ref() else {
+                return Err(ApiError::Config(
+                    "SQLite auth store has no database".to_string(),
+                ));
+            };
+            let record = sqlx::query_as::<_, (String, String, String)>(
+                "SELECT id, client_name, key_hash FROM clients WHERE key_hash = ? AND revoked_at IS NULL",
+            )
+            .bind(&digest_text)
+            .fetch_optional(db)
+            .await
+            .map_err(ApiError::Database)?;
+            let Some((id, client_name, stored_digest)) = record else {
+                return Err(ApiError::Unauthorized);
+            };
+            if stored_digest
+                .as_bytes()
+                .ct_eq(digest_text.as_bytes())
+                .unwrap_u8()
+                != 1
+            {
+                return Err(ApiError::Unauthorized);
+            }
+            let _ = sqlx::query("UPDATE clients SET last_used_at = datetime('now') WHERE id = ?")
+                .bind(&id)
+                .execute(db)
+                .await;
+            (id, client_name)
+        }
+        crate::state::AuthStore::InMemory(clients) => {
+            let Some(record) = clients.find_active_by_hash(&digest_text).await else {
+                return Err(ApiError::Unauthorized);
+            };
+            clients.mark_used(&record.id).await;
+            (record.id, record.client_name)
+        }
     };
-    if stored_digest
-        .as_bytes()
-        .ct_eq(digest_text.as_bytes())
-        .unwrap_u8()
-        != 1
-    {
-        return Err(ApiError::Unauthorized);
-    }
-
-    let _ = sqlx::query("UPDATE clients SET last_used_at = datetime('now') WHERE id = ?")
-        .bind(&id)
-        .execute(&state.db)
-        .await;
     request
         .extensions_mut()
         .insert(AuthenticatedClient { id, client_name });

@@ -69,11 +69,13 @@ Example:
 - `theme` is the UI theme name
 - `notebook_path` points to your notes root directory
 - `scale` is the global UI scale and must be positive
-- `storage_backend` selects `local` filesystem storage or the Cognate API (`api`)
+- `storage_backend` selects embedded local API mode (`local`) or a remote Cognate API (`api`)
 - `api_url` is the API base URL, for example `http://127.0.0.1:8787`
-- `api_key` is the bearer key issued by `cognate-api`; keep this config file private and do not commit it
+- `api_key` is the bearer key issued by a remote `cognate-api`; keep this config file private and do not commit it. It is ignored in embedded local mode.
 
-When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, search, and embedded attachments use `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Attachment uploads and downloads are authenticated and limited to supported image signatures.
+When `storage_backend` is `local`, Cognate silently starts an embedded `cognate-api` on an ephemeral `127.0.0.1` HTTP port. The UI keeps a newly generated client secret only in memory; no API SQLite database or secret file is created. The notebook filesystem remains the durable local state.
+
+When `storage_backend` is `api`, note metadata, note content, create/delete/move operations, search, and embedded attachments use the configured remote `cognate-api`. The API is expected to run on local HTTP; HTTPS termination belongs in an external reverse proxy. Attachment uploads and downloads are authenticated and limited to supported image signatures.
 
 Search accepts plain text plus optional filters such as `label:work`, `path:projects/`, `updated:2026-01-01..2026-12-31`, quoted phrases, and negation (`-label:archive`). Existing clients can use `GET /v1/search?q=...` for a legacy result array; paginated clients should use `GET /v1/search/page?q=...&limit=25&cursor=...`. Limits are bounded to 100 results per page. Results include a match type, snippet, score, and character-based highlight ranges.
 
@@ -94,6 +96,6 @@ When a conflict is detected, the editor shows the local draft and server version
 ## Project Layout
 
 - `src/components` contains UI/editor components
-- `src/notebook` implements note metadata, storage, operations, and search
+- `src/notebook` implements the API client and runtime storage integration
 - `src/configuration` handles config parsing and theme mapping
 - `src/tests` contains integration-style unit tests across modules

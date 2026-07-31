@@ -741,7 +741,9 @@ name = "cognate"
 version = "0.7.0"
 dependencies = [
  "arboard",
+ "axum",
  "base64",
+ "cognate-api",
  "cognate-engine",
  "iced",
  "native-dialog",

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 iced = { version = "0.14", features = ["markdown", "image", "canvas", "tokio"] }
+axum = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pulldown-cmark = "0.13.1"
@@ -15,9 +16,10 @@ arboard = "3.6.1"
 base64 = "0.22.1"
 png = "0.17.16"
 thiserror = "2.0"
-tokio = { version = "1", features = ["fs", "sync", "rt"] }
+tokio = { version = "1", features = ["fs", "sync", "rt", "macros", "net", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 cognate-engine = { path = "cognate-engine" }
+cognate-api = { path = "cognate-api" }
 
 [workspace]
 members = ["cognate-engine", "cognate-api"]

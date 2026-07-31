@@ -7,7 +7,7 @@ use cognate_engine::search::SearchIndexManager;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
-use crate::auth::digest_secret;
+use crate::auth::{ClientRecord, InMemoryClients, digest_secret};
 
 const MAX_SEARCH_MANAGERS: usize = 24;
 const SEARCH_MANAGER_IDLE_SECS: u64 = 15 * 60;
@@ -19,19 +19,58 @@ struct SearchManagerEntry {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: Option<SqlitePool>,
     pub notebook_path: PathBuf,
     pub admin_digest: [u8; 32],
+    pub auth_store: AuthStore,
     search_managers: Arc<Mutex<HashMap<PathBuf, SearchManagerEntry>>>,
+}
+
+#[derive(Clone)]
+pub enum AuthStore {
+    Sqlite,
+    InMemory(InMemoryClients),
 }
 
 impl AppState {
     pub fn new(db: SqlitePool, notebook_path: PathBuf, admin_token: String) -> Self {
+        Self::with_store(Some(db), notebook_path, admin_token, AuthStore::Sqlite)
+    }
+
+    pub fn new_in_memory(notebook_path: PathBuf) -> Self {
+        let admin_token = format!("local-admin-{}", std::process::id());
+        Self::with_store(
+            None,
+            notebook_path,
+            admin_token,
+            AuthStore::InMemory(InMemoryClients::default()),
+        )
+    }
+
+    fn with_store(
+        db: Option<SqlitePool>,
+        notebook_path: PathBuf,
+        admin_token: String,
+        auth_store: AuthStore,
+    ) -> Self {
         Self {
             db,
             notebook_path,
             admin_digest: digest_secret(&admin_token),
+            auth_store,
             search_managers: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn create_in_memory_client(
+        &self,
+        id: String,
+        client_name: String,
+        secret: &str,
+    ) -> Option<ClientRecord> {
+        match &self.auth_store {
+            AuthStore::InMemory(clients) => Some(clients.create(id, client_name, secret).await),
+            AuthStore::Sqlite => None,
         }
     }
 

@@ -4,7 +4,6 @@
 //! UI + IO orchestrator.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::notebook::{self, NoteMetadata, NotebookError};
 
@@ -27,15 +26,6 @@ pub async fn load_note_payload(
                 eprintln!("Failed to read note file for editor: {}", _err);
                 String::new()
             });
-
-    // Legacy cleanup: embedded image state is now inferred from markdown.
-    if let Ok(rel_path) =
-        cognate_engine::storage::fs_utils::validate_relative_path("note path", &selected_note_path)
-        && !notebook::is_api_backend()
-    {
-        let note_dir_path = Path::new(&notebook_path).join(rel_path);
-        let _ = tokio::fs::remove_file(note_dir_path.join("embedded_images.json")).await;
-    }
 
     LoadedNotePayload {
         note_path: selected_note_path,

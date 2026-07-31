@@ -5,6 +5,7 @@ use cognate_engine::storage::NoteMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::configuration::{Configuration, StorageBackend};
+use crate::notebook::embedded_api::EmbeddedApiRuntime;
 use crate::notebook::offline_queue::{self, QueueStatus, QueuedNoteWrite};
 use crate::notebook::write_coordinator::WriteCoordinator;
 use crate::notebook::{MetadataLoadResult, NoteSearchPage, NoteSearchResult, NotebookError};
@@ -24,6 +25,7 @@ struct ApiClient {
     metadata_revision: Arc<Mutex<Option<String>>>,
     queue_path: std::path::PathBuf,
     write_coordinator: WriteCoordinator,
+    _embedded_runtime: Option<Arc<EmbeddedApiRuntime>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,9 +96,24 @@ pub(crate) fn set_note_revision(rel_path: &str, revision: &str) {
     }
 }
 
-pub fn configure_backend(configuration: &Configuration) {
+pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookError> {
     let selected = match configuration.storage_backend {
-        StorageBackend::Local => SelectedBackend::Local,
+        StorageBackend::Local => {
+            let runtime =
+                EmbeddedApiRuntime::start(std::path::PathBuf::from(&configuration.notebook_path))
+                    .map_err(|error| api_error("start embedded API", error))?;
+            let runtime = Arc::new(runtime);
+            SelectedBackend::Api(ApiClient {
+                client: reqwest::Client::new(),
+                base_url: runtime.base_url.clone(),
+                api_key: runtime.api_key.clone(),
+                revisions: Arc::new(Mutex::new(HashMap::new())),
+                metadata_revision: Arc::new(Mutex::new(None)),
+                queue_path: offline_queue::queue_path(&configuration.config_path),
+                write_coordinator: WriteCoordinator::default(),
+                _embedded_runtime: Some(runtime),
+            })
+        }
         StorageBackend::Api => SelectedBackend::Api(ApiClient {
             client: reqwest::Client::new(),
             base_url: configuration.api_url.trim_end_matches('/').to_string(),
@@ -105,12 +122,20 @@ pub fn configure_backend(configuration: &Configuration) {
             metadata_revision: Arc::new(Mutex::new(None)),
             queue_path: offline_queue::queue_path(&configuration.config_path),
             write_coordinator: WriteCoordinator::default(),
+            _embedded_runtime: None,
         }),
     };
 
     *backend_cell()
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = selected;
+    Ok(())
+}
+
+pub fn shutdown_backend() {
+    *backend_cell()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = SelectedBackend::Local;
 }
 
 fn selected() -> SelectedBackend {
@@ -314,11 +339,9 @@ pub(crate) async fn delete_attachment(
     .await
 }
 
-pub async fn load_metadata(notebook_path: String) -> Result<MetadataLoadResult, NotebookError> {
+pub async fn load_metadata(_notebook_path: String) -> Result<MetadataLoadResult, NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::storage::load_notes_metadata_local(notebook_path).await
-        }
+        SelectedBackend::Local => Err(api_error("load metadata", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes")?;
             let response = authorized(client.client.get(url), &client)
@@ -350,13 +373,11 @@ pub async fn load_metadata(notebook_path: String) -> Result<MetadataLoadResult, 
 }
 
 pub async fn save_metadata(
-    notebook_path: &str,
+    _notebook_path: &str,
     notes: &[NoteMetadata],
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::storage::save_metadata_local(notebook_path, notes).await
-        }
+        SelectedBackend::Local => Err(api_error("save metadata", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/metadata")?;
             let revision = client.metadata_revision.lock().unwrap().clone();
@@ -379,13 +400,11 @@ pub async fn save_metadata(
 }
 
 pub async fn load_note_content(
-    notebook_path: String,
+    _notebook_path: String,
     rel_path: String,
 ) -> Result<String, NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::storage::load_note_content_local(&notebook_path, &rel_path).await
-        }
+        SelectedBackend::Local => Err(api_error("load note", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = note_endpoint(&client, &rel_path)?;
             let response = authorized(client.client.get(url), &client)
@@ -418,15 +437,12 @@ pub async fn load_note_content(
 }
 
 pub async fn save_note_content(
-    notebook_path: String,
+    _notebook_path: String,
     rel_path: String,
     content: String,
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::storage::save_note_content_local(notebook_path, rel_path, content)
-                .await
-        }
+        SelectedBackend::Local => Err(api_error("save note", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let write_ticket = client.write_coordinator.begin(&rel_path);
             let _write_guard = write_ticket.acquire().await;
@@ -669,14 +685,12 @@ async fn replay_queued_writes(client: &ApiClient) -> Result<(), NotebookError> {
 }
 
 pub async fn create_note(
-    notebook_path: &str,
+    _notebook_path: &str,
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<NoteMetadata, NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::operations::create_new_note_local(notebook_path, rel_path, notes).await
-        }
+        SelectedBackend::Local => Err(api_error("create note", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes")?;
             let note: NoteMetadata = send(
@@ -697,14 +711,12 @@ pub async fn create_note(
 }
 
 pub async fn delete_note(
-    notebook_path: &str,
+    _notebook_path: &str,
     rel_path: &str,
     notes: &mut Vec<NoteMetadata>,
 ) -> Result<(), NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::operations::delete_note_local(notebook_path, rel_path, notes).await
-        }
+        SelectedBackend::Local => Err(api_error("delete note", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = note_endpoint(&client, rel_path)?;
             send_empty(
@@ -719,21 +731,13 @@ pub async fn delete_note(
 }
 
 pub async fn move_note(
-    notebook_path: &str,
+    _notebook_path: &str,
     current_rel_path: &str,
     new_rel_path: &str,
-    notes: &mut Vec<NoteMetadata>,
+    notes: &mut [NoteMetadata],
 ) -> Result<String, NotebookError> {
     match selected() {
-        SelectedBackend::Local => {
-            crate::notebook::operations::move_note_local(
-                notebook_path,
-                current_rel_path,
-                new_rel_path,
-                notes,
-            )
-            .await
-        }
+        SelectedBackend::Local => Err(api_error("move note", "API backend is not configured")),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes/move")?;
             send_empty(
@@ -770,21 +774,14 @@ pub async fn search(
 }
 
 pub async fn search_page(
-    notebook_path: String,
-    notes: Vec<crate::notebook::SearchNote>,
+    _notebook_path: String,
+    _notes: Vec<crate::notebook::SearchNote>,
     query: String,
     limit: usize,
     cursor: Option<String>,
 ) -> Result<NoteSearchPage, NotebookError> {
     let SelectedBackend::Api(client) = selected() else {
-        return crate::notebook::search::search_notes_page_with_snapshot_local(
-            notebook_path,
-            notes,
-            query,
-            limit,
-            cursor,
-        )
-        .await;
+        return Err(api_error("search", "API backend is not configured"));
     };
     let Ok(url) = endpoint(&client, "/v1/search/page") else {
         return Err(api_error("search", "invalid API URL"));

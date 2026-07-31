@@ -1,11 +1,9 @@
 use iced::task::Task;
 use iced::widget::text_editor::{Action, Cursor};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 
 use crate::components::editor::Message;
 
-use super::embedded_images::resolve_embedded_image_reference;
 use super::preview::{extract_embedded_image_ids, preview_markdown_after_action};
 
 #[derive(Debug, Default)]
@@ -92,15 +90,11 @@ impl EmbeddedImageWorkflow {
             return;
         }
 
-        let note_dir = Path::new(notebook_path).join(selected_note_path);
-
         for image_ref in extract_embedded_image_ids(markdown_text) {
-            if crate::notebook::is_api_backend() {
-                if image_ref.starts_with("images/") && !image_ref.contains("..") {
-                    let rel_path = format!("{}/{}", selected_note_path, image_ref);
-                    self.images.insert(image_ref, rel_path);
-                }
-            } else if resolve_embedded_image_reference(&note_dir, &image_ref).is_some() {
+            if crate::notebook::is_api_backend()
+                && image_ref.starts_with("images/")
+                && !image_ref.contains("..")
+            {
                 let rel_path = format!("{}/{}", selected_note_path, image_ref);
                 self.images.insert(image_ref, rel_path);
             }
@@ -128,33 +122,7 @@ impl EmbeddedImageWorkflow {
             return Task::batch(tasks);
         }
 
-        self.image_handles
-            .retain(|image_id, _| self.images.contains_key(image_id));
-
-        let mut tasks = Vec::new();
-        for (image_id, image_rel_path) in &self.images {
-            if self.image_handles.contains_key(image_id) {
-                continue;
-            }
-
-            let path = PathBuf::from(notebook_path);
-            let rel_path = image_rel_path.clone();
-            let img_id = image_id.clone();
-
-            tasks.push(Task::perform(
-                async move {
-                    let result = cognate_engine::storage::AttachmentManager::read_image_bytes(
-                        &path, &rel_path,
-                    )
-                    .await
-                    .map_err(|err| err.to_string());
-                    (img_id, result)
-                },
-                |(img_id, result)| Message::AttachmentLoaded(img_id, result),
-            ));
-        }
-
-        Task::batch(tasks)
+        Task::none()
     }
 
     pub fn insert_image_handle(&mut self, image_id: String, bytes: Vec<u8>) {

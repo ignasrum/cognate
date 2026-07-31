@@ -136,16 +136,21 @@ To prevent directory traversal attacks and unauthorized filesystem modifications
 
 ---
 
-## 5. In-Memory Search Index and Cache
+## 5. Search Index Ownership
 
 For high-performance text searches across note contents, Cognate maintains an in-memory cache layer in `cognate-engine/src/search/manager.rs`:
 - Note contents are cached locally alongside their filesystem modified time (`mtime`).
 - The search index automatically invalidates or refreshes entries if the note file is modified externally (validated on an interval).
 - Staging and renaming operations sync automatically with this index to ensure search results are up to date.
-- Local and API searches use the same engine query parser and result contract. Supported filters include `label:`, `path:`, `updated:FROM..TO`, quoted phrases, and negated terms/filters.
+- Both embedded-local and remote UI searches use the same API endpoint, engine query parser, and result contract. Supported filters include `label:`, `path:`, `updated:FROM..TO`, quoted phrases, and negated terms/filters.
 - API search managers are reused between requests and return bounded pages from `/v1/search/page` with a cursor, match type, snippet, score, and character-based highlight ranges. `/v1/search` remains an array-response compatibility endpoint.
 - Search manager entries are bounded and evicted by idle time/LRU order. Successful note and metadata mutations invalidate or update the active search index; filesystem refresh remains a safety net for external writers.
-- When an active manager is available, note writes, metadata changes, moves, and deletes use targeted index mutations. A failed targeted update marks the manager for safe rebuild on a later search.
+- Note writes, metadata changes, moves, and deletes use targeted index mutations. A failed targeted update falls back to a safe rebuild on a later search.
+
+The desktop UI does not own a filesystem search index and does not directly read or
+write note files or attachments. In `storage_backend: "local"`, the UI starts an
+embedded loopback API; in `storage_backend: "api"`, it connects to the configured
+self-hosted API. The API process is the only storage boundary used by the UI.
 
 ---
 

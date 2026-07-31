@@ -4,15 +4,12 @@ use iced::task::Task;
 use iced::widget::text_editor::Action;
 use iced::{Element, Subscription, window};
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[path = "core/clipboard.rs"]
 mod clipboard;
 #[path = "core/embedded_image_service.rs"]
 mod embedded_image_service;
-#[path = "core/embedded_images.rs"]
-mod embedded_images;
 #[cfg(test)]
 #[path = "core/image_tag_tests.rs"]
 mod image_tag_tests;
@@ -34,7 +31,6 @@ mod text_handlers;
 mod update_handlers;
 
 pub(crate) const HTML_BR_SENTINEL: &str = "\u{E000}";
-const EMBEDDED_IMAGE_DIR: &str = "images";
 #[cfg(test)]
 const METADATA_SAVE_DEBOUNCE_WINDOW: Duration = Duration::from_millis(20);
 #[cfg(not(test))]
@@ -96,7 +92,9 @@ pub struct Editor {
 impl Editor {
     // Keep create method for internal use
     pub fn create(flags: Configuration) -> (Self, Task<Message>) {
-        crate::notebook::configure_backend(&flags);
+        if let Err(error) = crate::notebook::configure_backend(&flags) {
+            eprintln!("[cognate] storage backend startup failed: {error}");
+        }
         let notebook_path_clone = flags.notebook_path.clone();
         let (metadata_debounce_scheduler, metadata_debounce_events) =
             MetadataDebounceScheduler::new(METADATA_SAVE_DEBOUNCE_WINDOW);
@@ -224,26 +222,11 @@ impl Editor {
                     .embedded_image_workflow
                     .remove_image_path_for_id(&image_id)
                 {
-                    if crate::notebook::is_api_backend() {
-                        let notebook_path = self.state.notebook_path().to_string();
-                        let rel = image_rel_path.clone();
-                        deletion_tasks.push(Task::perform(
-                            async move {
-                                let _ =
-                                    crate::notebook::delete_attachment(notebook_path, rel).await;
-                            },
-                            |_| Message::Dummy,
-                        ));
-                        continue;
-                    }
-                    let path = PathBuf::from(self.state.notebook_path());
+                    let notebook_path = self.state.notebook_path().to_string();
                     let rel = image_rel_path.clone();
                     deletion_tasks.push(Task::perform(
                         async move {
-                            let _ = cognate_engine::storage::AttachmentManager::delete_attachment(
-                                &path, &rel,
-                            )
-                            .await;
+                            let _ = crate::notebook::delete_attachment(notebook_path, rel).await;
                         },
                         |_| Message::Dummy,
                     ));

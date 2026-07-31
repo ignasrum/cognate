@@ -161,13 +161,3 @@ impl From<cognate_engine::EngineError> for NotebookError {
         }
     }
 }
-
-pub trait EngineResultExt<T> {
-    fn into_notebook_err(self) -> Result<T, NotebookError>;
-}
-
-impl<T> EngineResultExt<T> for Result<T, cognate_engine::EngineError> {
-    fn into_notebook_err(self) -> Result<T, NotebookError> {
-        self.map_err(NotebookError::from)
-    }
-}

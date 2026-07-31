@@ -5,6 +5,8 @@
 
 #[path = "notebook/backend.rs"]
 mod backend;
+#[path = "notebook/embedded_api.rs"]
+mod embedded_api;
 #[path = "notebook/error.rs"]
 mod error;
 #[path = "notebook/offline_queue.rs"]
@@ -45,11 +47,12 @@ pub(crate) use backend::is_api as is_api_backend;
 pub(crate) use backend::load_note_content;
 pub(crate) use backend::replay_offline_queue;
 pub(crate) use backend::set_note_revision;
+pub(crate) use backend::shutdown_backend;
 pub(crate) use backend::{delete_attachment, download_attachment, upload_attachment};
 #[allow(unused_imports)]
-pub use error::{EngineResultExt, NotebookError, NotebookErrorKind};
+pub use error::{NotebookError, NotebookErrorKind};
 pub use operations::{create_new_note, delete_note, move_note};
-pub use search::{SearchNote, clear_search_index_for_notebook};
+pub use search::SearchNote;
 pub use storage::{
     MetadataLoadResult, current_timestamp_rfc3339, load_notes_metadata, save_metadata,
     save_note_content,
@@ -62,10 +65,5 @@ pub(crate) async fn search_notes_page(
     limit: usize,
     cursor: Option<String>,
 ) -> Result<NoteSearchPage, NotebookError> {
-    if is_api_backend() {
-        backend::search_page(notebook_path, notes, query, limit, cursor).await
-    } else {
-        search::search_notes_page_with_snapshot_local(notebook_path, notes, query, limit, cursor)
-            .await
-    }
+    backend::search_page(notebook_path, notes, query, limit, cursor).await
 }
