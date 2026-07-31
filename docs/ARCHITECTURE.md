@@ -61,11 +61,11 @@ typed lock-unavailable error.
 
 ### `cognate-api`
 
-`cognate-api` is the local HTTP boundary for external clients. It binds to a configurable
-loopback address and port, authenticates Bearer client keys, stores only BLAKE3 digests
+`cognate-api` is the HTTP boundary for external clients. It binds to a configurable address
+and port (loopback by default), authenticates Bearer client keys, stores only BLAKE3 digests
 and client metadata in SQLite, and delegates notebook mutations to `cognate-engine`.
 Public HTTPS termination is provided by an external reverse proxy; the API process does
-not expose a public listener or manage certificates.
+not manage certificates.
 
 ## Data Model
 

@@ -13,11 +13,6 @@ async fn main() -> Result<(), ApiError> {
     let address: SocketAddr = format!("{}:{}", config.bind_address, config.port)
         .parse()
         .map_err(|error| ApiError::Config(format!("invalid bind address or port: {error}")))?;
-    if !address.ip().is_loopback() {
-        return Err(ApiError::Config(
-            "cognate-api must bind to a loopback address".to_string(),
-        ));
-    }
 
     let listener = TcpListener::bind(address).await.map_err(ApiError::Io)?;
     eprintln!("cognate-api listening on http://{address}");

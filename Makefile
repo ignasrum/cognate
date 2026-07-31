@@ -18,6 +18,9 @@ build:
 run:
 	cargo run
 
+api:
+	cargo run -p cognate-api
+
 clean:
 	cargo clean
 
@@ -38,3 +41,4 @@ all: build install
 
 help:
 	@echo "usage: make $(prog) [debug=1]"
+	@echo "       make api"

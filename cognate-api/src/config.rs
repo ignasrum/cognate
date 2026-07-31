@@ -15,20 +15,11 @@ impl Config {
     pub fn from_env() -> Result<Self, ApiError> {
         let bind_address =
             std::env::var("COGNATE_API_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
-        if bind_address
-            .parse::<std::net::IpAddr>()
-            .map(|ip| !ip.is_loopback())
-            .unwrap_or(true)
-        {
-            return Err(ApiError::Config(
-                "COGNATE_API_BIND_ADDRESS must be a loopback IP address".to_string(),
-            ));
-        }
 
-        let port = std::env::var("COGNATE_API_PORT")
+        let port = std::env::var("COGNATE_API_BIND_PORT")
             .unwrap_or_else(|_| "8787".to_string())
             .parse::<u16>()
-            .map_err(|error| ApiError::Config(format!("invalid COGNATE_API_PORT: {error}")))?;
+            .map_err(|error| ApiError::Config(format!("invalid COGNATE_API_BIND_PORT: {error}")))?;
         if port == 0 {
             return Err(ApiError::Config(
                 "COGNATE_API_PORT must be non-zero".to_string(),
