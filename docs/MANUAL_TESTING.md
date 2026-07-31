@@ -32,6 +32,8 @@ Use this checklist before releases or significant UI changes.
 - API search returns the same matches and match types as local search
 - API search pagination returns stable, non-duplicated pages
 - Legacy `/v1/search` and paginated `/v1/search/page` responses both work
+- Search matches are visually highlighted, including Unicode text
+- Search failures are distinct from a valid empty result and offer retry when appropriate
 - Clearing search restores normal explorer state
 
 ## Embedded Images

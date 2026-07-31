@@ -1,5 +1,6 @@
-use iced::widget::{Column, Container, Text, button};
-use iced::{Element, Length};
+use iced::widget::{Column, Container, Text, button, rich_text};
+use iced::widget::{markdown, text::Span};
+use iced::{Border, Color, Element, Length};
 
 use crate::components::editor::Message;
 use crate::notebook::NoteSearchResult;
@@ -35,7 +36,7 @@ pub(super) fn render_search_results(
                     .on_press(Message::NoteSelected(result.rel_path.clone()))
                     .padding(3),
             );
-            results_column = results_column.push(Text::new(highlighted_snippet(result)).size(12));
+            results_column = results_column.push(highlighted_snippet(result));
             results_column =
                 results_column.push(Text::new(format!("Match: {:?}", result.match_type)).size(11));
         }
@@ -57,24 +58,24 @@ pub(super) fn render_search_results(
         .into()
 }
 
-fn highlighted_snippet(result: &NoteSearchResult) -> String {
-    if result.highlights.is_empty() {
-        return result.snippet.clone();
-    }
+fn highlighted_snippet(result: &NoteSearchResult) -> Element<'static, Message> {
     let chars = result.snippet.chars().collect::<Vec<_>>();
-    let mut output = String::new();
-    let mut cursor = 0;
-    for range in &result.highlights {
-        let start = range.start.min(chars.len());
-        let end = range.end.min(chars.len()).max(start);
-        if start > cursor {
-            output.extend(&chars[cursor..start]);
-        }
-        output.push('⟦');
-        output.extend(&chars[start..end]);
-        output.push('⟧');
-        cursor = end;
-    }
-    output.extend(&chars[cursor..]);
-    output
+    let spans: Vec<Span<'static, markdown::Uri>> = chars
+        .into_iter()
+        .enumerate()
+        .map(|(index, character)| {
+            let mut span = Span::<markdown::Uri>::new(character.to_string());
+            if result
+                .highlights
+                .iter()
+                .any(|range| index >= range.start && index < range.end)
+            {
+                span = span
+                    .background(Color::from_rgba(0.18, 0.70, 0.95, 0.28))
+                    .border(Border::default().rounded(2.0));
+            }
+            span
+        })
+        .collect();
+    rich_text(spans).size(12).into()
 }

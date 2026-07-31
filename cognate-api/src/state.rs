@@ -9,6 +9,9 @@ use tokio::sync::Mutex;
 
 use crate::auth::digest_secret;
 
+const MAX_SEARCH_MANAGERS: usize = 24;
+const SEARCH_MANAGER_IDLE_SECS: u64 = 15 * 60;
+
 struct SearchManagerEntry {
     manager: Arc<Mutex<SearchIndexManager>>,
     last_accessed: Instant,
@@ -36,8 +39,17 @@ impl AppState {
         let mut managers = self.search_managers.lock().await;
         let now = Instant::now();
         managers.retain(|_, entry| {
-            now.duration_since(entry.last_accessed) < Duration::from_secs(15 * 60)
+            now.duration_since(entry.last_accessed) < Duration::from_secs(SEARCH_MANAGER_IDLE_SECS)
         });
+        if !managers.contains_key(&self.notebook_path)
+            && managers.len() >= MAX_SEARCH_MANAGERS
+            && let Some(oldest_path) = managers
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_accessed)
+                .map(|(path, _)| path.clone())
+        {
+            managers.remove(&oldest_path);
+        }
         let entry = managers
             .entry(self.notebook_path.clone())
             .or_insert_with(|| SearchManagerEntry {

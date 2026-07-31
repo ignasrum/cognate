@@ -771,7 +771,8 @@ pub async fn search_page(
         authorized(client.client.get(url).query(&query_parameters), &client),
         "search",
     )
-    .await?;
+    .await
+    .map_err(|error| NotebookError::search("API search", error.ui_message()))?;
     Ok(NoteSearchPage {
         results: response
             .results

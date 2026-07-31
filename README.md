@@ -77,6 +77,8 @@ When `storage_backend` is `api`, note metadata, note content, create/delete/move
 
 Search accepts plain text plus optional filters such as `label:work`, `path:projects/`, `updated:2026-01-01..2026-12-31`, quoted phrases, and negation (`-label:archive`). Existing clients can use `GET /v1/search?q=...` for a legacy result array; paginated clients should use `GET /v1/search/page?q=...&limit=25&cursor=...`. Limits are bounded to 100 results per page. Results include a match type, snippet, score, and character-based highlight ranges.
 
+Search matches are rendered with highlighted text in the desktop UI. Search failures are distinguished from valid empty results, and transient API failures can be retried. Search indexes are refreshed after successful note and metadata mutations.
+
 API note writes use content-hash revisions exposed as `ETag` values. Clients must send the revision they loaded in `If-Match`; stale writes receive `409 Conflict` and do not overwrite the server version. If the API is temporarily unreachable, API-mode note content is saved in the permissions-restricted `.cognate-api-queue.json` file beside the configuration and retried on a later save.
 
 When a conflict is detected, the editor shows the local draft and server version together. You can keep the server version, retry the local draft against the latest server revision, or save the local draft as a separate `.conflict` note. Dismissing the dialog leaves both versions available for another resolution attempt.

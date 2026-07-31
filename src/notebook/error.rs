@@ -6,6 +6,7 @@ pub enum NotebookErrorKind {
     Storage,
     Recovery,
     Conflict,
+    Search,
 }
 
 impl NotebookErrorKind {
@@ -15,6 +16,7 @@ impl NotebookErrorKind {
             Self::Storage => "Storage",
             Self::Recovery => "Recovery",
             Self::Conflict => "Conflict",
+            Self::Search => "Search",
         }
     }
 }
@@ -33,6 +35,11 @@ pub enum NotebookError {
     },
     #[error("{context}: {detail}")]
     Recovery {
+        context: &'static str,
+        detail: String,
+    },
+    #[error("{context}: {detail}")]
+    Search {
         context: &'static str,
         detail: String,
     },
@@ -64,6 +71,13 @@ impl NotebookError {
 
     pub fn recovery(context: &'static str, detail: impl Into<String>) -> Self {
         Self::Recovery {
+            context,
+            detail: detail.into(),
+        }
+    }
+
+    pub fn search(context: &'static str, detail: impl Into<String>) -> Self {
+        Self::Search {
             context,
             detail: detail.into(),
         }
@@ -106,6 +120,7 @@ impl NotebookError {
             Self::Storage { .. } => NotebookErrorKind::Storage,
             Self::Recovery { .. } => NotebookErrorKind::Recovery,
             Self::Conflict { .. } => NotebookErrorKind::Conflict,
+            Self::Search { .. } => NotebookErrorKind::Search,
         }
     }
 

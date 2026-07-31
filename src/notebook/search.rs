@@ -205,7 +205,7 @@ pub(crate) async fn search_notes_page_with_snapshot_local(
             SEARCH_INDEX_EXTERNAL_REFRESH_INTERVAL,
         )
         .await
-        .map_err(NotebookError::from)?;
+        .map_err(|error| NotebookError::search("search index", error.to_string()))?;
     Ok(NoteSearchPage {
         results: response
             .results
