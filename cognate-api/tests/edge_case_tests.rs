@@ -183,6 +183,24 @@ async fn paginated_search_rejects_a_malformed_cursor() {
 }
 
 #[tokio::test]
+async fn paginated_search_returns_stable_validation_error_codes() {
+    let app = TestApp::new().await;
+    let client = app.provision("search-errors").await;
+    let response = app
+        .request(bearer_request(
+            "GET",
+            "/v1/search/page?q=%22unfinished",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"], "invalid_query");
+}
+
+#[tokio::test]
 async fn client_name_length_boundary_is_enforced() {
     let app = TestApp::new().await;
     let valid = app

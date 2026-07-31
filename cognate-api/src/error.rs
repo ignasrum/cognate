@@ -37,6 +37,12 @@ pub enum ApiError {
     },
     #[error("missing revision precondition")]
     PreconditionRequired,
+    #[error("search error ({code}): {detail}")]
+    Search {
+        code: &'static str,
+        detail: String,
+        status: StatusCode,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -51,8 +57,29 @@ struct ConflictBody {
     current_content: String,
 }
 
+#[derive(Debug, Serialize)]
+struct SearchErrorBody {
+    error: &'static str,
+    detail: String,
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Self::Search {
+            code,
+            detail,
+            status,
+        } = self
+        {
+            return (
+                status,
+                Json(SearchErrorBody {
+                    error: code,
+                    detail,
+                }),
+            )
+                .into_response();
+        }
         let (status, message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
@@ -82,6 +109,7 @@ impl IntoResponse for ApiError {
                 (StatusCode::CONFLICT, "lock_conflict")
             }
             Self::Engine(EngineError::Conflict { .. }) => (StatusCode::CONFLICT, "conflict"),
+            Self::Search { .. } => unreachable!("search errors are handled above"),
             Self::Config(_)
             | Self::Database(_)
             | Self::Migration(_)

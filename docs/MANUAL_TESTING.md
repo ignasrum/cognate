@@ -34,6 +34,8 @@ Use this checklist before releases or significant UI changes.
 - Legacy `/v1/search` and paginated `/v1/search/page` responses both work
 - Search matches are visually highlighted, including Unicode text
 - Search failures are distinct from a valid empty result and offer retry when appropriate
+- Invalid paginated searches return a machine-readable `invalid_query` or `invalid_cursor` error
+- Editing, moving, deleting, or relabeling a note updates search results immediately
 - Clearing search restores normal explorer state
 
 ## Embedded Images

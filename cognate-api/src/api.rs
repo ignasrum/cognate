@@ -397,7 +397,7 @@ async fn save_metadata(
         });
     }
     manager.save_metadata(&notes).await?;
-    invalidate_search_index(&state).await;
+    update_search_metadata(&state, &notes).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -485,7 +485,7 @@ async fn save_note(
         HeaderValue::from_str(&format!("\"{}\"", save_result.metadata_revision))
             .expect("hash is header-safe"),
     );
-    invalidate_search_index(&state).await;
+    update_search_note(&state, &rel_path, &content).await;
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -497,7 +497,7 @@ async fn create_note(
     let loaded = manager.load_metadata().await?;
     let mut notes = loaded.notes;
     let note = manager.create_note(&payload.rel_path, &mut notes).await?;
-    invalidate_search_index(&state).await;
+    update_search_note(&state, &payload.rel_path, "").await;
     Ok((StatusCode::CREATED, Json(note)))
 }
 
@@ -509,7 +509,7 @@ async fn delete_note(
     let loaded = manager.load_metadata().await?;
     let mut notes = loaded.notes;
     manager.delete_note(&rel_path, &mut notes).await?;
-    invalidate_search_index(&state).await;
+    remove_search_note(&state, &rel_path).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -523,13 +523,70 @@ async fn move_note(
     let new_path = manager
         .move_note(&payload.from_rel_path, &payload.to_rel_path, &mut notes)
         .await?;
-    invalidate_search_index(&state).await;
+    rename_search_note(&state, &payload.from_rel_path, &payload.to_rel_path).await;
     Ok(Json(serde_json::json!({ "rel_path": new_path })))
 }
 
-async fn invalidate_search_index(state: &AppState) {
+async fn update_search_note(state: &AppState, rel_path: &str, content: &str) {
+    let loaded = match NotebookManager::new(&state.notebook_path)
+        .load_metadata()
+        .await
+    {
+        Ok(loaded) => loaded.notes,
+        Err(error) => {
+            eprintln!("[cognate] search_metadata_refresh_failed: {error}");
+            return;
+        }
+    };
+    let Some(note) = loaded.iter().find(|note| note.rel_path == rel_path) else {
+        return;
+    };
     let manager = state.search_manager().await;
-    manager.lock().await.clear_cache();
+    if let Err(error) = manager
+        .lock()
+        .await
+        .upsert_note(rel_path, content, &note.labels, note.last_updated.clone())
+        .await
+    {
+        eprintln!("[cognate] search_incremental_update_failed: {error}");
+        manager.lock().await.clear_cache();
+    }
+}
+
+async fn update_search_metadata(state: &AppState, notes: &[NoteMetadata]) {
+    let manager = state.search_manager().await;
+    let mut search = manager.lock().await;
+    for note in notes {
+        if let Err(error) = search
+            .update_note_metadata(&note.rel_path, &note.labels, note.last_updated.clone())
+            .await
+        {
+            eprintln!("[cognate] search_incremental_metadata_failed: {error}");
+            search.clear_cache();
+            break;
+        }
+    }
+}
+
+async fn remove_search_note(state: &AppState, rel_path: &str) {
+    let manager = state.search_manager().await;
+    if let Err(error) = manager.lock().await.remove_note(rel_path).await {
+        eprintln!("[cognate] search_incremental_remove_failed: {error}");
+        manager.lock().await.clear_cache();
+    }
+}
+
+async fn rename_search_note(state: &AppState, from_rel_path: &str, to_rel_path: &str) {
+    let manager = state.search_manager().await;
+    if let Err(error) = manager
+        .lock()
+        .await
+        .rename_note(from_rel_path, to_rel_path)
+        .await
+    {
+        eprintln!("[cognate] search_incremental_rename_failed: {error}");
+        manager.lock().await.clear_cache();
+    }
 }
 
 fn current_timestamp() -> String {
@@ -554,36 +611,61 @@ async fn search_page(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<cognate_engine::search::SearchResponse>, ApiError> {
     if query.q.chars().count() > 256 {
-        return Err(ApiError::BadRequest("query is too long".to_string()));
+        return Err(ApiError::Search {
+            code: "invalid_query",
+            detail: "query is too long".to_string(),
+            status: StatusCode::BAD_REQUEST,
+        });
     }
     let limit = query.limit.unwrap_or(25);
     if !(1..=100).contains(&limit) {
-        return Err(ApiError::BadRequest(
-            "limit must be between 1 and 100".to_string(),
-        ));
+        return Err(ApiError::Search {
+            code: "invalid_limit",
+            detail: "limit must be between 1 and 100".to_string(),
+            status: StatusCode::BAD_REQUEST,
+        });
     }
     if query
         .cursor
         .as_deref()
         .is_some_and(|cursor| cursor.len() > 80)
     {
-        return Err(ApiError::BadRequest("cursor is too long".to_string()));
+        return Err(ApiError::Search {
+            code: "invalid_cursor",
+            detail: "cursor is too long".to_string(),
+            status: StatusCode::BAD_REQUEST,
+        });
     }
     let manager = NotebookManager::new(&state.notebook_path);
     let loaded = manager.load_metadata().await?;
     let manager = state.search_manager().await;
     let mut search = manager.lock().await;
-    Ok(Json(
-        search
-            .search_request(
-                &cognate_engine::search::SearchRequest {
-                    query: query.q,
-                    limit,
-                    cursor: query.cursor,
+    search
+        .search_request(
+            &cognate_engine::search::SearchRequest {
+                query: query.q,
+                limit,
+                cursor: query.cursor,
+            },
+            &loaded.notes,
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            cognate_engine::EngineError::Validation { context, detail } => ApiError::Search {
+                code: if context == "search cursor" {
+                    "invalid_cursor"
+                } else {
+                    "invalid_query"
                 },
-                &loaded.notes,
-                std::time::Duration::from_secs(5),
-            )
-            .await?,
-    ))
+                detail,
+                status: StatusCode::BAD_REQUEST,
+            },
+            other => ApiError::Search {
+                code: "search_internal",
+                detail: other.to_string(),
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+            },
+        })
 }

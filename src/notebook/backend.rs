@@ -58,6 +58,12 @@ struct ApiSearchResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiSearchError {
+    error: String,
+    detail: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ApiConflict {
     current_revision: String,
     current_content: String,
@@ -155,6 +161,26 @@ async fn send_empty(request: reqwest::RequestBuilder, context: &str) -> Result<(
         ));
     }
     Ok(())
+}
+
+async fn send_search(request: reqwest::RequestBuilder) -> Result<ApiSearchResponse, NotebookError> {
+    let response = request
+        .send()
+        .await
+        .map_err(|error| NotebookError::search("API search", error.to_string()))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response
+            .json::<ApiSearchError>()
+            .await
+            .map(|error| format!("{}: {}", error.error, error.detail))
+            .unwrap_or_else(|_| format!("server returned HTTP {status}"));
+        return Err(NotebookError::search("API search", detail));
+    }
+    response
+        .json()
+        .await
+        .map_err(|error| NotebookError::search("API search", error.to_string()))
 }
 
 fn authorized(request: reqwest::RequestBuilder, client: &ApiClient) -> reqwest::RequestBuilder {
@@ -767,12 +793,11 @@ pub async fn search_page(
     if let Some(cursor) = cursor {
         query_parameters.push(("cursor", cursor));
     }
-    let response = send::<ApiSearchResponse>(
-        authorized(client.client.get(url).query(&query_parameters), &client),
-        "search",
-    )
-    .await
-    .map_err(|error| NotebookError::search("API search", error.ui_message()))?;
+    let response = send_search(authorized(
+        client.client.get(url).query(&query_parameters),
+        &client,
+    ))
+    .await?;
     Ok(NoteSearchPage {
         results: response
             .results

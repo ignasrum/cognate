@@ -108,6 +108,67 @@ async fn test_search_cache_operations() {
 }
 
 #[tokio::test]
+async fn incremental_search_mutations_update_results_without_rebuilding_everything() {
+    let harness = NotebookTestHarness::new("incremental_search_mutations");
+    let manager = harness.manager();
+    let mut search_index = SearchIndexManager::new(harness.path());
+    let labels = vec!["work".to_string()];
+
+    let mut seed_notes = Vec::new();
+    manager
+        .create_note("old/path", &mut seed_notes)
+        .await
+        .unwrap();
+    search_index
+        .upsert_note(
+            "old/path",
+            "incremental indexing content",
+            &labels,
+            Some("2026-01-01T00:00:00Z".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let notes = vec![NoteMetadata {
+        rel_path: "old/path".to_string(),
+        labels: labels.clone(),
+        last_updated: Some("2026-01-01T00:00:00Z".to_string()),
+    }];
+    assert_eq!(
+        search_index
+            .search("incremental", &notes, Duration::from_secs(60))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    search_index
+        .rename_note("old/path", "new/path")
+        .await
+        .unwrap();
+    let renamed_notes = vec![NoteMetadata {
+        rel_path: "new/path".to_string(),
+        labels,
+        last_updated: Some("2026-01-01T00:00:00Z".to_string()),
+    }];
+    let results = search_index
+        .search("incremental", &renamed_notes, Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert_eq!(results[0].rel_path, "new/path");
+
+    search_index.remove_note("new/path").await.unwrap();
+    assert!(
+        search_index
+            .search("incremental", &renamed_notes, Duration::from_secs(60))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn test_search_index_stale_refresh() {
     let temp = TempTestDir::new("search_stale_refresh");
     let manager = NotebookManager::new(temp.path());
