@@ -162,6 +162,29 @@ mod tests {
     }
 
     #[test]
+    fn retryable_note_load_failure_shows_connection_page_state() {
+        let notebook_dir = TestNotebookDir::new("note_connection_error");
+        let notes = seed_note(&notebook_dir, "note", "server content");
+        let mut editor = create_editor_with_notebook(notebook_dir.as_str());
+        load_and_select_note(&mut editor, notes, "note", "server content");
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::LoadedNoteContent(Err(NotebookError::api(
+                "load note",
+                None,
+                None,
+                "connection refused",
+                true,
+            ))),
+        );
+
+        assert!(editor.debug_connection_error().is_some());
+        assert_eq!(editor.debug_note_load_error(), None);
+        assert_eq!(editor.debug_markdown_text(), "server content");
+    }
+
+    #[test]
     fn stale_search_results_are_ignored_when_newer_query_exists() {
         let mut editor = Editor::default();
 

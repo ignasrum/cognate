@@ -162,6 +162,18 @@ impl NotebookError {
     pub fn ui_message(&self) -> String {
         format!("{} error: {}", self.kind().label(), self)
     }
+
+    /// Returns whether the operation can reasonably succeed after the API
+    /// connection is restored.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Api {
+                retryable: true,
+                ..
+            }
+        )
+    }
 }
 
 impl From<cognate_engine::EngineError> for NotebookError {

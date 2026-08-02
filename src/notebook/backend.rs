@@ -27,6 +27,7 @@ enum SelectedBackend {
 }
 
 static SELECTED_BACKEND: OnceLock<RwLock<SelectedBackend>> = OnceLock::new();
+const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn backend_cell() -> &'static RwLock<SelectedBackend> {
     SELECTED_BACKEND.get_or_init(|| RwLock::new(SelectedBackend::Unconfigured(None)))
@@ -47,6 +48,11 @@ pub(crate) fn set_note_revision(rel_path: &str, revision: &str) {
 }
 
 pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookError> {
+    let client = reqwest::Client::builder()
+        .timeout(API_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| NotebookError::initialization("API client", error.to_string()))?;
+
     let selected = match configuration.storage_backend {
         StorageBackend::Local => {
             let runtime = match EmbeddedApiRuntime::start(std::path::PathBuf::from(
@@ -67,7 +73,7 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
             };
             let runtime = Arc::new(runtime);
             SelectedBackend::Api(ApiClient {
-                client: reqwest::Client::new(),
+                client: client.clone(),
                 base_url: runtime.base_url.clone(),
                 api_key: runtime.api_key.clone(),
                 revisions: Arc::new(Mutex::new(HashMap::new())),
@@ -78,7 +84,7 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
             })
         }
         StorageBackend::Api => SelectedBackend::Api(ApiClient {
-            client: reqwest::Client::new(),
+            client,
             base_url: configuration.api_url.trim_end_matches('/').to_string(),
             api_key: configuration.api_key.clone(),
             revisions: Arc::new(Mutex::new(HashMap::new())),

@@ -322,6 +322,16 @@ impl Editor {
     }
 
     #[cfg(test)]
+    pub(crate) fn debug_connection_error(&self) -> Option<String> {
+        self.state.connection_error().map(str::to_string)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_note_load_error(&self) -> Option<String> {
+        self.state.note_load_error().map(str::to_string)
+    }
+
+    #[cfg(test)]
     pub(crate) fn debug_markdown_text(&self) -> String {
         self.markdown_text.clone()
     }

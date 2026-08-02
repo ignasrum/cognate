@@ -139,7 +139,15 @@ impl Editor {
                     Err(error) => {
                         eprintln!("[cognate] failed to load note: {error}");
                         state.state.set_loading_note(false);
-                        state.state.set_note_load_error(error.ui_message());
+                        if error.is_retryable() {
+                            state.state.set_connection_error(format!(
+                                "Cognate could not connect to the configured server:\n\n{}",
+                                error.ui_message()
+                            ));
+                            state.state.clear_note_load_error();
+                        } else {
+                            state.state.set_note_load_error(error.ui_message());
+                        }
                         return Task::none();
                     }
                 };

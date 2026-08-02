@@ -146,6 +146,7 @@ pub fn handle_note_explorer_message(
     let mut editor_command = Task::none();
 
     if let Some(load_feedback) = notes_loaded_feedback {
+        let connection_was_lost = state.connection_error().is_some();
         match load_feedback {
             Ok(load_warning) => {
                 state.clear_connection_error();
@@ -186,6 +187,10 @@ pub fn handle_note_explorer_message(
                 *markdown_text = String::new();
             } else {
                 sync_selected_note_labels(state, note_explorer, Some(selected_path.as_str()));
+                if connection_was_lost {
+                    editor_command =
+                        Task::perform(async move { selected_path }, Message::NoteSelected);
+                }
             }
         } else if !note_explorer.notes.is_empty() {
             let first_note_path = note_explorer.notes[0].rel_path.clone();
