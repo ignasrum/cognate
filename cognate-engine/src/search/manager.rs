@@ -121,6 +121,67 @@ impl SearchIndexManager {
             .await
     }
 
+    pub async fn update_metadata(&mut self, notes: &[NoteMetadata]) -> Result<(), EngineError> {
+        let manager = NotebookManager::new(&self.notebook_path);
+        let mut engine_state = match self.engine_state.take() {
+            Some(state) => state,
+            None => manager.load_engine_state().await?,
+        };
+
+        let note_paths = notes
+            .iter()
+            .map(|note| note.rel_path.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let indexed_paths = engine_state
+            .search_index
+            .documents
+            .keys()
+            .filter(|path| !note_paths.contains(path.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut changed = false;
+
+        for path in indexed_paths {
+            engine_state.remove_document(&path);
+            self.notes_cache.remove(&path);
+            changed = true;
+        }
+
+        for note in notes {
+            let metadata_changed = match engine_state.search_index.documents.get(&note.rel_path) {
+                Some(indexed) => {
+                    indexed.labels != note.labels || indexed.last_updated != note.last_updated
+                }
+                None => true,
+            };
+            if !metadata_changed {
+                continue;
+            }
+
+            let content = if let Some(cached) = self.notes_cache.notes.get(&note.rel_path) {
+                cached.content.to_string()
+            } else {
+                manager.load_note_content(&note.rel_path).await?
+            };
+            if !self.notes_cache.notes.contains_key(&note.rel_path) {
+                self.notes_cache.upsert(&note.rel_path, &content, None);
+            }
+            engine_state.process_search_document(
+                &note.rel_path,
+                &content,
+                &note.labels,
+                note.last_updated.clone(),
+            );
+            changed = true;
+        }
+
+        if changed {
+            manager.save_engine_state(&engine_state).await?;
+        }
+        self.engine_state = Some(engine_state);
+        Ok(())
+    }
+
     pub async fn remove_note(&mut self, rel_path: &str) -> Result<(), EngineError> {
         let manager = NotebookManager::new(&self.notebook_path);
         let mut engine_state = match self.engine_state.take() {

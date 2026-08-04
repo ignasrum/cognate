@@ -118,6 +118,19 @@ impl NotebookEngineState {
         self.metrics_register.update_metrics_for_note(path, content);
     }
 
+    /// Re-index a note after metadata changed without recalculating unrelated
+    /// task and metrics state.
+    pub fn process_search_document(
+        &mut self,
+        path: &str,
+        content: &str,
+        labels: &[String],
+        last_updated: Option<String>,
+    ) {
+        self.search_index
+            .index_document(path, content, labels, last_updated);
+    }
+
     pub fn remove_document(&mut self, path: &str) {
         self.search_index.remove_document(path);
         self.task_register.remove_note(path);

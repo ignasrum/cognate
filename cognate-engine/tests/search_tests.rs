@@ -169,6 +169,93 @@ async fn incremental_search_mutations_update_results_without_rebuilding_everythi
 }
 
 #[tokio::test]
+async fn metadata_refresh_only_reindexes_changed_notes() {
+    let harness = NotebookTestHarness::new("metadata_refresh_changed_only");
+    let manager = harness.manager();
+    let mut search_index = SearchIndexManager::new(harness.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("one", &mut notes).await.unwrap();
+    manager.create_note("two", &mut notes).await.unwrap();
+    manager
+        .save_note_content("one", "shared content")
+        .await
+        .unwrap();
+    manager
+        .save_note_content("two", "other content")
+        .await
+        .unwrap();
+
+    search_index.update_metadata(&notes).await.unwrap();
+    let unchanged = notes.clone();
+    search_index.update_metadata(&unchanged).await.unwrap();
+
+    let mut changed = unchanged;
+    changed[0].labels.push("important".to_string());
+    search_index.update_metadata(&changed).await.unwrap();
+
+    let label_results = search_index
+        .search("important", &changed, Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert_eq!(label_results.len(), 1);
+    assert_eq!(label_results[0].rel_path, "one");
+
+    let content_results = search_index
+        .search("other", &changed, Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert_eq!(content_results.len(), 1);
+    assert_eq!(content_results[0].rel_path, "two");
+}
+
+#[tokio::test]
+async fn metadata_refresh_adds_and_removes_documents() {
+    let harness = NotebookTestHarness::new("metadata_refresh_add_remove");
+    let manager = harness.manager();
+    let mut search_index = SearchIndexManager::new(harness.path());
+    let mut notes = Vec::new();
+
+    manager.create_note("keep", &mut notes).await.unwrap();
+    manager.create_note("remove", &mut notes).await.unwrap();
+    manager
+        .save_note_content("keep", "kept document")
+        .await
+        .unwrap();
+    manager
+        .save_note_content("remove", "removed document")
+        .await
+        .unwrap();
+    search_index.update_metadata(&notes).await.unwrap();
+
+    let mut replacement = notes
+        .into_iter()
+        .filter(|note| note.rel_path == "keep")
+        .collect::<Vec<_>>();
+    manager
+        .create_note("added", &mut replacement)
+        .await
+        .unwrap();
+    manager
+        .save_note_content("added", "new document")
+        .await
+        .unwrap();
+    search_index.update_metadata(&replacement).await.unwrap();
+
+    let removed_results = search_index
+        .search("removed", &replacement, Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert!(removed_results.is_empty());
+    let added_results = search_index
+        .search("new", &replacement, Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert_eq!(added_results.len(), 1);
+    assert_eq!(added_results[0].rel_path, "added");
+}
+
+#[tokio::test]
 async fn test_search_index_stale_refresh() {
     let temp = TempTestDir::new("search_stale_refresh");
     let manager = NotebookManager::new(temp.path());

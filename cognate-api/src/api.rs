@@ -320,15 +320,9 @@ async fn update_search_note(state: &AppState, rel_path: &str, content: &str) {
 async fn update_search_metadata(state: &AppState, notes: &[NoteMetadata]) {
     let manager = state.search_manager().await;
     let mut search = manager.lock().await;
-    for note in notes {
-        if let Err(error) = search
-            .update_note_metadata(&note.rel_path, &note.labels, note.last_updated.clone())
-            .await
-        {
-            eprintln!("[cognate] search_incremental_metadata_failed: {error}");
-            search.clear_cache();
-            break;
-        }
+    if let Err(error) = search.update_metadata(notes).await {
+        eprintln!("[cognate] search_incremental_metadata_failed: {error}");
+        search.clear_cache();
     }
 }
 
