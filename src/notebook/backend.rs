@@ -218,6 +218,40 @@ pub async fn save_metadata(
             let request = authorized(client.client.put(url).json(notes), &client)
                 .header("if-match", format!("\"{revision}\""));
             let result = send_empty(request, "save metadata").await;
+            if matches!(
+                &result,
+                Err(NotebookError::Api {
+                    status: Some(409),
+                    ..
+                })
+            ) {
+                let refreshed = load_metadata(String::new()).await?;
+                let Some(merged_notes) = merge_additive_metadata(&refreshed.notes, notes) else {
+                    return result;
+                };
+                let retry_revision = client
+                    .metadata_revision
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .ok_or_else(|| {
+                        api_error(
+                            "save metadata",
+                            "metadata ETag unavailable after conflict refresh",
+                        )
+                    })?;
+                let retry_url = endpoint(&client, "/v1/metadata")?;
+                let retry_request =
+                    authorized(client.client.put(retry_url).json(&merged_notes), &client)
+                        .header("if-match", format!("\"{retry_revision}\""));
+                let retry_result = send_empty(retry_request, "save metadata").await;
+                if retry_result.is_ok() {
+                    let serialized = serde_json::to_string(&merged_notes).unwrap_or_default();
+                    *client.metadata_revision.lock().unwrap() =
+                        Some(cognate_engine::storage::note_content_revision(&serialized));
+                }
+                return retry_result;
+            }
             if result.is_ok() {
                 let serialized = serde_json::to_string(notes).unwrap_or_default();
                 *client.metadata_revision.lock().unwrap() =
@@ -226,6 +260,41 @@ pub async fn save_metadata(
             result
         }
     }
+}
+
+fn merge_additive_metadata(
+    current: &[NoteMetadata],
+    requested: &[NoteMetadata],
+) -> Option<Vec<NoteMetadata>> {
+    if current.len() != requested.len()
+        || current
+            .iter()
+            .map(|note| note.rel_path.as_str())
+            .any(|path| !requested.iter().any(|note| note.rel_path == path))
+        || requested
+            .iter()
+            .map(|note| note.rel_path.as_str())
+            .any(|path| !current.iter().any(|note| note.rel_path == path))
+    {
+        return None;
+    }
+
+    if current.iter().any(|server_note| {
+        let Some(requested_note) = requested
+            .iter()
+            .find(|note| note.rel_path == server_note.rel_path)
+        else {
+            return true;
+        };
+        server_note
+            .labels
+            .iter()
+            .any(|label| !requested_note.labels.contains(label))
+    }) {
+        return None;
+    }
+
+    Some(requested.to_vec())
 }
 
 pub async fn load_note_content(
@@ -541,5 +610,46 @@ mod tests {
             .block_on(check_connection());
         assert!(result.is_err());
         shutdown_backend().expect("remote API selection has no embedded runtime to stop");
+    }
+
+    #[test]
+    fn additive_metadata_merge_preserves_same_paths_and_server_labels() {
+        let current = vec![NoteMetadata {
+            rel_path: "test/note1".to_string(),
+            labels: vec!["existing".to_string()],
+            last_updated: None,
+        }];
+        let requested = vec![NoteMetadata {
+            rel_path: "test/note1".to_string(),
+            labels: vec!["existing".to_string(), "new".to_string()],
+            last_updated: None,
+        }];
+
+        assert_eq!(
+            merge_additive_metadata(&current, &requested),
+            Some(requested)
+        );
+    }
+
+    #[test]
+    fn additive_metadata_merge_rejects_structural_or_ambiguous_changes() {
+        let current = vec![NoteMetadata {
+            rel_path: "test/note1".to_string(),
+            labels: vec!["server-only".to_string()],
+            last_updated: None,
+        }];
+        let requested = vec![NoteMetadata {
+            rel_path: "test/note1".to_string(),
+            labels: vec!["local-only".to_string()],
+            last_updated: None,
+        }];
+        assert_eq!(merge_additive_metadata(&current, &requested), None);
+
+        let moved = vec![NoteMetadata {
+            rel_path: "test/note2".to_string(),
+            labels: vec!["server-only".to_string()],
+            last_updated: None,
+        }];
+        assert_eq!(merge_additive_metadata(&current, &moved), None);
     }
 }
