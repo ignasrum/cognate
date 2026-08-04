@@ -154,6 +154,32 @@ async fn delete_note_removes_empty_parent_folders_after_note_delete() {
 }
 
 #[tokio::test]
+async fn delete_note_preserves_child_notes_when_parent_has_same_named_folder() {
+    let harness = NotebookTestHarness::new("delete_parent_note_with_children");
+    let manager = harness.manager();
+    let mut notes: Vec<NoteMetadata> = Vec::new();
+
+    manager
+        .create_note("Test", &mut notes)
+        .await
+        .expect("Failed to create parent note");
+    manager
+        .create_note("Test/child", &mut notes)
+        .await
+        .expect("Failed to create child note");
+
+    manager
+        .delete_note("Test", &mut notes)
+        .await
+        .expect("Deleting parent note should succeed");
+
+    assert!(!harness.path().join("Test/note.md").exists());
+    assert!(harness.path().join("Test/child/note.md").exists());
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].rel_path, "Test/child");
+}
+
+#[tokio::test]
 async fn delete_note_rejects_invalid_relative_path() {
     let harness = NotebookTestHarness::new("delete_invalid_path");
     let manager = harness.manager();

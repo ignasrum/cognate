@@ -324,7 +324,7 @@ pub async fn write_bytes_file_atomically(
 }
 
 pub async fn remove_empty_parent_directories(notebook_path: &Path, deleted_note_dir_path: &Path) {
-    let mut current_parent = deleted_note_dir_path.parent().map(Path::to_path_buf);
+    let mut current_parent = Some(deleted_note_dir_path.to_path_buf());
 
     while let Some(parent_path) = current_parent {
         if let Ok(canonical_notebook) = tokio::fs::canonicalize(notebook_path).await

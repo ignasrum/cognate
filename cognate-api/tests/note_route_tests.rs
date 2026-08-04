@@ -91,6 +91,58 @@ async fn note_lifecycle_and_move_routes_use_the_engine() {
 }
 
 #[tokio::test]
+async fn deleting_parent_note_does_not_delete_child_notes_in_same_folder() {
+    let app = TestApp::new().await;
+    let client = app.provision("same-name-tests").await;
+
+    for path in ["Test", "Test/child"] {
+        let response = app
+            .request(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/v1/notes")
+                    .header("authorization", format!("Bearer {}", client.secret))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"rel_path":"{path}"}}"#)))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), 201, "failed to create {path}");
+    }
+
+    let delete = app
+        .request(bearer_request(
+            "DELETE",
+            "/v1/notes/Test",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(delete.status(), 204);
+
+    let child = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/Test/child",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(child.status(), 200);
+
+    let metadata = app
+        .json(bearer_request(
+            "GET",
+            "/v1/notes",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(metadata.as_array().unwrap().len(), 1);
+    assert_eq!(metadata[0]["rel_path"], "Test/child");
+}
+
+#[tokio::test]
 async fn path_traversal_and_oversized_note_payloads_are_rejected() {
     let app = TestApp::new().await;
     let client = app.provision("validation-tests").await;

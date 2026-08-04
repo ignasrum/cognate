@@ -171,11 +171,48 @@ impl NotebookManager {
         }
 
         let mut staged_delete_path: Option<PathBuf> = None;
+        let mut staged_note_contents = false;
 
         if tokio::fs::try_exists(&note_dir_path).await.unwrap_or(false) {
             let transaction_path = build_staging_path(&self.notebook_path, rel_path, "delete");
 
-            if let Err(error) = tokio::fs::rename(&note_dir_path, &transaction_path).await {
+            let note_file_path = note_dir_path.join("note.md");
+            if tokio::fs::try_exists(&note_file_path)
+                .await
+                .unwrap_or(false)
+            {
+                staged_note_contents = true;
+                if let Err(error) = tokio::fs::create_dir(&transaction_path).await {
+                    return Err(EngineError::storage(
+                        "delete note",
+                        format!("Failed to stage note contents for deletion: {}", error),
+                    ));
+                }
+
+                if let Err(error) =
+                    tokio::fs::rename(&note_file_path, transaction_path.join("note.md")).await
+                {
+                    let _ = tokio::fs::remove_dir(&transaction_path).await;
+                    return Err(EngineError::storage(
+                        "delete note",
+                        format!("Failed to stage note content for deletion: {}", error),
+                    ));
+                }
+
+                let images_path = note_dir_path.join("images");
+                if tokio::fs::try_exists(&images_path).await.unwrap_or(false)
+                    && let Err(error) =
+                        tokio::fs::rename(&images_path, transaction_path.join("images")).await
+                {
+                    let _ =
+                        tokio::fs::rename(transaction_path.join("note.md"), &note_file_path).await;
+                    let _ = tokio::fs::remove_dir(&transaction_path).await;
+                    return Err(EngineError::storage(
+                        "delete note",
+                        format!("Failed to stage note attachments for deletion: {}", error),
+                    ));
+                }
+            } else if let Err(error) = tokio::fs::rename(&note_dir_path, &transaction_path).await {
                 return Err(EngineError::storage(
                     "delete note",
                     format!("Failed to stage item for deletion on filesystem: {}", error),
@@ -190,22 +227,32 @@ impl NotebookManager {
         {
             *metadata = previous_notes;
 
-            if let Some(staged_path) = staged_delete_path
-                && let Err(rollback_error) = rollback_rename(
-                    &staged_path,
-                    &note_dir_path,
-                    &self.notebook_path,
-                    FAIL_DELETE_ROLLBACK_MARKER,
-                )
-                .await
-            {
-                return Err(EngineError::recovery(
-                    "delete note rollback",
-                    format!(
-                        "{} Rollback failed while restoring filesystem state: {}",
-                        metadata_error, rollback_error
-                    ),
-                ));
+            if let Some(staged_path) = staged_delete_path {
+                let rollback_result = if staged_note_contents {
+                    Self::restore_staged_note_contents(
+                        &staged_path,
+                        &note_dir_path,
+                        &self.notebook_path,
+                    )
+                    .await
+                } else {
+                    rollback_rename(
+                        &staged_path,
+                        &note_dir_path,
+                        &self.notebook_path,
+                        FAIL_DELETE_ROLLBACK_MARKER,
+                    )
+                    .await
+                };
+                if let Err(rollback_error) = rollback_result {
+                    return Err(EngineError::recovery(
+                        "delete note rollback",
+                        format!(
+                            "{} Rollback failed while restoring filesystem state: {}",
+                            metadata_error, rollback_error
+                        ),
+                    ));
+                }
             }
 
             return Err(metadata_error);
@@ -220,6 +267,34 @@ impl NotebookManager {
         remove_empty_parent_directories(&self.notebook_path, &note_dir_path).await;
 
         Ok(())
+    }
+
+    async fn restore_staged_note_contents(
+        staged_path: &std::path::Path,
+        note_dir_path: &std::path::Path,
+        notebook_path: &std::path::Path,
+    ) -> Result<(), EngineError> {
+        if tokio::fs::try_exists(notebook_path.join(FAIL_DELETE_ROLLBACK_MARKER))
+            .await
+            .unwrap_or(false)
+        {
+            return Err(EngineError::storage(
+                "delete note rollback",
+                "simulated delete rollback failure",
+            ));
+        }
+        tokio::fs::rename(staged_path.join("note.md"), note_dir_path.join("note.md"))
+            .await
+            .map_err(|error| EngineError::storage("delete note rollback", error.to_string()))?;
+        let staged_images = staged_path.join("images");
+        if tokio::fs::try_exists(&staged_images).await.unwrap_or(false) {
+            tokio::fs::rename(staged_images, note_dir_path.join("images"))
+                .await
+                .map_err(|error| EngineError::storage("delete note rollback", error.to_string()))?;
+        }
+        tokio::fs::remove_dir(staged_path)
+            .await
+            .map_err(|error| EngineError::storage("delete note rollback", error.to_string()))
     }
 
     pub async fn move_note(
