@@ -65,6 +65,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metadata_writes_coalesce_to_the_newest_snapshot() {
+        let coordinator = WriteCoordinator::default();
+        let first = coordinator.begin("metadata");
+        let second = coordinator.begin("metadata");
+
+        assert!(first.was_superseded());
+        assert!(!second.was_superseded());
+    }
+
+    #[tokio::test]
     async fn different_notes_have_independent_locks() {
         let coordinator = WriteCoordinator::default();
         let note = coordinator.begin("note");

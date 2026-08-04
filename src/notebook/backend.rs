@@ -80,6 +80,7 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
                 metadata_revision: Arc::new(Mutex::new(None)),
                 queue_path: offline_queue::queue_path(&configuration.config_path),
                 write_coordinator: WriteCoordinator::default(),
+                metadata_write_coordinator: WriteCoordinator::default(),
                 _embedded_runtime: Some(runtime),
             })
         }
@@ -91,6 +92,7 @@ pub fn configure_backend(configuration: &Configuration) -> Result<(), NotebookEr
             metadata_revision: Arc::new(Mutex::new(None)),
             queue_path: offline_queue::queue_path(&configuration.config_path),
             write_coordinator: WriteCoordinator::default(),
+            metadata_write_coordinator: WriteCoordinator::default(),
             _embedded_runtime: None,
         }),
     };
@@ -195,6 +197,12 @@ pub async fn save_metadata(
     match selected() {
         SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
+            let write_ticket = client.metadata_write_coordinator.begin("metadata");
+            let _write_guard = write_ticket.acquire().await;
+            if write_ticket.was_superseded() {
+                return Ok(());
+            }
+
             let url = endpoint(&client, "/v1/metadata")?;
             let revision = client
                 .metadata_revision

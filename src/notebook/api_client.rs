@@ -16,6 +16,7 @@ pub(super) struct ApiClient {
     pub(super) metadata_revision: Arc<Mutex<Option<String>>>,
     pub(super) queue_path: std::path::PathBuf,
     pub(super) write_coordinator: WriteCoordinator,
+    pub(super) metadata_write_coordinator: WriteCoordinator,
     pub(super) _embedded_runtime: Option<Arc<EmbeddedApiRuntime>>,
 }
 
