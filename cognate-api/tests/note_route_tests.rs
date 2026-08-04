@@ -143,6 +143,74 @@ async fn deleting_parent_note_does_not_delete_child_notes_in_same_folder() {
 }
 
 #[tokio::test]
+async fn moving_note_into_its_own_descendant_preserves_existing_children() {
+    let app = TestApp::new().await;
+    let client = app.provision("move-validation-tests").await;
+
+    let create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"test/readme"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(create.status(), 201);
+
+    let child_create = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rel_path":"test/readme/existing"}"#))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(child_create.status(), 201);
+
+    let response = app
+        .request(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/notes/move")
+                .header("authorization", format!("Bearer {}", client.secret))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"from_rel_path":"test/readme","to_rel_path":"test/readme/note"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+
+    let nested = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/test/readme/note",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(nested.status(), 200);
+
+    let existing = app
+        .request(bearer_request(
+            "GET",
+            "/v1/notes/test/readme/existing",
+            &client.secret,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(existing.status(), 200);
+}
+
+#[tokio::test]
 async fn path_traversal_and_oversized_note_payloads_are_rejected() {
     let app = TestApp::new().await;
     let client = app.provision("validation-tests").await;

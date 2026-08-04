@@ -285,6 +285,37 @@ async fn move_note_fails_when_target_exists() {
 }
 
 #[tokio::test]
+async fn move_note_into_descendant_preserves_source_folder_and_children() {
+    let harness = NotebookTestHarness::new("move_note_into_itself");
+    let manager = harness.manager();
+    let mut notes: Vec<NoteMetadata> = Vec::new();
+
+    manager
+        .create_note("test/readme", &mut notes)
+        .await
+        .expect("Failed to create source note");
+    manager
+        .create_note("test/readme/existing", &mut notes)
+        .await
+        .expect("Failed to create existing child note");
+
+    manager
+        .move_note("test/readme", "test/readme/note", &mut notes)
+        .await
+        .expect("Nested note move should succeed");
+
+    assert!(!harness.path().join("test/readme/note.md").exists());
+    assert!(harness.path().join("test/readme/note/note.md").exists());
+    assert!(harness.path().join("test/readme/existing/note.md").exists());
+    assert!(notes.iter().any(|note| note.rel_path == "test/readme/note"));
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.rel_path == "test/readme/existing")
+    );
+}
+
+#[tokio::test]
 async fn move_note_rejects_invalid_current_relative_path() {
     let harness = NotebookTestHarness::new("move_invalid_current_path");
     let manager = harness.manager();

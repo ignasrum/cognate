@@ -345,6 +345,9 @@ impl NotebookManager {
         let current_fs_path = self.notebook_path.join(&from_rel_buf);
         let new_fs_path = self.notebook_path.join(&to_rel_buf);
 
+        let is_descendant_move =
+            new_fs_path != current_fs_path && new_fs_path.starts_with(&current_fs_path);
+
         if !tokio::fs::try_exists(&current_fs_path)
             .await
             .unwrap_or(false)
@@ -401,6 +404,30 @@ impl NotebookManager {
             }
         }
 
+        let is_moving_note_dir = tokio::fs::try_exists(&current_fs_path.join("note.md"))
+            .await
+            .unwrap_or(false);
+        if is_descendant_move {
+            if !is_moving_note_dir {
+                return Err(EngineError::validation(
+                    "move note",
+                    format!(
+                        "Cannot move folder '{}' into one of its own descendants '{}'.",
+                        from_rel, to_rel
+                    ),
+                ));
+            }
+            return self
+                .move_note_into_descendant(
+                    from_rel,
+                    to_rel,
+                    &current_fs_path,
+                    &new_fs_path,
+                    metadata,
+                )
+                .await;
+        }
+
         if let Some(parent) = new_fs_path.parent()
             && !tokio::fs::try_exists(parent).await.unwrap_or(false)
             && let Err(error) = tokio::fs::create_dir_all(parent).await
@@ -415,10 +442,6 @@ impl NotebookManager {
         }
 
         let previous_notes = metadata.clone();
-        let is_moving_note_dir = tokio::fs::try_exists(&current_fs_path.join("note.md"))
-            .await
-            .unwrap_or(false);
-
         if let Err(error) = tokio::fs::rename(&current_fs_path, &new_fs_path).await {
             return Err(EngineError::storage(
                 "move note",
@@ -475,5 +498,106 @@ impl NotebookManager {
         }
 
         Ok(to_rel.to_string())
+    }
+
+    async fn move_note_into_descendant(
+        &self,
+        from_rel: &str,
+        to_rel: &str,
+        current_fs_path: &std::path::Path,
+        new_fs_path: &std::path::Path,
+        metadata: &mut Vec<NoteMetadata>,
+    ) -> Result<String, EngineError> {
+        tokio::fs::create_dir(new_fs_path).await.map_err(|error| {
+            EngineError::storage(
+                "move note",
+                format!("Failed to create nested note directory: {error}"),
+            )
+        })?;
+
+        let note_file = current_fs_path.join("note.md");
+        let nested_note_file = new_fs_path.join("note.md");
+        if let Err(error) = tokio::fs::rename(&note_file, &nested_note_file).await {
+            let _ = tokio::fs::remove_dir(new_fs_path).await;
+            return Err(EngineError::storage(
+                "move note",
+                format!("Failed to move note content into nested path: {error}"),
+            ));
+        }
+
+        let images = current_fs_path.join("images");
+        let nested_images = new_fs_path.join("images");
+        if tokio::fs::try_exists(&images).await.unwrap_or(false)
+            && let Err(error) = tokio::fs::rename(&images, &nested_images).await
+        {
+            let _ = tokio::fs::rename(&nested_note_file, &note_file).await;
+            let _ = tokio::fs::remove_dir(new_fs_path).await;
+            return Err(EngineError::storage(
+                "move note",
+                format!("Failed to move note attachments into nested path: {error}"),
+            ));
+        }
+
+        let previous_notes = metadata.clone();
+        let mut updated_metadata = false;
+        if let Some(note) = metadata.iter_mut().find(|note| note.rel_path == from_rel) {
+            note.rel_path = to_rel.to_string();
+            updated_metadata = true;
+        }
+
+        if updated_metadata
+            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+        {
+            *metadata = previous_notes;
+            if let Err(rollback_error) = self
+                .rollback_nested_note_move(
+                    current_fs_path,
+                    new_fs_path,
+                    &nested_note_file,
+                    &nested_images,
+                )
+                .await
+            {
+                return Err(EngineError::recovery(
+                    "move note rollback",
+                    format!(
+                        "{} Rollback failed while restoring nested note: {}",
+                        metadata_error, rollback_error
+                    ),
+                ));
+            }
+            return Err(metadata_error);
+        }
+
+        Ok(to_rel.to_string())
+    }
+
+    async fn rollback_nested_note_move(
+        &self,
+        current_fs_path: &std::path::Path,
+        new_fs_path: &std::path::Path,
+        nested_note_file: &std::path::Path,
+        nested_images: &std::path::Path,
+    ) -> Result<(), EngineError> {
+        if tokio::fs::try_exists(self.notebook_path.join(FAIL_MOVE_ROLLBACK_MARKER))
+            .await
+            .unwrap_or(false)
+        {
+            return Err(EngineError::storage(
+                "move note rollback",
+                "simulated move rollback failure",
+            ));
+        }
+        if tokio::fs::try_exists(nested_images).await.unwrap_or(false) {
+            tokio::fs::rename(nested_images, current_fs_path.join("images"))
+                .await
+                .map_err(|error| EngineError::storage("move note rollback", error.to_string()))?;
+        }
+        tokio::fs::rename(nested_note_file, current_fs_path.join("note.md"))
+            .await
+            .map_err(|error| EngineError::storage("move note rollback", error.to_string()))?;
+        tokio::fs::remove_dir(new_fs_path)
+            .await
+            .map_err(|error| EngineError::storage("move note rollback", error.to_string()))
     }
 }
