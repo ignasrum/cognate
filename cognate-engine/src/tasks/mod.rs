@@ -78,6 +78,36 @@ impl TaskRegister {
         self.tasks_by_note.remove(note_path);
     }
 
+    pub fn rename_notes(&mut self, from_rel: &str, to_rel: &str) {
+        let from_prefix = format!("{from_rel}/");
+        let to_prefix = format!("{to_rel}/");
+        let paths = self.tasks_by_note.keys().cloned().collect::<Vec<_>>();
+
+        for path in paths {
+            let Some(new_path) = (if path == from_rel {
+                Some(to_rel.to_string())
+            } else if path.starts_with(&from_prefix) {
+                Some(format!("{to_prefix}{}", &path[from_prefix.len()..]))
+            } else {
+                None
+            }) else {
+                continue;
+            };
+
+            if let Some(mut tasks) = self.tasks_by_note.remove(&path) {
+                for task in &mut tasks {
+                    task.note_path = new_path.clone();
+                    task.id = task
+                        .id
+                        .strip_prefix(&format!("{path}:"))
+                        .map(|suffix| format!("{new_path}:{suffix}"))
+                        .unwrap_or_else(|| task.id.clone());
+                }
+                self.tasks_by_note.insert(new_path, tasks);
+            }
+        }
+    }
+
     pub fn get_pending_tasks(&self) -> Vec<&TaskItem> {
         let mut pending = Vec::new();
         for tasks in self.tasks_by_note.values() {

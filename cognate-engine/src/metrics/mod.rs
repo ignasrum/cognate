@@ -72,6 +72,28 @@ impl MetricsRegister {
     pub fn remove_note(&mut self, note_path: &str) {
         self.metrics_by_note.remove(note_path);
     }
+
+    pub fn rename_notes(&mut self, from_rel: &str, to_rel: &str) {
+        let from_prefix = format!("{from_rel}/");
+        let to_prefix = format!("{to_rel}/");
+        let paths = self.metrics_by_note.keys().cloned().collect::<Vec<_>>();
+
+        for path in paths {
+            let Some(new_path) = (if path == from_rel {
+                Some(to_rel.to_string())
+            } else if path.starts_with(&from_prefix) {
+                Some(format!("{to_prefix}{}", &path[from_prefix.len()..]))
+            } else {
+                None
+            }) else {
+                continue;
+            };
+
+            if let Some(metrics) = self.metrics_by_note.remove(&path) {
+                self.metrics_by_note.insert(new_path, metrics);
+            }
+        }
+    }
 }
 
 fn count_sentences(content: &str) -> usize {

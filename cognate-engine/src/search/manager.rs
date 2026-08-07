@@ -223,33 +223,12 @@ impl SearchIndexManager {
             .filter(|path| *path == from_rel_path || path.starts_with(&from_prefix))
             .cloned()
             .collect::<Vec<_>>();
-        let mut replacements = Vec::new();
-        for path in &paths {
-            let target = if path == from_rel_path {
-                to_rel_path.to_string()
-            } else {
-                format!("{to_rel_path}{}", &path[from_rel_path.len()..])
-            };
-            let content = match self.notes_cache.notes.get(path) {
-                Some(note) => note.content.to_string(),
-                None => manager.load_note_content(path).await?,
-            };
-            let metadata = engine_state.search_index.documents.get(path).cloned();
-            replacements.push((path.clone(), target, content, metadata));
+        if paths.is_empty() {
+            self.cache_rename(from_rel_path, to_rel_path);
+            self.engine_state = Some(engine_state);
+            return Ok(());
         }
-        for (path, _, _, _) in &replacements {
-            engine_state.remove_document(path);
-        }
-        for (_, target, content, metadata) in replacements {
-            if let Some(metadata) = metadata {
-                engine_state.process_document(
-                    &target,
-                    &content,
-                    &metadata.labels,
-                    metadata.last_updated,
-                );
-            }
-        }
+        engine_state.rename_note_paths(from_rel_path, to_rel_path);
         manager.save_engine_state(&engine_state).await?;
         self.cache_rename(from_rel_path, to_rel_path);
         self.engine_state = Some(engine_state);

@@ -28,6 +28,7 @@ enum SelectedBackend {
 
 static SELECTED_BACKEND: OnceLock<RwLock<SelectedBackend>> = OnceLock::new();
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MOVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn backend_cell() -> &'static RwLock<SelectedBackend> {
     SELECTED_BACKEND.get_or_init(|| RwLock::new(SelectedBackend::Unconfigured(None)))
@@ -525,6 +526,9 @@ pub async fn move_note(
         SelectedBackend::Unconfigured(error) => Err(unconfigured_error(error)),
         SelectedBackend::Api(client) => {
             let url = endpoint(&client, "/v1/notes/move")?;
+            // Folder moves may update a large derived index, so use a bounded
+            // operation-specific timeout instead of the short read timeout.
+            // The server still completes the move synchronously and durably.
             send_empty(
                 authorized(
                     client.client.post(url).json(&MoveNoteRequest {
@@ -532,7 +536,8 @@ pub async fn move_note(
                         to_rel_path: new_rel_path,
                     }),
                     &client,
-                ),
+                )
+                .timeout(MOVE_REQUEST_TIMEOUT),
                 "move note",
             )
             .await?;

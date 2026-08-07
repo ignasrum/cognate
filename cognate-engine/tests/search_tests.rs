@@ -122,7 +122,7 @@ async fn incremental_search_mutations_update_results_without_rebuilding_everythi
     search_index
         .upsert_note(
             "old/path",
-            "incremental indexing content",
+            "- [ ] finish task\nincremental indexing content",
             &labels,
             Some("2026-01-01T00:00:00Z".to_string()),
         )
@@ -157,6 +157,36 @@ async fn incremental_search_mutations_update_results_without_rebuilding_everythi
         .await
         .unwrap();
     assert_eq!(results[0].rel_path, "new/path");
+
+    let renamed_state = manager.load_engine_state().await.unwrap();
+    assert!(
+        renamed_state
+            .search_index
+            .documents
+            .contains_key("new/path")
+    );
+    assert!(
+        !renamed_state
+            .search_index
+            .documents
+            .contains_key("old/path")
+    );
+    assert!(
+        renamed_state
+            .task_register
+            .tasks_by_note
+            .contains_key("new/path")
+    );
+    assert_eq!(
+        renamed_state.task_register.tasks_by_note["new/path"][0].note_path,
+        "new/path"
+    );
+    assert!(
+        renamed_state
+            .metrics_register
+            .metrics_by_note
+            .contains_key("new/path")
+    );
 
     search_index.remove_note("new/path").await.unwrap();
     assert!(

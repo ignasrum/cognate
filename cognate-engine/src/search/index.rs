@@ -91,6 +91,38 @@ impl InvertedIndex {
         }
     }
 
+    /// Remap document paths without changing document IDs or token postings.
+    ///
+    /// A move changes where a document is addressed, but not its content. Keeping
+    /// the existing IDs avoids the remove-and-reindex work required for a folder
+    /// move.
+    pub fn rename_paths(&mut self, from_rel: &str, to_rel: &str) {
+        let from_prefix = format!("{from_rel}/");
+        let to_prefix = format!("{to_rel}/");
+        let paths = self.documents.keys().cloned().collect::<Vec<_>>();
+        let mut remapped = Vec::new();
+
+        for path in paths {
+            let target = if path == from_rel {
+                Some(to_rel.to_string())
+            } else if path.starts_with(&from_prefix) {
+                Some(format!("{to_prefix}{}", &path[from_prefix.len()..]))
+            } else {
+                None
+            };
+            if let Some(target) = target {
+                remapped.push((path, target));
+            }
+        }
+
+        for (old_path, new_path) in remapped {
+            if let Some(mut metadata) = self.documents.remove(&old_path) {
+                metadata.path = new_path.clone();
+                self.documents.insert(new_path, metadata);
+            }
+        }
+    }
+
     pub fn get_avg_doc_length(&self) -> f32 {
         if self.documents.is_empty() {
             return 0.0;

@@ -131,6 +131,14 @@ impl NotebookEngineState {
             .index_document(path, content, labels, last_updated);
     }
 
+    /// Remap all derived state after a note or folder move without rereading
+    /// note contents.
+    pub fn rename_note_paths(&mut self, from_rel: &str, to_rel: &str) {
+        self.search_index.rename_paths(from_rel, to_rel);
+        self.task_register.rename_notes(from_rel, to_rel);
+        self.metrics_register.rename_notes(from_rel, to_rel);
+    }
+
     pub fn remove_document(&mut self, path: &str) {
         self.search_index.remove_document(path);
         self.task_register.remove_note(path);
