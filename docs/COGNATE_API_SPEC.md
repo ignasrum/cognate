@@ -56,7 +56,7 @@ clients. Permission failures return `403` with the `read_only_client` error code
 Provisioning a read-only client:
 
 ```json
-{"client_name":"ai-reflector","access_mode":"read_only"}
+{"client_name":"search-integration","access_mode":"read_only"}
 ```
 
 The access mode is stored with client metadata. Existing database rows migrate to

@@ -9,7 +9,7 @@ use serde_json::Value;
 async fn read_only_client_can_read_metadata_notes_and_search() {
     let app = TestApp::new().await;
     let writer = app.provision("desktop-writer").await;
-    let reader = app.provision_read_only("ai-reflector").await;
+    let reader = app.provision_read_only("search-integration").await;
 
     let created = app
         .request(
@@ -60,7 +60,7 @@ async fn read_only_client_can_read_metadata_notes_and_search() {
 #[tokio::test]
 async fn read_only_client_is_denied_every_mutation_route() {
     let app = TestApp::new().await;
-    let reader = app.provision_read_only("ai-reflector").await;
+    let reader = app.provision_read_only("search-integration").await;
 
     let requests = [
         axum::http::Request::builder()

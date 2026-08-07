@@ -62,13 +62,13 @@ curl -X POST http://127.0.0.1:8787/v1/admin/clients \
 
 The response contains one `cgnt_live_...` secret. Store it in the client’s protected credential store immediately; it is not recoverable from the server. The SQLite database stores only the BLAKE3 digest of the secret. Never place the secret in URLs or logs.
 
-Provision a read-only key for integrations such as an AI chatbot:
+Provision a read-only key for search and reflection integrations:
 
 ```text
 curl -X POST http://127.0.0.1:8787/v1/admin/clients \
   -H 'X-Admin-Token: admin-bootstrap-secret' \
   -H 'Content-Type: application/json' \
-  -d '{"client_name":"ai-reflector","access_mode":"read_only"}'
+  -d '{"client_name":"search-integration","access_mode":"read_only"}'
 ```
 
 Read-only clients can list metadata, read note content, search, and use approved

@@ -139,7 +139,7 @@ plain HTTP only.
 - `api_url` is the API base URL, for example `http://127.0.0.1:8787`
 - `api_key` is the bearer key issued by a remote `cognate-api`; keep this config file private and do not commit it. It is ignored in embedded local mode.
 
-For integrations such as an AI chatbot, provision a separate `read_only` API client.
+For search and reflection integrations, provision a separate `read_only` API client.
 That key can search and read the permitted notebook data but cannot write notes,
 metadata, or attachments. Do not reuse the desktop client's read-write key.
 
