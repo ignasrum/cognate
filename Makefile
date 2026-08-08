@@ -39,6 +39,9 @@ test:
 
 format:
 	cargo fmt --all
+
+fix:
+	cargo fmt --all
 	cargo clippy $(workspace_packages) --all-targets --fix --allow-dirty --allow-staged
 	cargo fmt --all
 
@@ -53,4 +56,6 @@ help:
 	@echo "       make run"
 	@echo "       make PROFILE=debug run"
 	@echo "       make debug=1 run  (legacy alias)"
+	@echo "       make format       (format only)"
+	@echo "       make fix          (format and apply clippy fixes)"
 	@echo "       make api"

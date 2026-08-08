@@ -72,6 +72,11 @@ impl NotebookTestHarness {
             .expect("Failed to create move-rollback failure marker");
     }
 
+    pub fn inject_storage_full_fault(&self) {
+        std::fs::write(self.path().join(".cognate_fail_atomic_write"), "fail")
+            .expect("Failed to create storage-full failure marker");
+    }
+
     pub fn inject_metadata_trap_directory(&self) {
         std::fs::create_dir(self.path().join("metadata.json"))
             .expect("Failed to create metadata trap directory");

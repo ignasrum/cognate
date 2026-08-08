@@ -496,3 +496,74 @@ async fn test_search_missing_note_file_preserves_existing_indexed_content() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].rel_path, "note1");
 }
+
+#[tokio::test]
+async fn long_running_search_converges_after_incremental_and_external_updates() {
+    let temp = TempTestDir::new("search_long_running_consistency");
+    let manager = NotebookManager::new(temp.path());
+    let mut search_index = SearchIndexManager::new(temp.path());
+    let mut notes = Vec::new();
+
+    for index in 0..16 {
+        let path = format!("group-{}/note-{index}", index % 4);
+        manager.create_note(&path, &mut notes).await.unwrap();
+        manager
+            .save_note_content(&path, &format!("seed content for note {index}"))
+            .await
+            .unwrap();
+    }
+
+    for iteration in 0..120 {
+        let note_index = iteration % notes.len();
+        let path = notes[note_index].rel_path.clone();
+        let token = format!("consistency-token-{iteration}");
+
+        if iteration % 7 == 0 {
+            // Bypass the incremental hook to exercise external refresh logic.
+            std::fs::write(
+                temp.path().join(&path).join("note.md"),
+                format!("externally changed {token} unicode café"),
+            )
+            .unwrap();
+        } else {
+            manager
+                .save_note_content(&path, &format!("incrementally changed {token}"))
+                .await
+                .unwrap();
+        }
+
+        if iteration % 5 == 0 {
+            let mut updated_notes = notes.clone();
+            updated_notes[note_index].labels = vec![format!("batch-{}", iteration / 5)];
+            manager.save_metadata(&updated_notes).await.unwrap();
+            notes = updated_notes;
+        }
+
+        // Reopen the derived state periodically and force an external refresh.
+        if iteration % 11 == 0 {
+            search_index = SearchIndexManager::new(temp.path());
+        } else {
+            search_index.clear_cache();
+        }
+
+        let results = search_index
+            .search(&token, &notes, Duration::from_secs(0))
+            .await
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "unexpected result count at iteration {iteration}"
+        );
+        assert_eq!(
+            results[0].rel_path, path,
+            "wrong result at iteration {iteration}"
+        );
+    }
+
+    let state = manager.load_engine_state().await.unwrap();
+    assert_eq!(state.search_index.documents.len(), notes.len());
+    for note in notes {
+        assert!(state.search_index.documents.contains_key(&note.rel_path));
+    }
+}

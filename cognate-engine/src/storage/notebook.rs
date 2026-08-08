@@ -26,6 +26,8 @@ pub(super) const FAIL_ATOMIC_RENAME_MARKER: &str = ".cognate_fail_atomic_rename"
 pub(super) const FAIL_DELETE_ROLLBACK_MARKER: &str = ".cognate_fail_delete_rollback";
 #[allow(dead_code)]
 pub(super) const FAIL_MOVE_ROLLBACK_MARKER: &str = ".cognate_fail_move_rollback";
+#[allow(dead_code)]
+pub(super) const FAIL_ATOMIC_WRITE_MARKER: &str = ".cognate_fail_atomic_write";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteContentSaveResult {

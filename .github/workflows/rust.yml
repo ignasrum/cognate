@@ -28,3 +28,14 @@ jobs:
       env:
         COGNATE_REQUIRE_SOCKET_TESTS: "1"
       run: cargo test --workspace --verbose -- --nocapture --test-threads=1
+
+  reliability:
+    name: Reliability tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Show Rust toolchain
+      run: rustup show active-toolchain
+    - name: Run transaction, recovery, and search consistency tests
+      run: cargo test -p cognate-engine --test notebook_tests --test search_tests --verbose -- --nocapture --test-threads=1

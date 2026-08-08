@@ -832,6 +832,111 @@ async fn save_metadata_keeps_last_known_good_copy_and_preserves_primary_when_ato
 }
 
 #[tokio::test]
+async fn note_content_write_preserves_previous_content_when_storage_is_full() {
+    let harness = NotebookTestHarness::new("note_storage_full");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+    manager.save_note_content("note", "before").await.unwrap();
+
+    harness.inject_storage_full_fault();
+    let result = manager.save_note_content("note", "after").await;
+    assert!(result.is_err());
+    assert_eq!(manager.load_note_content("note").await.unwrap(), "before");
+
+    std::fs::remove_file(harness.path().join(".cognate_fail_atomic_write")).unwrap();
+    manager.save_note_content("note", "after").await.unwrap();
+    assert_eq!(manager.load_note_content("note").await.unwrap(), "after");
+}
+
+#[tokio::test]
+async fn metadata_write_preserves_previous_snapshot_when_storage_is_full() {
+    let harness = NotebookTestHarness::new("metadata_storage_full");
+    let manager = harness.manager();
+    let initial = vec![NoteMetadata {
+        rel_path: "note".to_string(),
+        labels: vec!["before".to_string()],
+        last_updated: None,
+    }];
+    harness.write_metadata(&initial).await;
+
+    harness.inject_storage_full_fault();
+    let updated = vec![NoteMetadata {
+        rel_path: "note".to_string(),
+        labels: vec!["after".to_string()],
+        last_updated: None,
+    }];
+    assert!(manager.save_metadata(&updated).await.is_err());
+    assert_eq!(manager.load_metadata().await.unwrap().notes, initial);
+
+    std::fs::remove_file(harness.path().join(".cognate_fail_atomic_write")).unwrap();
+    manager.save_metadata(&updated).await.unwrap();
+    assert_eq!(manager.load_metadata().await.unwrap().notes, updated);
+}
+
+#[tokio::test]
+async fn fresh_manager_recovers_metadata_and_note_content_after_restart() {
+    let harness = NotebookTestHarness::new("manager_restart_recovery");
+    let first = harness.manager();
+    let mut notes = Vec::new();
+    first.create_note("restart/note", &mut notes).await.unwrap();
+    first
+        .save_note_content("restart/note", "durable content")
+        .await
+        .unwrap();
+    drop(first);
+
+    let second = harness.manager();
+    let loaded = second.load_metadata().await.unwrap();
+    assert_eq!(loaded.notes, notes);
+    assert_eq!(
+        second.load_note_content("restart/note").await.unwrap(),
+        "durable content"
+    );
+    assert!(
+        second
+            .load_engine_state()
+            .await
+            .unwrap()
+            .search_index
+            .documents
+            .contains_key("restart/note")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unwritable_notebook_reports_error_without_losing_existing_note() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let harness = NotebookTestHarness::new("readonly_notebook");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+    manager.create_note("note", &mut notes).await.unwrap();
+    manager.save_note_content("note", "before").await.unwrap();
+
+    let original_mode = std::fs::metadata(harness.path())
+        .unwrap()
+        .permissions()
+        .mode();
+    let mut read_only = std::fs::metadata(harness.path()).unwrap().permissions();
+    read_only.set_mode(original_mode & !0o222);
+    std::fs::set_permissions(harness.path(), read_only).unwrap();
+
+    let result = manager.save_note_content("note", "after").await;
+
+    let mut restored = std::fs::metadata(harness.path()).unwrap().permissions();
+    restored.set_mode(original_mode);
+    std::fs::set_permissions(harness.path(), restored).unwrap();
+
+    if result.is_ok() {
+        eprintln!("skipping read-only assertion: test process can write as privileged user");
+        return;
+    }
+    assert_eq!(manager.load_note_content("note").await.unwrap(), "before");
+}
+
+#[tokio::test]
 async fn delete_note_surfaces_failed_rollback_when_rollback_rename_fails() {
     let harness = NotebookTestHarness::new("delete_rollback_failure_surface");
     let manager = harness.manager();

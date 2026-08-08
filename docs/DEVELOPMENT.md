@@ -27,6 +27,7 @@ cargo run
 ## Daily Commands
 
 - `cargo test`: run all tests
+- `cargo test -p cognate-engine --test notebook_tests --test search_tests -- --test-threads=1`: run transaction, recovery, filesystem, and search consistency tests
 - `cargo clippy --all-targets -- -D warnings`: lint with warnings as errors
 - `cargo fmt --all -- --check`: verify formatting
 - `cargo run`: run in debug mode

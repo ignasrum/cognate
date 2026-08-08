@@ -207,6 +207,11 @@ pub async fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error>
 }
 
 pub async fn atomic_write_string(target_path: &Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = target_path.parent()
+        && atomic_write_fault_injected(parent).await
+    {
+        return Err(std::io::Error::from(ErrorKind::StorageFull));
+    }
     let temp_path = build_atomic_temp_path(target_path)?;
     let mut file = tokio::fs::File::create(&temp_path).await?;
     file.write_all(content.as_bytes()).await?;
@@ -254,6 +259,11 @@ pub async fn write_text_file_atomically(
 }
 
 pub async fn atomic_write_bytes(target_path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
+    if let Some(parent) = target_path.parent()
+        && atomic_write_fault_injected(parent).await
+    {
+        return Err(std::io::Error::from(ErrorKind::StorageFull));
+    }
     let temp_path = build_atomic_temp_path(target_path)?;
     let mut file = tokio::fs::File::create(&temp_path).await?;
     file.write_all(content).await?;
@@ -267,6 +277,20 @@ pub async fn atomic_write_bytes(target_path: &Path, content: &[u8]) -> Result<()
 
     sync_parent_directory(target_path).await?;
     Ok(())
+}
+
+async fn atomic_write_fault_injected(parent: &Path) -> bool {
+    let mut current = Some(parent);
+    while let Some(path) = current {
+        if tokio::fs::try_exists(&path.join(".cognate_fail_atomic_write"))
+            .await
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        current = path.parent();
+    }
+    false
 }
 
 async fn restrict_temp_permissions(path: &Path) -> Result<(), std::io::Error> {

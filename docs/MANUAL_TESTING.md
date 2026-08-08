@@ -64,3 +64,16 @@ Use this checklist before releases or significant UI changes.
 - Closing window attempts save and exits cleanly
 - Simulate failing write paths and verify error dialogs
 - Reopen app and verify latest note/metadata state
+
+## Reliability Test Commands
+
+Run the deterministic persistence and search consistency coverage with:
+
+```bash
+cargo test -p cognate-engine --test notebook_tests --test search_tests -- --test-threads=1
+```
+
+The suite injects atomic-write, atomic-rename, and rollback failures without
+modifying the host filesystem outside temporary test directories. Permission
+coverage is capability-aware: privileged test environments report when a
+read-only directory cannot enforce the intended failure.
