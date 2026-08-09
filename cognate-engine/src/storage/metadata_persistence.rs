@@ -48,7 +48,15 @@ async fn snapshot_known_good(metadata_path: &Path, backup_path: &Path) -> Result
         })
 }
 
-pub(super) async fn save(notebook_path: &Path, notes: &[NoteMetadata]) -> Result<(), EngineError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MetadataSaveOutcome {
+    pub(super) index_repair_pending: bool,
+}
+
+pub(super) async fn save_with_outcome(
+    notebook_path: &Path,
+    notes: &[NoteMetadata],
+) -> Result<MetadataSaveOutcome, EngineError> {
     let metadata_path = notebook_path.join(METADATA_FILE_NAME);
     let backup_path = notebook_path.join(METADATA_BACKUP_FILE_NAME);
     if let Some(parent) = metadata_path.parent()
@@ -74,5 +82,20 @@ pub(super) async fn save(notebook_path: &Path, notes: &[NoteMetadata]) -> Result
         )
     })?;
     write_text_file_atomically(&metadata_path, &json_string).await?;
-    index_sync::sync_metadata(notebook_path, notes).await
+    Ok(MetadataSaveOutcome {
+        index_repair_pending: index_sync::sync_metadata(notebook_path, notes)
+            .await
+            .is_err(),
+    })
+}
+
+pub(super) async fn save(notebook_path: &Path, notes: &[NoteMetadata]) -> Result<(), EngineError> {
+    let outcome = save_with_outcome(notebook_path, notes).await?;
+    if outcome.index_repair_pending {
+        return Err(EngineError::recovery(
+            "save metadata",
+            "Metadata committed, but the derived engine index could not be synchronized.",
+        ));
+    }
+    Ok(())
 }

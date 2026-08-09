@@ -43,6 +43,12 @@ pub(super) async fn save_metadata(
 ) -> Result<(), EngineError> {
     metadata_persistence::save(notebook_path, notes).await
 }
+pub(super) async fn save_metadata_committed(
+    notebook_path: &Path,
+    notes: &[NoteMetadata],
+) -> Result<metadata_persistence::MetadataSaveOutcome, EngineError> {
+    metadata_persistence::save_with_outcome(notebook_path, notes).await
+}
 
 pub struct NotebookManager {
     pub(super) notebook_path: PathBuf,

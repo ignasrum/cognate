@@ -75,7 +75,9 @@ impl AttachmentManager {
             EngineError::validation("save_image", "Failed to decode image data from base64.")
         })?;
 
-        let extension = image_extension_from_bytes(&image_bytes).unwrap_or("png");
+        let extension = image_extension_from_bytes(&image_bytes).ok_or_else(|| {
+            EngineError::validation("save_image", "Unsupported or invalid image signature.")
+        })?;
         Self::save_image_bytes_with_extension(notebook_path, rel_note_path, &image_bytes, extension)
             .await
     }
@@ -134,13 +136,19 @@ impl AttachmentManager {
 
         Ok(format!("images/{}", file_name))
     }
-
     pub async fn list_attachments(
         notebook_path: &Path,
         rel_note_path: &str,
     ) -> Result<Vec<AttachmentMetadata>, EngineError> {
         let note_path = super::fs_utils::validate_relative_path("note path", rel_note_path)?;
-        let images_dir = notebook_path.join(note_path).join("images");
+        let images_dir = notebook_path.join(&note_path).join("images");
+        super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
+            notebook_path,
+            &images_dir,
+            rel_note_path,
+            "Attachment directory escapes notebook boundaries",
+        )
+        .await?;
         let mut entries = Vec::new();
         let mut directory = match tokio::fs::read_dir(&images_dir).await {
             Ok(directory) => directory,
@@ -159,7 +167,15 @@ impl AttachmentManager {
             if !file_type.is_file() {
                 continue;
             }
-            let bytes = tokio::fs::read(entry.path())
+            let entry_path = entry.path();
+            super::fs_utils::ensure_path_within_notebook_if_canonicalizable(
+                notebook_path,
+                &entry_path,
+                rel_note_path,
+                "Attachment path escapes notebook boundaries",
+            )
+            .await?;
+            let bytes = tokio::fs::read(&entry_path)
                 .await
                 .map_err(|error| EngineError::storage("list attachments", error.to_string()))?;
             let name = entry.file_name().to_string_lossy().into_owned();

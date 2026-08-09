@@ -50,13 +50,12 @@ pub(crate) async fn cleanup_stale_staged_delete_entries(notebook_path: &Path) {
         if now_nanos.saturating_sub(timestamp_nanos) < STAGED_DELETE_CLEANUP_GRACE_NANOS {
             continue;
         }
-        let staged_path = entry.path();
-        if let Ok(meta) = tokio::fs::metadata(&staged_path).await {
-            let _ = if meta.is_dir() {
-                tokio::fs::remove_dir_all(&staged_path).await
-            } else {
-                tokio::fs::remove_file(&staged_path).await
-            };
-        }
+
+        // A stale staged delete may be the only surviving copy after a failed
+        // rollback. Quarantine it instead of deleting potentially authoritative
+        // note or attachment data.
+        let recovery_name = format!(".cognate_recovery_{}", file_name);
+        let recovery_path = notebook_path.join(recovery_name);
+        let _ = tokio::fs::rename(entry.path(), recovery_path).await;
     }
 }

@@ -4,12 +4,14 @@ use super::fs_utils::{
     ensure_path_within_notebook_if_canonicalizable, remove_empty_parent_directories,
     rollback_rename, validate_relative_path, write_text_file_atomically,
 };
+use super::index_sync;
 use super::metadata::NoteMetadata;
 use super::notebook::{
     FAIL_DELETE_ROLLBACK_MARKER, FAIL_MOVE_ROLLBACK_MARKER, NotebookManager,
-    current_timestamp_rfc3339, save_metadata,
+    current_timestamp_rfc3339, save_metadata_committed,
 };
 use super::transactions::build_staging_path;
+
 use crate::EngineError;
 
 impl NotebookManager {
@@ -90,7 +92,7 @@ impl NotebookManager {
         let previous_notes = metadata.clone();
         metadata.push(new_note_metadata.clone());
 
-        if let Err(error) = save_metadata(&self.notebook_path, metadata).await {
+        if let Err(error) = save_metadata_committed(&self.notebook_path, metadata).await {
             *metadata = previous_notes;
             let cleanup_result = tokio::fs::remove_dir_all(&note_dir_path).await;
             if let Err(cleanup_error) = cleanup_result {
@@ -162,6 +164,23 @@ impl NotebookManager {
                 ));
             }
         }
+        let note_file_path = note_dir_path.join("note.md");
+        let has_note_file = tokio::fs::try_exists(&note_file_path)
+            .await
+            .unwrap_or(false);
+        let descendant_prefix = format!("{}/", rel_path);
+        let has_metadata_descendants = metadata
+            .iter()
+            .any(|note| note.rel_path.starts_with(&descendant_prefix));
+        if !has_note_file && has_metadata_descendants {
+            return Err(EngineError::validation(
+                "delete note",
+                format!(
+                    "Cannot recursively delete container '{}' while registered child notes exist.",
+                    rel_path
+                ),
+            ));
+        }
 
         let previous_notes = metadata.clone();
         let mut metadata_changed = false;
@@ -176,11 +195,7 @@ impl NotebookManager {
         if tokio::fs::try_exists(&note_dir_path).await.unwrap_or(false) {
             let transaction_path = build_staging_path(&self.notebook_path, rel_path, "delete");
 
-            let note_file_path = note_dir_path.join("note.md");
-            if tokio::fs::try_exists(&note_file_path)
-                .await
-                .unwrap_or(false)
-            {
+            if has_note_file {
                 staged_note_contents = true;
                 if let Err(error) = tokio::fs::create_dir(&transaction_path).await {
                     return Err(EngineError::storage(
@@ -223,7 +238,8 @@ impl NotebookManager {
         }
 
         if metadata_changed
-            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+            && let Err(metadata_error) =
+                save_metadata_committed(&self.notebook_path, metadata).await
         {
             *metadata = previous_notes;
 
@@ -256,6 +272,9 @@ impl NotebookManager {
             }
 
             return Err(metadata_error);
+        }
+        if !metadata_changed {
+            let _ = index_sync::sync_metadata(&self.notebook_path, metadata).await;
         }
 
         if let Some(staged_path) = staged_delete_path
@@ -452,30 +471,23 @@ impl NotebookManager {
             ));
         }
 
+        let old_prefix = format!("{}/", from_rel);
+        let new_prefix = format!("{}/", to_rel);
         let mut updated_metadata = false;
-        if is_moving_note_dir {
-            if let Some(note) = metadata.iter_mut().find(|note| note.rel_path == from_rel) {
+        for note in metadata.iter_mut() {
+            if note.rel_path == from_rel {
                 note.rel_path = to_rel.to_string();
                 updated_metadata = true;
-            }
-        } else {
-            let old_prefix = format!("{}/", from_rel);
-            let new_prefix = format!("{}/", to_rel);
-
-            for note in metadata.iter_mut() {
-                if note.rel_path.starts_with(&old_prefix) {
-                    let suffix = note.rel_path.trim_start_matches(&old_prefix);
-                    note.rel_path = format!("{}{}", new_prefix, suffix);
-                    updated_metadata = true;
-                } else if note.rel_path == from_rel {
-                    note.rel_path = to_rel.to_string();
-                    updated_metadata = true;
-                }
+            } else if note.rel_path.starts_with(&old_prefix) {
+                let suffix = note.rel_path.trim_start_matches(&old_prefix);
+                note.rel_path = format!("{}{}", new_prefix, suffix);
+                updated_metadata = true;
             }
         }
 
         if updated_metadata
-            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+            && let Err(metadata_error) =
+                save_metadata_committed(&self.notebook_path, metadata).await
         {
             *metadata = previous_notes;
             if let Err(rollback_error) = rollback_rename(
@@ -546,7 +558,8 @@ impl NotebookManager {
         }
 
         if updated_metadata
-            && let Err(metadata_error) = save_metadata(&self.notebook_path, metadata).await
+            && let Err(metadata_error) =
+                save_metadata_committed(&self.notebook_path, metadata).await
         {
             *metadata = previous_notes;
             if let Err(rollback_error) = self

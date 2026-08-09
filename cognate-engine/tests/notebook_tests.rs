@@ -648,11 +648,23 @@ async fn load_notes_metadata_cleans_up_stale_staged_delete_entries() {
 
     assert!(
         !stale_stage.exists(),
-        "Expected stale staged delete directory to be cleaned up"
+        "Stale staged delete should be moved out of the transaction namespace"
     );
     assert!(
         !stale_file.exists(),
-        "Expected stale staged delete file to be cleaned up"
+        "Stale staged delete file should be moved out of the transaction namespace"
+    );
+    assert!(
+        harness
+            .path()
+            .join(".cognate_recovery_.cognate_txn_delete_rollback__note_1")
+            .exists()
+    );
+    assert!(
+        harness
+            .path()
+            .join(".cognate_recovery_.cognate_txn_delete_rollback__note_2")
+            .exists()
     );
 }
 
@@ -888,7 +900,8 @@ async fn fresh_manager_recovers_metadata_and_note_content_after_restart() {
 
     let second = harness.manager();
     let loaded = second.load_metadata().await.unwrap();
-    assert_eq!(loaded.notes, notes);
+    assert_eq!(loaded.notes.len(), 1);
+    assert_eq!(loaded.notes[0].rel_path, "restart/note");
     assert_eq!(
         second.load_note_content("restart/note").await.unwrap(),
         "durable content"
@@ -1149,4 +1162,76 @@ async fn test_metadata_subsecond_precision_no_timezone() {
         loaded.notes[0].last_updated.as_deref(),
         Some("2026-07-13T12:00:00")
     );
+}
+
+#[tokio::test]
+async fn move_note_directory_updates_nested_note_metadata() {
+    let harness = NotebookTestHarness::new("move_note_with_child");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+
+    manager.create_note("parent", &mut notes).await.unwrap();
+    manager
+        .create_note("parent/child", &mut notes)
+        .await
+        .unwrap();
+
+    manager
+        .move_note("parent", "renamed", &mut notes)
+        .await
+        .unwrap();
+
+    let mut paths: Vec<_> = notes.iter().map(|note| note.rel_path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, vec!["renamed", "renamed/child"]);
+    assert_note_md_exists(harness.path(), "renamed/child");
+    assert_note_md_not_exists(harness.path(), "parent/child");
+}
+
+#[tokio::test]
+async fn delete_container_rejects_registered_children() {
+    let harness = NotebookTestHarness::new("delete_container_with_child");
+    let manager = harness.manager();
+    let mut notes = Vec::new();
+    manager
+        .create_note("container/child", &mut notes)
+        .await
+        .unwrap();
+
+    let error = manager
+        .delete_note("container", &mut notes)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, EngineError::Validation { .. }));
+    assert_note_md_exists(harness.path(), "container/child");
+    assert_eq!(notes.len(), 1);
+}
+
+#[tokio::test]
+async fn lifecycle_keeps_metadata_consistent_when_index_save_fails() {
+    let harness = NotebookTestHarness::new("index_save_failure_consistency");
+    let manager = harness.manager();
+    std::fs::create_dir(harness.path().join(".cognate_index.bin")).unwrap();
+
+    let mut notes = Vec::new();
+    manager.create_note("created", &mut notes).await.unwrap();
+    assert_note_md_exists(harness.path(), "created");
+    assert_eq!(
+        manager.load_metadata().await.unwrap().notes[0].rel_path,
+        "created"
+    );
+
+    manager
+        .move_note("created", "moved", &mut notes)
+        .await
+        .unwrap();
+    assert_note_md_not_exists(harness.path(), "created");
+    assert_note_md_exists(harness.path(), "moved");
+    assert_eq!(
+        manager.load_metadata().await.unwrap().notes[0].rel_path,
+        "moved"
+    );
+
+    manager.delete_note("moved", &mut notes).await.unwrap();
+    assert!(manager.load_metadata().await.unwrap().notes.is_empty());
 }

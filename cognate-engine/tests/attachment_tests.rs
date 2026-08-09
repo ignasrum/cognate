@@ -219,19 +219,13 @@ async fn test_image_extension_formats() {
 }
 
 #[tokio::test]
-async fn test_attachment_extension_fallback_and_symlink_save_escape() {
-    let temp = TempTestDir::new("attach_fallback_escape");
+async fn test_attachment_rejects_non_image_and_symlink_escape() {
+    let temp = TempTestDir::new("attach_invalid_escape");
 
-    let dummy_fallback_base64 = "SGVsbG8=";
-    let rel_path =
-        AttachmentManager::save_image_from_base64(temp.path(), "note", dummy_fallback_base64)
-            .await
-            .unwrap();
-    assert!(
-        rel_path.ends_with(".png"),
-        "Expected fallback to png extension, got: {}",
-        rel_path
-    );
+    let invalid_payload = "SGVsbG8=";
+    let result =
+        AttachmentManager::save_image_from_base64(temp.path(), "note", invalid_payload).await;
+    assert!(matches!(result, Err(EngineError::Validation { .. })));
 
     #[cfg(unix)]
     {
@@ -291,15 +285,30 @@ async fn test_attachment_write_storage_error() {
     std::fs::set_permissions(&note_dir, perms).unwrap();
 
     // Saving image should fail to create/write inside the read-only directory
-    let res = AttachmentManager::save_image_from_base64(temp.path(), "note", "SGVsbG8=").await;
+    let png_base64 = "iVBORw0KGgo=";
+    let res = AttachmentManager::save_image_from_base64(temp.path(), "note", png_base64).await;
     assert!(res.is_err());
     assert!(matches!(res.unwrap_err(), EngineError::Storage { .. }));
 
     // Restore permissions for cleanup
     let mut perms = std::fs::metadata(&note_dir).unwrap().permissions();
-    #[cfg(unix)]
     perms.set_mode(perms.mode() | 0o700);
     #[cfg(not(unix))]
     perms.set_readonly(false);
     let _ = std::fs::set_permissions(&note_dir, perms);
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_list_attachments_rejects_external_images_symlink() {
+    let temp = TempTestDir::new("list_attachment_symlink");
+    let outside = std::env::temp_dir().join(format!("cognate_list_outside_{}", now_nanos()));
+    std::fs::create_dir_all(outside.join("images")).unwrap();
+    std::fs::write(outside.join("images/external.png"), b"external").unwrap();
+    std::os::unix::fs::symlink(&outside, temp.path().join("linked")).unwrap();
+
+    let result = AttachmentManager::list_attachments(temp.path(), "linked").await;
+    assert!(matches!(result, Err(EngineError::Validation { .. })));
+
+    let _ = std::fs::remove_dir_all(outside);
 }

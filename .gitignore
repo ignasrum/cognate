@@ -1,3 +1,5 @@
 /target
 .codex
 PLAN.md
+.cognate-api-queue.lock
+.cognate_locks/
