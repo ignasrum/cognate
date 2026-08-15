@@ -14,33 +14,30 @@ mod workspace;
 
 pub const MARKDOWN_PREVIEW_SCROLLABLE_ID: &str = "cognate_markdown_preview_scrollable";
 
-pub fn generate_layout<'a>(
-    state: &'a EditorState,
-    content: &'a iced::widget::text_editor::Content,
-    markdown_content: &'a iced::widget::markdown::Content,
-    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
-    note_explorer_component: &'a note_explorer::NoteExplorer,
-    visualizer_component: &'a visualizer::Visualizer,
-    preview_indicator_char_range: Option<(usize, usize)>,
+pub(crate) struct LayoutContext<'a> {
+    pub(crate) state: &'a EditorState,
+    pub(crate) content: &'a iced::widget::text_editor::Content,
+    pub(crate) markdown_content: &'a iced::widget::markdown::Content,
+    pub(crate) markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    pub(crate) image_context_menu: Option<&'a str>,
+    pub(crate) image_context_position: Option<iced::Point>,
+    pub(crate) note_explorer_component: &'a note_explorer::NoteExplorer,
+    pub(crate) visualizer_component: &'a visualizer::Visualizer,
+    pub(crate) preview_indicator_char_range: Option<(usize, usize)>,
+}
+
+pub(crate) fn generate_layout_with_image_context<'a>(
+    context: LayoutContext<'a>,
 ) -> Element<'a, Message> {
-    if let Some(error) = state.connection_error() {
+    if let Some(error) = context.state.connection_error() {
         return workspace::build_connection_error_page(error);
     }
-    if let Some(error) = state.note_load_error() {
+    if let Some(error) = context.state.note_load_error() {
         return workspace::build_note_load_error_page(error);
     }
 
-    let top_bar = top_bar::build_top_bar(state, note_explorer_component);
-    let main_content = workspace::build_main_content(
-        state,
-        content,
-        markdown_content,
-        markdown_image_handles,
-        note_explorer_component,
-        visualizer_component,
-        preview_indicator_char_range,
-    );
-
+    let top_bar = top_bar::build_top_bar(context.state, context.note_explorer_component);
+    let main_content = workspace::build_main_content(context);
     Container::new(Column::new().push(top_bar).push(main_content))
         .width(Length::Fill)
         .height(Length::Fill)

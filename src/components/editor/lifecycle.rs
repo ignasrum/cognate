@@ -24,6 +24,8 @@ impl Editor {
             loaded_markdown_text: String::new(),
             markdown_preview: iced::widget::markdown::Content::parse(""),
             embedded_image_workflow: EmbeddedImageWorkflow::default(),
+            image_context_menu: None,
+            image_context_position: None,
             content_note_path: None,
             metadata_save_generation: 0,
             metadata_persisted_generation: 0,
@@ -95,57 +97,61 @@ impl Editor {
         } else {
             None
         };
-
-        layout::generate_layout(
-            &state.state,
-            &state.content,
-            &state.markdown_preview,
-            state.embedded_image_workflow.image_handles(),
-            &state.note_explorer,
-            &state.visualizer,
+        layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state.state,
+            content: &state.content,
+            markdown_content: &state.markdown_preview,
+            markdown_image_handles: state.embedded_image_workflow.image_handles(),
+            image_context_menu: state.image_context_menu.as_deref(),
+            image_context_position: state.image_context_position,
+            note_explorer_component: &state.note_explorer,
+            visualizer_component: &state.visualizer,
             preview_indicator_char_range,
-        )
+        })
     }
 
     pub fn scale_factor(state: &Self) -> f32 {
         state.state.ui_scale()
     }
 
-    // Keep subscription method as is
     pub fn subscription(_state: &Self) -> Subscription<Message> {
-        let keyboard_subscription =
-            iced::event::listen_with(|event, _status, _shell| match event {
-                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    // Handle primary command shortcuts:
-                    // - macOS: Cmd
-                    // - other platforms: Ctrl
-                    if modifiers.command()
-                        && let Key::Character(c) = &key
-                    {
-                        if c == "a" || c == "A" {
-                            return Some(Message::SelectAll);
-                        }
-                        if c == "z" || c == "Z" {
-                            if modifiers.shift() {
-                                return Some(Message::Redo);
-                            }
-                            return Some(Message::Undo);
-                        }
+        let input_subscription = iced::event::listen_with(|event, status, _shell| match event {
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                // Handle primary command shortcuts:
+                // - macOS: Cmd
+                // - other platforms: Ctrl
+                if modifiers.command()
+                    && let Key::Character(c) = &key
+                {
+                    if c == "a" || c == "A" {
+                        return Some(Message::SelectAll);
                     }
-
-                    // Handle Tab key press (no modifiers)
-                    if key == Key::Named(iced::keyboard::key::Named::Tab) && modifiers.is_empty() {
-                        return Some(Message::HandleTabKey);
+                    if c == "z" || c == "Z" {
+                        if modifiers.shift() {
+                            return Some(Message::Redo);
+                        }
+                        return Some(Message::Undo);
                     }
-
-                    None
                 }
-                _ => None,
-            });
+
+                // Handle Tab key press (no modifiers)
+                if key == Key::Named(iced::keyboard::key::Named::Tab) && modifiers.is_empty() {
+                    return Some(Message::HandleTabKey);
+                }
+
+                None
+            }
+            Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+                if status == iced::event::Status::Ignored =>
+            {
+                Some(Message::DismissMarkdownImageMenu)
+            }
+            _ => None,
+        });
 
         let close_request_subscription =
             window::close_requests().map(Message::WindowCloseRequested);
 
-        Subscription::batch(vec![keyboard_subscription, close_request_subscription])
+        Subscription::batch(vec![input_subscription, close_request_subscription])
     }
 }

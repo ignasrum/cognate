@@ -1,11 +1,12 @@
 [package]
 name = "cognate"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2024"
 rust-version = "1.94"
 
 [dependencies]
 iced = { version = "0.14", features = ["markdown", "image", "canvas", "tokio"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 axum = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

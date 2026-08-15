@@ -1,13 +1,10 @@
 use iced::widget::{Button, Column, Container, Row, Text, text_editor};
 use iced::{Element, Length};
-use std::collections::HashMap;
 
 use crate::components::editor::Message;
-use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::ui::dialogs;
 use crate::components::editor::ui::input_fields;
 use crate::components::note_explorer;
-use crate::components::visualizer;
 
 use super::preview;
 use super::search_results;
@@ -50,15 +47,11 @@ fn build_status_page<'a>(
         .into()
 }
 
-pub(super) fn build_main_content<'a>(
-    state: &'a EditorState,
-    content: &'a iced::widget::text_editor::Content,
-    markdown_content: &'a iced::widget::markdown::Content,
-    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
-    note_explorer_component: &'a note_explorer::NoteExplorer,
-    visualizer_component: &'a visualizer::Visualizer,
-    preview_indicator_char_range: Option<(usize, usize)>,
-) -> Element<'a, Message> {
+pub(super) fn build_main_content<'a>(context: super::LayoutContext<'a>) -> Element<'a, Message> {
+    let state = context.state;
+    let note_explorer_component = context.note_explorer_component;
+    let visualizer_component = context.visualizer_component;
+
     if state.show_about_info() {
         return dialogs::about_dialog(state.app_version());
     }
@@ -115,25 +108,17 @@ pub(super) fn build_main_content<'a>(
         .height(Length::Fill)
         .into();
     }
-
-    build_editor_workspace(
-        state,
-        content,
-        markdown_content,
-        markdown_image_handles,
-        note_explorer_component,
-        preview_indicator_char_range,
-    )
+    build_editor_workspace(context)
 }
-
-fn build_editor_workspace<'a>(
-    state: &'a EditorState,
-    content: &'a iced::widget::text_editor::Content,
-    markdown_content: &'a iced::widget::markdown::Content,
-    markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
-    note_explorer_component: &'a note_explorer::NoteExplorer,
-    preview_indicator_char_range: Option<(usize, usize)>,
-) -> Element<'a, Message> {
+fn build_editor_workspace<'a>(context: super::LayoutContext<'a>) -> Element<'a, Message> {
+    let state = context.state;
+    let note_explorer_component = context.note_explorer_component;
+    let content = context.content;
+    let markdown_content = context.markdown_content;
+    let markdown_image_handles = context.markdown_image_handles;
+    let image_context_menu = context.image_context_menu;
+    let image_context_position = context.image_context_position;
+    let preview_indicator_char_range = context.preview_indicator_char_range;
     let mut explorer_column = Column::new().spacing(8).width(Length::Fill);
 
     if !state.search_query().trim().is_empty() {
@@ -232,11 +217,12 @@ fn build_editor_workspace<'a>(
     let editor_container = Container::new(editor_scrollable)
         .width(Length::FillPortion(4))
         .height(Length::Fill);
-
     let markdown_preview_container = preview::build_markdown_preview_panel(
         state,
         markdown_content,
         markdown_image_handles,
+        image_context_menu,
+        image_context_position,
         preview_indicator_char_range,
     );
 

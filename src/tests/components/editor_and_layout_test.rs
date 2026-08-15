@@ -166,87 +166,101 @@ mod tests {
         ];
         let visualizer = visualizer::Visualizer::new();
 
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
 
         state.set_notebook_path("dummy".to_string());
         state.set_selected_note_path(Some("folder/note".to_string()));
         state.set_selected_note_labels(vec!["tag".to_string()]);
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            Some((0, 1)),
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: Some((0, 1)),
+        });
 
         state.set_show_about_info(true);
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
         state.set_show_about_info(false);
 
         state.set_show_visualizer(true);
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
         state.set_show_visualizer(false);
 
         state.show_new_note_dialog();
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
         state.hide_new_note_dialog();
 
         state.show_move_note_dialog("folder".to_string());
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
         state.hide_move_note_dialog();
 
         state.show_embedded_image_delete_dialog(2);
-        let _ = layout::generate_layout(
-            &state,
-            &content,
-            &markdown_content,
-            &markdown_image_handles,
-            &explorer,
-            &visualizer,
-            None,
-        );
+        let _ = layout::generate_layout_with_image_context(layout::LayoutContext {
+            state: &state,
+            content: &content,
+            markdown_content: &markdown_content,
+            markdown_image_handles: &markdown_image_handles,
+            image_context_menu: None,
+            image_context_position: None,
+            note_explorer_component: &explorer,
+            visualizer_component: &visualizer,
+            preview_indicator_char_range: None,
+        });
         state.hide_embedded_image_delete_dialog();
 
         let _ = dialogs::about_dialog("0.2.0");

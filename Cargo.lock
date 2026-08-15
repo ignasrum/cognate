@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "cognate"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "arboard",
  "axum",
@@ -746,6 +746,7 @@ dependencies = [
  "cognate-api",
  "cognate-engine",
  "iced",
+ "image",
  "native-dialog",
  "png 0.17.16",
  "pulldown-cmark 0.13.1",

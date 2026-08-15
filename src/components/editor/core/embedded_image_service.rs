@@ -10,6 +10,7 @@ use super::preview::{extract_embedded_image_ids, preview_markdown_after_action};
 pub(super) struct EmbeddedImageWorkflow {
     images: HashMap<String, String>,
     image_handles: HashMap<String, iced::widget::image::Handle>,
+    image_bytes: HashMap<String, Vec<u8>>,
     pending_deletion_ids: HashSet<String>,
     pending_delete_action: Option<Action>,
     prompt_note_path: Option<String>,
@@ -19,11 +20,13 @@ impl EmbeddedImageWorkflow {
     pub fn images(&self) -> &HashMap<String, String> {
         &self.images
     }
-
     pub fn image_handles(&self) -> &HashMap<String, iced::widget::image::Handle> {
         &self.image_handles
     }
 
+    pub fn image_source(&self, image_id: &str) -> Option<&str> {
+        self.images.get(image_id).map(String::as_str)
+    }
     pub fn set_loaded_images(&mut self, images: HashMap<String, String>) {
         self.images = images;
     }
@@ -31,6 +34,7 @@ impl EmbeddedImageWorkflow {
     pub fn clear_all(&mut self) {
         self.images.clear();
         self.image_handles.clear();
+        self.image_bytes.clear();
         self.pending_deletion_ids.clear();
         self.pending_delete_action = None;
         self.prompt_note_path = None;
@@ -102,6 +106,8 @@ impl EmbeddedImageWorkflow {
     }
 
     fn sync_embedded_image_handles(&mut self, notebook_path: &str) -> Task<Message> {
+        self.image_bytes
+            .retain(|image_id, _| self.images.contains_key(image_id));
         if crate::notebook::is_api_backend() {
             self.image_handles
                 .retain(|image_id, _| self.images.contains_key(image_id));
@@ -126,8 +132,13 @@ impl EmbeddedImageWorkflow {
     }
 
     pub fn insert_image_handle(&mut self, image_id: String, bytes: Vec<u8>) {
+        self.image_bytes.insert(image_id.clone(), bytes.clone());
         self.image_handles
             .insert(image_id, iced::widget::image::Handle::from_bytes(bytes));
+    }
+
+    pub fn image_bytes(&self, image_id: &str) -> Option<&[u8]> {
+        self.image_bytes.get(image_id).map(Vec::as_slice)
     }
 
     pub fn dereferenced_for_action(

@@ -35,6 +35,20 @@ fn open_markdown_link(uri: &str) -> Result<(), String> {
         .map_err(|error| format!("could not open link {uri}: {error}"))
 }
 
+fn copy_markdown_image(bytes: &[u8]) -> Result<(), String> {
+    let decoded = image::load_from_memory(bytes).map_err(|error| error.to_string())?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+    clipboard
+        .set_image(arboard::ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+        })
+        .map_err(|error| error.to_string())
+}
+
 pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
     match message {
         Message::InitiateFolderRename(folder_path) => {
@@ -54,6 +68,59 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
             state.state.toggle_about_info();
             Task::none()
         }
+        Message::MarkdownLinkClicked(uri) => {
+            Task::perform(async move { open_markdown_link(&uri) }, |result| {
+                if let Err(error) = result {
+                    eprintln!("{error}");
+                }
+                Message::Dummy
+            })
+        }
+        Message::MarkdownImageCursorMoved(position) => {
+            if state.image_context_menu.is_none() {
+                state.image_context_position = Some(position);
+            }
+            Task::none()
+        }
+        Message::ShowMarkdownImageMenu(image_id) => {
+            state.image_context_menu = Some(image_id);
+            Task::none()
+        }
+        Message::DismissMarkdownImageMenu => {
+            state.image_context_menu = None;
+            state.image_context_position = None;
+            Task::none()
+        }
+        Message::CopyMarkdownImage(image_id) => {
+            state.image_context_menu = None;
+            state.image_context_position = None;
+            if let Some(bytes) = state.embedded_image_workflow.image_bytes(&image_id) {
+                if let Err(error) = copy_markdown_image(bytes) {
+                    eprintln!("could not copy image {image_id}: {error}");
+                }
+                return Task::none();
+            }
+
+            let Some(source) = state.embedded_image_workflow.image_source(&image_id) else {
+                return Task::none();
+            };
+            let notebook_path = state.state.notebook_path().to_string();
+            let source = source.to_string();
+            Task::perform(
+                crate::notebook::download_attachment(notebook_path, source),
+                move |result| {
+                    match result {
+                        Ok(bytes) => {
+                            if let Err(error) = copy_markdown_image(&bytes) {
+                                eprintln!("could not copy image {image_id}: {error}");
+                            }
+                        }
+                        Err(error) => eprintln!("could not load image {image_id}: {error}"),
+                    }
+                    Message::Dummy
+                },
+            )
+        }
         Message::IncreaseScale => {
             let new_scale = round_scale_step((state.state.ui_scale() + 0.1).min(4.0));
             state.state.set_ui_scale(new_scale);
@@ -63,14 +130,6 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
             let new_scale = round_scale_step((state.state.ui_scale() - 0.1).max(0.5));
             state.state.set_ui_scale(new_scale);
             state.persist_scale_task()
-        }
-        Message::MarkdownLinkClicked(uri) => {
-            Task::perform(async move { open_markdown_link(&uri) }, |result| {
-                if let Err(error) = result {
-                    eprintln!("{error}");
-                }
-                Message::Dummy
-            })
         }
         Message::ConflictKeepServer => {
             let Some(conflict) = state.state.conflict().cloned() else {

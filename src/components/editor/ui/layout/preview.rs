@@ -1,4 +1,4 @@
-use iced::widget::{Column, Container, Row, Text, image, markdown, rich_text};
+use iced::widget::{Column, Container, Row, Text, button, image, markdown, pin, rich_text, stack};
 use iced::{Element, Length};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -11,6 +11,8 @@ use super::MARKDOWN_PREVIEW_SCROLLABLE_ID;
 
 struct MarkdownPreviewViewer<'a> {
     image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    image_context_menu: Option<&'a str>,
+    image_context_position: Option<iced::Point>,
     indicator_char_range: Option<(usize, usize)>,
     consumed_chars: Cell<usize>,
 }
@@ -27,20 +29,33 @@ impl<'a> markdown::Viewer<'a, Message> for MarkdownPreviewViewer<'a> {
         title: &'a str,
         _alt: &markdown::Text,
     ) -> Element<'a, Message> {
-        if let Some(image_handle) = self.image_handles.get(url.as_str()) {
-            return image(image_handle.clone())
-                .width(Length::Fill)
-                .content_fit(iced::ContentFit::Contain)
-                .into();
-        }
+        let image_id = if self.image_handles.contains_key(url.as_str()) {
+            Some(url.as_str())
+        } else {
+            url.strip_prefix("cognate-image://")
+                .filter(|id| self.image_handles.contains_key(*id))
+        };
 
-        if let Some(image_id) = url.strip_prefix("cognate-image://")
-            && let Some(image_handle) = self.image_handles.get(image_id)
-        {
-            return image(image_handle.clone())
-                .width(Length::Fill)
-                .content_fit(iced::ContentFit::Contain)
-                .into();
+        if let Some(image_id) = image_id {
+            let image_element: Element<'a, Message> = iced::widget::mouse_area(
+                image(self.image_handles[image_id].clone())
+                    .width(Length::Fill)
+                    .content_fit(iced::ContentFit::Contain),
+            )
+            .on_move(Message::MarkdownImageCursorMoved)
+            .on_right_release(Message::ShowMarkdownImageMenu(image_id.to_string()))
+            .into();
+
+            if self.image_context_menu == Some(image_id)
+                && let Some(position) = self.image_context_position
+            {
+                let menu = button("Copy image")
+                    .on_press(Message::CopyMarkdownImage(image_id.to_string()))
+                    .padding(8);
+                return stack![image_element, pin(menu).position(position)].into();
+            }
+
+            return image_element;
         }
 
         let fallback_text = if title.is_empty() {
@@ -214,16 +229,19 @@ fn split_markdown_spans_by_newline_with_indicator(
     consumed_chars.set(global_char_index);
     lines
 }
-
 pub(super) fn build_markdown_preview_panel<'a>(
     state: &'a EditorState,
     markdown_content: &'a iced::widget::markdown::Content,
     markdown_image_handles: &'a HashMap<String, iced::widget::image::Handle>,
+    image_context_menu: Option<&'a str>,
+    image_context_position: Option<iced::Point>,
     preview_indicator_char_range: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
     let markdown_preview_body: Element<'_, Message> = if state.selected_note_path().is_some() {
         let preview_viewer = MarkdownPreviewViewer {
             image_handles: markdown_image_handles,
+            image_context_menu,
+            image_context_position,
             indicator_char_range: preview_indicator_char_range,
             consumed_chars: Cell::new(0),
         };
@@ -250,17 +268,20 @@ pub(super) fn build_markdown_preview_panel<'a>(
             snap: false,
         });
 
-    let markdown_preview_with_padding = Row::new()
-        .push(markdown_preview_frame)
-        .push(Container::new(Text::new("").width(Length::Fixed(20.0))))
-        .width(Length::Fill);
+    let mut preview_column = Column::new();
+    preview_column = preview_column.push(
+        Row::new()
+            .push(markdown_preview_frame)
+            .push(Container::new(Text::new("").width(Length::Fixed(20.0))))
+            .width(Length::Fill),
+    );
 
-    let markdown_preview_scrollable = iced::widget::scrollable(markdown_preview_with_padding)
+    let preview_surface = iced::widget::scrollable(preview_column)
         .width(Length::Fill)
         .height(Length::Fill)
         .id(MARKDOWN_PREVIEW_SCROLLABLE_ID);
 
-    Container::new(markdown_preview_scrollable)
+    Container::new(preview_surface)
         .width(Length::FillPortion(4))
         .height(Length::Fill)
         .into()

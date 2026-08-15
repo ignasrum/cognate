@@ -83,6 +83,10 @@ fn message_domain(message: &Message) -> MessageDomain {
         | Message::IncreaseScale
         | Message::DecreaseScale
         | Message::MarkdownLinkClicked(_)
+        | Message::MarkdownImageCursorMoved(_)
+        | Message::ShowMarkdownImageMenu(_)
+        | Message::DismissMarkdownImageMenu
+        | Message::CopyMarkdownImage(_)
         | Message::Dummy => MessageDomain::Ui,
     }
 }
