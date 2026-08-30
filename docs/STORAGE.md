@@ -69,7 +69,7 @@ The metadata is serialized as a JSON object matching the `NotebookMetadata` stru
 
 ## 3. Storage Operations & Consistency Guarantees
 
-Cognate prioritizes data integrity and implements several layers of reliability mechanisms in `cognate-engine/src/storage/notebook.rs`, `cognate-engine/src/storage/concurrency.rs`, and the desktop adapters under `src/notebook/`.
+Cognate prioritizes data integrity and implements several layers of reliability mechanisms in `cognate-engine/src/storage/notebook.rs`, `cognate-engine/src/storage/concurrency.rs`, and the desktop adapters under `cognate-ui/src/notebook/`.
 
 ### Concurrency and Cross-Process Writes
 
@@ -175,7 +175,7 @@ self-hosted API. The API process is the only storage boundary used by the UI.
 Cognate supports embedding images directly into Markdown notes via pastes or file paths. Images are stored inside the `images/` directory within the corresponding note folder.
 
 ### A. Paste and Clipboard Processing
-Pasting imagery (handled in `src/components/editor/core/clipboard.rs`) supports two methods:
+Pasting imagery (handled in `cognate-ui/src/components/editor/core/clipboard.rs`) supports two methods:
 1. **File Copy-Paste**: If the clipboard contains path text or `file://` URIs, Cognate parses and checks if the target file represents a supported image type. If so, it reads the image binary off disk and encodes it to base64.
 2. **Raw Bitmap Paste**: If the clipboard contains direct image data (e.g., from taking a screenshot), Cognate uses the `png` crate to encode the raw pixel bytes into a standard PNG byte vector, then base64-encodes it.
 
@@ -195,7 +195,7 @@ attachment API and written by `cognate-engine` inside the note's storage directo
    `![image](images/img_<id>.<ext>)`
 
 ### C. Resolution and UI Rendering
-During text rendering or markdown preview (handled in `src/components/editor/core/embedded_image_service.rs`):
+During text rendering or markdown preview (handled in `cognate-ui/src/components/editor/core/embedded_image_service.rs`):
 - Cognate parses the current Markdown text for image reference IDs (e.g. `images/img_<id>.<ext>`) using regular expressions (`extract_embedded_image_ids`).
 - The `EmbeddedImageWorkflow` struct maps these IDs to API attachment paths.
 - The service downloads attachment bytes through the API and produces Iced UI image handles (`iced::widget::image::Handle::from_bytes`) to render them in the preview canvas.

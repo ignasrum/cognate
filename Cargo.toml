@@ -1,30 +1,4 @@
-[package]
-name = "cognate"
-version = "0.7.4"
-edition = "2024"
-rust-version = "1.94"
-
-[dependencies]
-iced = { version = "0.14", features = ["markdown", "image", "canvas", "tokio"] }
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-axum = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-pulldown-cmark = "0.13.1"
-native-dialog = "0.9.6"
-toml = "1.0"
-time = { version = "0.3", features = ["formatting", "parsing"] }
-arboard = "3.6.1"
-base64 = "0.22.1"
-png = "0.17.16"
-thiserror = "2.0"
-tokio = { version = "1", features = ["fs", "sync", "rt", "macros", "net", "time"] }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
-cognate-engine = { path = "cognate-engine" }
-cognate-api = { path = "cognate-api" }
-
 [workspace]
-members = ["cognate-engine", "cognate-api"]
-
-[dev-dependencies]
-tempfile = "3"
+resolver = "3"
+members = ["cognate-ui", "cognate-engine", "cognate-api"]
+default-members = ["cognate-ui"]

@@ -13,19 +13,19 @@ Cognate is a desktop app with a message-driven UI and an API-backed notebook dom
 
 ## Core Modules
 
-### `src/components/editor`
+### `cognate-ui/src/components/editor`
 
 - Main application state holder and update dispatcher
 - Coordinates text editing, note lifecycle flows, labels, search, and shutdown flushes
 - Renders the main workspace through `ui/layout.rs`
 
-### `src/components/note_explorer`
+### `cognate-ui/src/components/note_explorer`
 
 - Loads note metadata from notebook storage
 - Maintains expanded/collapsed folder state
 - Renders a tree view and emits selection/rename-intent messages
 
-### `src/components/visualizer`
+### `cognate-ui/src/components/visualizer`
 
 - Builds a graph from notes and labels
 - Handles camera focus and canvas interactions
@@ -41,7 +41,7 @@ Visualizer:
 
 ![Visualizer](visualizer.png)
 
-### `src/notebook`
+### `cognate-ui/src/notebook`
 
 - `backend.rs`: backend selection, lifecycle, revisions, and public notebook operation facade
 - `api_client.rs`: authenticated HTTP requests, URL construction, response decoding, and retry classification
@@ -83,8 +83,8 @@ and client metadata in SQLite, and delegates notebook mutations to `cognate-engi
 Public HTTPS termination is provided by an external reverse proxy; the API process does
 not manage certificates.
 
-Route composition lives in `src/api.rs`. Attachment and search handlers are separated into
-`src/routes/admin.rs`, `src/routes/attachments.rs`, and `src/routes/search.rs`; route handlers still delegate all
+Route composition lives in `cognate-api/src/api.rs`. Attachment and search handlers are separated into
+`cognate-api/src/routes/admin.rs`, `cognate-api/src/routes/attachments.rs`, and `cognate-api/src/routes/search.rs`; route handlers still delegate all
 filesystem access, locking, revisions, and indexing to `AppState` and `cognate-engine`.
 
 In local mode, Cognate embeds this service on an ephemeral loopback port with an
@@ -142,7 +142,7 @@ This keeps UI behavior deterministic and testable through message transitions.
 
 ## Where to Add Features
 
-- New editor commands: `components/editor` message + handler + layout control
-- New notebook mutations: `notebook/operations.rs` and related tests
-- New visualization behavior: `components/visualizer` graph/canvas modules
-- New config fields: `configuration/reader.rs` and config tests
+- New editor commands: `cognate-ui/src/components/editor` message + handler + layout control
+- New notebook mutations: `cognate-ui/src/notebook/operations.rs` and related tests
+- New visualization behavior: `cognate-ui/src/components/visualizer` graph/canvas modules
+- New config fields: `cognate-ui/src/configuration/reader.rs` and config tests

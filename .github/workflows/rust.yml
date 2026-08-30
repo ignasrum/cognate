@@ -23,7 +23,7 @@ jobs:
     - name: Run clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
     - name: Run tests
       env:
         COGNATE_REQUIRE_SOCKET_TESTS: "1"

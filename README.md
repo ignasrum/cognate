@@ -38,12 +38,15 @@ Use `make`:
 - `make test` runs the full test suite
 - `make help` lists all targets
 
-Or use Cargo directly:
+Or use Cargo directly from the repository root. The desktop application is the `cognate` package in `cognate-ui/`, configured as the workspace default member:
 
 ```bash
 cargo build --release
 cargo run --release
+cargo run -p cognate --release
 ```
+
+Use `cargo test --workspace` to test the desktop UI, API, and engine packages together.
 
 ### Configuration
 
@@ -167,7 +170,9 @@ When a conflict is detected, the editor shows the local draft and server version
 
 ## Project Layout
 
-- `src/components` contains UI/editor components
-- `src/notebook` implements the API client and runtime storage integration
-- `src/configuration` handles config parsing and theme mapping
-- `src/tests` contains integration-style unit tests across modules
+- `cognate-ui/src/components` contains UI/editor components
+- `cognate-ui/src/notebook` implements the desktop API client and runtime storage integration
+- `cognate-ui/src/configuration` handles config parsing and theme mapping
+- `cognate-ui/src/tests` contains desktop package tests
+- `cognate-api` contains the standalone HTTP service
+- `cognate-engine` contains shared notebook persistence, locking, attachments, and search
