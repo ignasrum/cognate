@@ -7,6 +7,15 @@ use crate::components::editor::text_management::undo_manager::UndoManager;
 use crate::components::note_explorer;
 use crate::components::note_explorer::NoteExplorer;
 use crate::notebook::{self, NoteMetadata, NotebookError};
+fn remap_note_path(path: &str, old_path: &str, new_path: &str) -> Option<String> {
+    if path == old_path {
+        return Some(new_path.to_string());
+    }
+
+    path.strip_prefix(old_path)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .map(|suffix| format!("{new_path}/{suffix}"))
+}
 
 // Handle confirm move note
 pub fn handle_confirm_move_note(
@@ -68,7 +77,7 @@ pub fn handle_confirm_move_note(
 pub fn handle_note_moved(
     result: Result<String, NotebookError>,
     old_path: String,
-    _state: &mut EditorState,
+    state: &mut EditorState,
     undo_manager: &mut UndoManager,
     note_explorer: &mut NoteExplorer,
 ) -> Task<Message> {
@@ -77,12 +86,22 @@ pub fn handle_note_moved(
             #[cfg(debug_assertions)]
             eprintln!("Item moved/renamed successfully to: {}", new_rel_path);
 
-            // If we're moving a note that had an undo history, update the key
-            undo_manager.handle_path_change(&old_path, &new_rel_path);
+            let selected_note_path = state
+                .selected_note_path()
+                .and_then(|path| remap_note_path(path, &old_path, &new_rel_path));
+            undo_manager.handle_path_prefix_change(&old_path, &new_rel_path);
 
-            note_explorer
+            if let Some(new_selected_path) = &selected_note_path {
+                state.set_selected_note_path(Some(new_selected_path.clone()));
+            }
+
+            let reload_task = note_explorer
                 .update(note_explorer::Message::LoadNotes)
-                .map(Message::NoteExplorerMsg)
+                .map(Message::NoteExplorerMsg);
+            let select_task = selected_note_path
+                .map(|path| Task::perform(async move { path }, Message::NoteSelected))
+                .unwrap_or_else(Task::none);
+            Task::batch(vec![reload_task, select_task])
         }
         Err(_err) => {
             #[cfg(debug_assertions)]

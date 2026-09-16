@@ -63,10 +63,6 @@ pub(super) fn handle_shutdown(state: &mut Editor, message: Message) -> Task<Mess
                 return Task::none();
             }
 
-            if state.state.connection_error().is_some() {
-                return window::close(window_id);
-            }
-
             state.shutdown_in_progress = true;
 
             let notebook_path = state.state.notebook_path().to_string();
@@ -155,25 +151,51 @@ pub(super) fn handle_save_feedback(state: &mut Editor, message: Message) -> Task
             }
             Task::none()
         }
-        Message::NoteContentSaved(result) => {
-            if let Err(error) = result {
-                if open_conflict_dialog(state, error.clone()) {
-                    return Task::none();
+        Message::NoteContentSaved(save) => {
+            let is_current_note = state
+                .state
+                .selected_note_path()
+                .is_some_and(|selected| selected == &save.note_path)
+                && state.content_note_path.as_deref() == Some(save.note_path.as_str());
+            if !is_current_note || state.markdown_text != save.content {
+                return Task::none();
+            }
+
+            match save.result {
+                Err(error) => {
+                    if open_conflict_dialog(state, error.clone()) {
+                        return Task::none();
+                    }
+                    report_persistence_error(
+                        "Failed to Save Note Content",
+                        &format!(
+                            "Cognate could not save note content to disk:\n\n{}",
+                            error.ui_message()
+                        ),
+                    );
                 }
+                Ok(()) => {
+                    state.loaded_markdown_text = save.content;
+                    // API note writes update the metadata timestamp as part of the
+                    // same conditional write. Keep shutdown's metadata snapshot in
+                    // sync so it does not issue a second, stale metadata request.
+                    state.persisted_metadata = state.note_explorer.notes.clone();
+                    #[cfg(debug_assertions)]
+                    eprintln!("Note content saved successfully.");
+                }
+            }
+            Task::none()
+        }
+        Message::AttachmentDeleted(rel_path, result) => {
+            if let Err(error) = result {
                 report_persistence_error(
-                    "Failed to Save Note Content",
+                    "Failed to Delete Embedded Attachment",
                     &format!(
-                        "Cognate could not save note content to disk:\n\n{}",
+                        "Cognate could not delete attachment '{}':\n\n{}",
+                        rel_path,
                         error.ui_message()
                     ),
                 );
-            } else {
-                // API note writes update the metadata timestamp as part of the
-                // same conditional write. Keep shutdown's metadata snapshot in
-                // sync so it does not issue a second, stale metadata request.
-                state.persisted_metadata = state.note_explorer.notes.clone();
-                #[cfg(debug_assertions)]
-                eprintln!("Note content saved successfully.");
             }
             Task::none()
         }

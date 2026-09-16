@@ -29,7 +29,7 @@ mod tests {
         assert_eq!(undo.get_previous_content("note/a"), Some("v1".to_string()));
         assert_eq!(undo.get_previous_content("note/a"), None);
 
-        undo.handle_path_change("note/a", "note/b");
+        undo.handle_path_prefix_change("note/a", "note/b");
         assert_eq!(undo.get_previous_content("note/b"), None);
 
         undo.add_to_history("note/b", "v3".to_string(), cursor(0, 1));

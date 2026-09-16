@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::components::editor::note_coordinator::NoteContentSaveResult;
     use crate::components::editor::state::editor_state::EditorState;
     use crate::components::editor::ui::{dialogs, input_fields, layout};
     use crate::components::editor::{Editor, Message as EditorMessage};
@@ -64,8 +65,16 @@ mod tests {
             EditorMessage::NoteDeleted(Err(sample_error.clone()), "to/delete".to_string()),
             EditorMessage::MetadataSaved(Ok(()), None),
             EditorMessage::MetadataSaved(Err(sample_error.clone()), None),
-            EditorMessage::NoteContentSaved(Ok(())),
-            EditorMessage::NoteContentSaved(Err(sample_error.clone())),
+            EditorMessage::NoteContentSaved(NoteContentSaveResult {
+                note_path: String::new(),
+                content: String::new(),
+                result: Ok(()),
+            }),
+            EditorMessage::NoteContentSaved(NoteContentSaveResult {
+                note_path: String::new(),
+                content: String::new(),
+                result: Err(sample_error.clone()),
+            }),
             EditorMessage::LoadedNoteContent(Ok(
                 crate::components::editor::note_coordinator::LoadedNotePayload {
                     note_path: "folder/note".to_string(),

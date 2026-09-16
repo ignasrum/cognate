@@ -8,6 +8,7 @@ use super::clipboard::{
     read_clipboard_paste_payload,
 };
 use super::*;
+use crate::components::editor::note_coordinator;
 use crate::components::editor::text_management::undo_manager;
 
 impl Editor {
@@ -177,28 +178,55 @@ impl Editor {
                 }
                 state.with_preview_scroll_task(Task::batch(vec![task, sync_task]))
             }
-            Message::AttachmentLoaded(image_id, result) => match result {
-                Ok(bytes) => {
-                    state
-                        .embedded_image_workflow
-                        .insert_image_handle(image_id, bytes);
-                    state.sync_markdown_preview()
-                }
-                Err(_err) => {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Failed to load image handle {}: {}", image_id, _err);
-                    Task::none()
-                }
-            },
-            Message::PastedImageSaved(result) => {
-                let Some(selected_note_path) = state.state.selected_note_path().cloned() else {
+            Message::AttachmentLoaded(image_id, image_rel_path, result) => {
+                if state.embedded_image_workflow.image_source(&image_id)
+                    != Some(image_rel_path.as_str())
+                {
                     return Task::none();
-                };
+                }
+                match result {
+                    Ok(bytes) => {
+                        state
+                            .embedded_image_workflow
+                            .insert_image_handle(image_id, bytes);
+                        state.sync_markdown_preview()
+                    }
+                    Err(_err) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Failed to load image handle {}: {}", image_id, _err);
+                        Task::none()
+                    }
+                }
+            }
+            Message::PastedImageSaved(note_path, result) => {
+                let is_current_note = state
+                    .state
+                    .selected_note_path()
+                    .is_some_and(|selected| selected == &note_path)
+                    && state.content_note_path.as_deref() == Some(note_path.as_str());
+                if !is_current_note {
+                    if let Ok(relative_path) = result {
+                        let notebook_path = state.state.notebook_path().to_string();
+                        let attachment_path = format!("{note_path}/{relative_path}");
+                        return Task::perform(
+                            async move {
+                                let result = crate::notebook::delete_attachment(
+                                    notebook_path,
+                                    attachment_path.clone(),
+                                )
+                                .await;
+                                (attachment_path, result)
+                            },
+                            |(path, result)| Message::AttachmentDeleted(path, result),
+                        );
+                    }
+                    return Task::none();
+                }
 
                 match result {
                     Ok(relative_path) => {
                         state.undo_manager.add_to_history(
-                            &selected_note_path,
+                            &note_path,
                             state.markdown_text.clone(),
                             state.content.cursor(),
                         );
@@ -213,13 +241,13 @@ impl Editor {
                         let sync_task = state.sync_markdown_preview();
 
                         let notebook_path = state.state.notebook_path().to_string();
-                        let note_path = selected_note_path;
                         let content_text = state.markdown_text.clone();
                         let save_content_task = Task::perform(
-                            async move {
-                                notebook::save_note_content(notebook_path, note_path, content_text)
-                                    .await
-                            },
+                            note_coordinator::save_note_content_with_context(
+                                notebook_path,
+                                note_path,
+                                content_text,
+                            ),
                             Message::NoteContentSaved,
                         );
 
@@ -267,6 +295,7 @@ impl Editor {
                     return Task::none();
                 };
                 let notebook_path = state.state.notebook_path().to_string();
+                let note_path_for_message = selected_note_path.clone();
                 Task::perform(
                     async move {
                         let bytes = base64::engine::general_purpose::STANDARD
@@ -276,7 +305,7 @@ impl Editor {
                             .await
                             .map_err(|error| error.to_string())
                     },
-                    Message::PastedImageSaved,
+                    move |result| Message::PastedImageSaved(note_path_for_message, result),
                 )
             }
             Some(ClipboardPastePayload::Text(text_to_paste)) => {
@@ -354,6 +383,7 @@ impl Editor {
         };
 
         let notebook_path = state.state.notebook_path().to_string();
+        let note_path_for_message = selected_note_path.clone();
         Task::perform(
             async move {
                 let bytes = base64::engine::general_purpose::STANDARD
@@ -363,7 +393,7 @@ impl Editor {
                     .await
                     .map_err(|error| error.to_string())
             },
-            Message::PastedImageSaved,
+            move |result| Message::PastedImageSaved(note_path_for_message, result),
         )
     }
 }

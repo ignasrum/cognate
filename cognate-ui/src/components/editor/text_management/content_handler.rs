@@ -2,9 +2,9 @@ use iced::task::Task;
 use iced::widget::text_editor::{Action, Content, Edit}; // Use Task instead of Command
 
 use crate::components::editor::Message;
+use crate::components::editor::note_coordinator;
 use crate::components::editor::state::editor_state::EditorState;
 use crate::components::editor::text_management::undo_manager::UndoManager;
-use crate::notebook;
 
 fn should_debounce_undo_for_edit(edit: &Edit) -> bool {
     matches!(
@@ -52,7 +52,11 @@ pub fn handle_tab_key(
                 note_path
             );
             return Task::perform(
-                async move { notebook::save_note_content(notebook_path, note_path, content_text).await },
+                note_coordinator::save_note_content_with_context(
+                    notebook_path,
+                    note_path,
+                    content_text,
+                ),
                 Message::NoteContentSaved,
             );
         }
@@ -122,10 +126,11 @@ pub fn handle_editor_action(
                 note_path_clone
             );
             return Task::perform(
-                async move {
-                    notebook::save_note_content(notebook_path_clone, note_path_clone, content_text)
-                        .await
-                },
+                note_coordinator::save_note_content_with_context(
+                    notebook_path_clone,
+                    note_path_clone,
+                    content_text,
+                ),
                 Message::NoteContentSaved,
             );
         }

@@ -6,8 +6,8 @@ use std::collections::HashMap; // Use Task instead of Command
 use std::time::{Duration, Instant};
 
 use crate::components::editor::Message;
+use crate::components::editor::note_coordinator;
 use crate::components::editor::state::editor_state::EditorState;
-use crate::notebook;
 
 pub struct UndoManager {
     undo_histories: HashMap<String, Vec<UndoSnapshot>>, // Store previous states for undo per note
@@ -63,6 +63,31 @@ fn cursor_at_end(content: &str) -> Cursor {
 const EDIT_UNDO_DEBOUNCE_WINDOW: Duration = Duration::from_millis(120);
 #[cfg(not(test))]
 const EDIT_UNDO_DEBOUNCE_WINDOW: Duration = Duration::from_millis(750);
+
+fn remap_path_prefix(path: &str, old_path: &str, new_path: &str) -> Option<String> {
+    if path == old_path {
+        return Some(new_path.to_string());
+    }
+
+    path.strip_prefix(old_path)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .map(|suffix| format!("{new_path}/{suffix}"))
+}
+
+fn remap_map_keys<T>(map: &mut HashMap<String, T>, old_path: &str, new_path: &str) {
+    let changes: Vec<_> = map
+        .keys()
+        .filter_map(|path| {
+            remap_path_prefix(path, old_path, new_path).map(|new_path| (path.clone(), new_path))
+        })
+        .collect();
+
+    for (old_path, new_path) in changes {
+        if let Some(value) = map.remove(&old_path) {
+            map.insert(new_path, value);
+        }
+    }
+}
 
 impl UndoManager {
     pub fn new() -> Self {
@@ -285,41 +310,11 @@ impl UndoManager {
             .map(|snapshot| snapshot.content)
     }
 
-    pub fn handle_path_change(&mut self, old_path: &str, new_path: &str) {
-        // Update the history collection
-        if let Some(history) = self.undo_histories.remove(old_path) {
-            self.undo_histories.insert(new_path.to_string(), history);
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Updated undo history key from '{}' to '{}'",
-                old_path, new_path
-            );
-        }
-
-        // Update redo history collection
-        if let Some(history) = self.redo_histories.remove(old_path) {
-            self.redo_histories.insert(new_path.to_string(), history);
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Updated redo history key from '{}' to '{}'",
-                old_path, new_path
-            );
-        }
-
-        // Update the index collection
-        if let Some(index) = self.undo_indices.remove(old_path) {
-            self.undo_indices.insert(new_path.to_string(), index);
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Updated undo index key from '{}' to '{}'",
-                old_path, new_path
-            );
-        }
-
-        if let Some(timestamp) = self.last_edit_timestamps.remove(old_path) {
-            self.last_edit_timestamps
-                .insert(new_path.to_string(), timestamp);
-        }
+    pub fn handle_path_prefix_change(&mut self, old_path: &str, new_path: &str) {
+        remap_map_keys(&mut self.undo_histories, old_path, new_path);
+        remap_map_keys(&mut self.redo_histories, old_path, new_path);
+        remap_map_keys(&mut self.undo_indices, old_path, new_path);
+        remap_map_keys(&mut self.last_edit_timestamps, old_path, new_path);
     }
 
     pub fn remove_history(&mut self, note_path: &str) {
@@ -373,14 +368,11 @@ pub fn handle_undo(
                 let note_path_clone = note_path.clone();
 
                 return Task::perform(
-                    async move {
-                        notebook::save_note_content(
-                            notebook_path_clone,
-                            note_path_clone,
-                            previous_snapshot.content,
-                        )
-                        .await
-                    },
+                    note_coordinator::save_note_content_with_context(
+                        notebook_path_clone,
+                        note_path_clone,
+                        previous_snapshot.content,
+                    ),
                     Message::NoteContentSaved,
                 );
             } else {
@@ -431,14 +423,11 @@ pub fn handle_redo(
                 let note_path_clone = note_path.clone();
 
                 return Task::perform(
-                    async move {
-                        notebook::save_note_content(
-                            notebook_path_clone,
-                            note_path_clone,
-                            next_snapshot.content,
-                        )
-                        .await
-                    },
+                    note_coordinator::save_note_content_with_context(
+                        notebook_path_clone,
+                        note_path_clone,
+                        next_snapshot.content,
+                    ),
                     Message::NoteContentSaved,
                 );
             } else {

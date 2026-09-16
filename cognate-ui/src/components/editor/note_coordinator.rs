@@ -13,6 +13,26 @@ pub(crate) struct LoadedNotePayload {
     pub content: String,
     pub images: HashMap<String, String>,
 }
+#[derive(Debug, Clone)]
+pub(crate) struct NoteContentSaveResult {
+    pub(crate) note_path: String,
+    pub(crate) content: String,
+    pub(crate) result: Result<(), NotebookError>,
+}
+
+pub(crate) async fn save_note_content_with_context(
+    notebook_path: String,
+    note_path: String,
+    content: String,
+) -> NoteContentSaveResult {
+    let result =
+        notebook::save_note_content(notebook_path, note_path.clone(), content.clone()).await;
+    NoteContentSaveResult {
+        note_path,
+        content,
+        result,
+    }
+}
 
 pub async fn load_note_payload(
     notebook_path: String,
@@ -57,9 +77,9 @@ pub async fn flush_for_shutdown(
         if let Err(error) = result {
             if notebook::is_api_backend() && is_transient_api_error(&error) {
                 eprintln!("[cognate] shutdown_saved_to_offline_queue: {error}");
-                return Ok(());
+            } else {
+                return Err(error);
             }
-            return Err(error);
         }
     }
 

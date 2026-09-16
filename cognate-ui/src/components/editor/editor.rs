@@ -164,9 +164,12 @@ impl Editor {
                     let rel = image_rel_path.clone();
                     deletion_tasks.push(Task::perform(
                         async move {
-                            let _ = crate::notebook::delete_attachment(notebook_path, rel).await;
+                            let result =
+                                crate::notebook::delete_attachment(notebook_path, rel.clone())
+                                    .await;
+                            (rel, result)
                         },
-                        |_| Message::Dummy,
+                        |(rel, result)| Message::AttachmentDeleted(rel, result),
                     ));
                 }
             }
@@ -388,6 +391,10 @@ impl Editor {
             self.markdown_text.clone(),
             self.note_explorer.notes.clone(),
         )
+    }
+    #[cfg(test)]
+    pub(crate) fn debug_content_dirty(&self) -> bool {
+        self.content_dirty()
     }
 
     fn content_dirty(&self) -> bool {

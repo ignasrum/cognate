@@ -116,21 +116,6 @@ impl NotebookError {
         }
     }
 
-    pub fn conflict(
-        context: &'static str,
-        local_content: impl Into<String>,
-        server_content: impl Into<String>,
-        server_revision: impl Into<String>,
-    ) -> Self {
-        Self::Conflict {
-            context,
-            note_path: None,
-            local_content: local_content.into(),
-            server_content: server_content.into(),
-            server_revision: server_revision.into(),
-        }
-    }
-
     pub fn conflict_for_note(
         context: &'static str,
         note_path: impl Into<String>,

@@ -409,8 +409,9 @@ pub async fn save_note_content(
                             revision_prefix(Some(&revision)),
                             revision_prefix(Some(&conflict.current_revision))
                         );
-                        return Err(NotebookError::conflict(
+                        return Err(NotebookError::conflict_for_note(
                             "save note",
+                            rel_path,
                             content,
                             conflict.current_content,
                             conflict.current_revision,

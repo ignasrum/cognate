@@ -16,15 +16,15 @@ pub(super) enum MessageDomain {
 
 fn message_domain(message: &Message) -> MessageDomain {
     match message {
-        Message::HandleTabKey
+        Message::EditorAction(_)
+        | Message::HandleTabKey
         | Message::SelectAll
         | Message::Undo
         | Message::Redo
         | Message::PasteFromClipboard
-        | Message::EditorAction(_)
         | Message::LoadedNoteContent(_)
-        | Message::AttachmentLoaded(_, _)
-        | Message::PastedImageSaved(_) => MessageDomain::Text,
+        | Message::AttachmentLoaded(_, _, _)
+        | Message::PastedImageSaved(_, _) => MessageDomain::Text,
 
         Message::NoteExplorerMsg(_) | Message::NoteSelected(_) | Message::ConnectionChecked(_) => {
             MessageDomain::Selection
@@ -51,6 +51,7 @@ fn message_domain(message: &Message) -> MessageDomain {
 
         Message::MetadataSaved(_, _)
         | Message::NoteContentSaved(_)
+        | Message::AttachmentDeleted(_, _)
         | Message::OfflineReplayCompleted(_)
         | Message::ConflictCopySaved(_)
         | Message::ScaleSaved(_) => MessageDomain::SaveFeedback,

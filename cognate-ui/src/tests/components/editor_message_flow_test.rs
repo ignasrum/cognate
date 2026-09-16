@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::components::editor::note_coordinator;
+    use crate::components::editor::note_coordinator::NoteContentSaveResult;
     use crate::components::editor::{Editor, Message as EditorMessage};
     use crate::components::note_explorer;
     use crate::configuration::{Configuration, StorageBackend};
@@ -329,6 +330,92 @@ mod tests {
         assert!(!in_flight_after_second_completed);
         assert!(!reschedule_after_second_completed);
     }
+    #[test]
+    fn stale_save_completion_does_not_open_conflict_for_new_selection() {
+        let notebook_dir = TestNotebookDir::new("stale_save_completion");
+        let notes = vec![
+            NoteMetadata {
+                rel_path: "first".to_string(),
+                labels: Vec::new(),
+                last_updated: None,
+            },
+            NoteMetadata {
+                rel_path: "second".to_string(),
+                labels: Vec::new(),
+                last_updated: None,
+            },
+        ];
+        let mut editor = create_editor_with_notebook(notebook_dir.as_str());
+        load_and_select_note(&mut editor, notes, "first", "first content");
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteSelected("second".to_string()),
+        );
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteContentSaved(NoteContentSaveResult {
+                note_path: "first".to_string(),
+                content: "edited first content".to_string(),
+                result: Err(NotebookError::conflict_for_note(
+                    "save note",
+                    "first",
+                    "edited first content",
+                    "server first content",
+                    "server-revision",
+                )),
+            }),
+        );
+
+        assert_eq!(editor.debug_selected_note_path().as_deref(), Some("second"));
+        assert!(editor.debug_conflict().is_none());
+    }
+
+    #[test]
+    fn moving_selected_folder_preserves_descendant_selection() {
+        let notebook_dir = TestNotebookDir::new("move_selection");
+        let notes = vec![NoteMetadata {
+            rel_path: "folder/note".to_string(),
+            labels: Vec::new(),
+            last_updated: None,
+        }];
+        let mut editor = create_editor_with_notebook(notebook_dir.as_str());
+        load_and_select_note(&mut editor, notes, "folder/note", "content");
+
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteMoved(Ok("archive".to_string()), "folder".to_string()),
+        );
+
+        assert_eq!(
+            editor.debug_selected_note_path().as_deref(),
+            Some("archive/note")
+        );
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteExplorerMsg(note_explorer::Message::NotesLoaded(Ok(
+                MetadataLoadResult {
+                    notes: vec![NoteMetadata {
+                        rel_path: "archive/note".to_string(),
+                        labels: Vec::new(),
+                        last_updated: None,
+                    }],
+                    warning: None,
+                },
+            ))),
+        );
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::LoadedNoteContent(Ok(
+                crate::components::editor::note_coordinator::LoadedNotePayload {
+                    note_path: "archive/note".to_string(),
+                    content: "moved content".to_string(),
+                    images: HashMap::new(),
+                },
+            )),
+        );
+        assert_eq!(editor.debug_markdown_text(), "moved content");
+    }
 
     #[test]
     fn gui_smoke_open_edit_save_and_close_flushes_note_content() {
@@ -355,6 +442,16 @@ mod tests {
             "Expected smoke edit to insert one character, got: {}",
             edited_markdown
         );
+        assert!(editor.debug_content_dirty());
+        let _ = Editor::update(
+            &mut editor,
+            EditorMessage::NoteContentSaved(NoteContentSaveResult {
+                note_path: "flow/note".to_string(),
+                content: edited_markdown.clone(),
+                result: Ok(()),
+            }),
+        );
+        assert!(!editor.debug_content_dirty());
         assert!(
             editor.debug_last_updated_for("flow/note").is_some(),
             "Expected edit flow to update last_updated before flush"

@@ -1,4 +1,4 @@
-use crate::components::editor::note_coordinator::LoadedNotePayload;
+use crate::components::editor::note_coordinator::{LoadedNotePayload, NoteContentSaveResult};
 use crate::components::note_explorer;
 use crate::components::visualizer;
 use crate::notebook::{self, NoteMetadata, NotebookError};
@@ -45,9 +45,7 @@ pub enum Message {
     LoadMoreSearchResults,
     ClearSearch,
 
-    // Content management
-    NoteContentSaved(Result<(), NotebookError>),
-    OfflineReplayCompleted(Result<(), NotebookError>),
+    NoteContentSaved(NoteContentSaveResult),
     ConflictKeepServer,
     ConflictRetryLocal,
     ConflictSaveCopy,
@@ -57,6 +55,7 @@ pub enum Message {
     DebouncedMetadataSaveCompleted(u64, Result<(), NotebookError>),
     WindowCloseRequested(window::Id),
     ShutdownFlushCompleted(window::Id, Result<(), NotebookError>),
+    OfflineReplayCompleted(Result<(), NotebookError>),
 
     // Visualizer
     ToggleVisualizer,
@@ -86,13 +85,14 @@ pub enum Message {
     AboutButtonClicked,
     IncreaseScale,
     DecreaseScale,
+    ScaleSaved(Result<(), String>),
     MarkdownLinkClicked(String),
     MarkdownImageCursorMoved(iced::Point),
     ShowMarkdownImageMenu(String),
     DismissMarkdownImageMenu,
     CopyMarkdownImage(String),
-    ScaleSaved(Result<(), String>),
-    AttachmentLoaded(String, Result<Vec<u8>, String>),
-    PastedImageSaved(Result<String, String>),
+    AttachmentLoaded(String, String, Result<Vec<u8>, String>),
+    PastedImageSaved(String, Result<String, String>),
+    AttachmentDeleted(String, Result<(), NotebookError>),
     Dummy,
 }

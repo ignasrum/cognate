@@ -29,6 +29,8 @@ impl EmbeddedImageWorkflow {
     }
     pub fn set_loaded_images(&mut self, images: HashMap<String, String>) {
         self.images = images;
+        self.image_handles.clear();
+        self.image_bytes.clear();
     }
 
     pub fn clear_all(&mut self) {
@@ -119,9 +121,16 @@ impl EmbeddedImageWorkflow {
                 let rel_path = image_rel_path.clone();
                 let img_id = image_id.clone();
                 tasks.push(Task::perform(
-                    crate::notebook::download_attachment(notebook_path.to_string(), rel_path),
+                    crate::notebook::download_attachment(
+                        notebook_path.to_string(),
+                        rel_path.clone(),
+                    ),
                     move |result| {
-                        Message::AttachmentLoaded(img_id, result.map_err(|error| error.to_string()))
+                        Message::AttachmentLoaded(
+                            img_id,
+                            rel_path,
+                            result.map_err(|error| error.to_string()),
+                        )
                     },
                 ));
             }

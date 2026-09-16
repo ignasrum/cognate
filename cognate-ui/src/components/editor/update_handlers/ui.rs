@@ -1,4 +1,5 @@
 use super::*;
+use crate::components::editor::note_coordinator;
 use crate::notebook;
 use std::process::Command;
 
@@ -137,7 +138,8 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
             };
             notebook::set_note_revision(&conflict.note_path, &conflict.server_revision);
             state.content = iced::widget::text_editor::Content::with_text(&conflict.server_content);
-            state.markdown_text = conflict.server_content;
+            state.markdown_text = conflict.server_content.clone();
+            state.loaded_markdown_text = conflict.server_content;
             state.undo_manager.initialize_history(&conflict.note_path);
             state.state.hide_conflict_dialog();
             state.sync_markdown_preview()
@@ -150,14 +152,11 @@ pub(super) fn handle(state: &mut Editor, message: Message) -> Task<Message> {
             state.state.hide_conflict_dialog();
             let notebook_path = state.state.notebook_path().to_string();
             Task::perform(
-                async move {
-                    notebook::save_note_content(
-                        notebook_path,
-                        conflict.note_path,
-                        conflict.local_content,
-                    )
-                    .await
-                },
+                note_coordinator::save_note_content_with_context(
+                    notebook_path,
+                    conflict.note_path,
+                    conflict.local_content,
+                ),
                 Message::NoteContentSaved,
             )
         }
